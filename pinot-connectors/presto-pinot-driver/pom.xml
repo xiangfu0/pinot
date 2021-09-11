@@ -593,6 +593,12 @@
                                 <skipMain>true</skipMain>
                             </configuration>
                         </plugin>
+                        <plugin>
+                            <artifactId>maven-jar-plugin</artifactId>
+                            <configuration>
+                                <skip>true</skip>
+                            </configuration>
+                        </plugin>
                     </plugins>
                 </pluginManagement>
             </build>
