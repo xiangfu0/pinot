@@ -182,6 +182,10 @@
                   <pattern>org.apache.http</pattern>
                   <shadedPattern>shaded.org.apache.http</shadedPattern>
                 </relocation>
+                <relocation>
+                  <pattern>org.apache.parquet</pattern>
+                  <shadedPattern>shaded.org.apache.parquet</shadedPattern>
+                </relocation>
               </relocations>
             </configuration>
           </execution>
