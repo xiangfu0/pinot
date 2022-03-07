@@ -18,6 +18,13 @@
  */
 package org.apache.pinot.common.function;
 
+import com.google.common.collect.ImmutableSet;
+import java.util.List;
+import java.util.Set;
+import org.apache.pinot.common.request.context.ExpressionContext;
+import org.apache.pinot.common.request.context.FunctionContext;
+import org.apache.pinot.segment.spi.index.reader.TimestampIndexGranularity;
+import org.apache.pinot.spi.exception.BadQueryRequestException;
 import org.joda.time.Chronology;
 import org.joda.time.DateTimeField;
 import org.joda.time.DateTimeFieldType;
@@ -41,6 +48,8 @@ public class DateTimeUtils {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(DateTimeUtils.class);
   private static final DateTimeFieldType QUARTER_OF_YEAR = new QuarterOfYearDateTimeField();
+  private final static Set<String> SUPPORTED_TIMESTAMP_GRANULAR_FUNCTIONS =
+      ImmutableSet.of("datetrunc", "years", "quarters", "months", "weeks", "days", "hours", "minutes");
 
   public static DateTimeField getTimestampField(ISOChronology chronology, String unitString) {
     switch (unitString.toLowerCase()) {
@@ -151,5 +160,84 @@ public class DateTimeUtils {
         return new ScaledDurationField(chronology.months(), QUARTER_OF_YEAR_DURATION_FIELD_TYPE, 3);
       }
     }
+  }
+
+  public static TimestampIndexGranularity getTimeGranularityFromDateTruncUnit(String timeUnit) {
+    switch (timeUnit.toLowerCase()) {
+      case "milliseconds":
+        return TimestampIndexGranularity.MILLISECOND;
+      case "seconds":
+        return TimestampIndexGranularity.SECOND;
+      case "minutes":
+        return TimestampIndexGranularity.MINUTE;
+      case "hours":
+        return TimestampIndexGranularity.HOUR;
+      case "days":
+        return TimestampIndexGranularity.DAY;
+      case "weeks":
+        return TimestampIndexGranularity.WEEK;
+      case "months":
+        return TimestampIndexGranularity.MONTH;
+      case "quarters":
+        return TimestampIndexGranularity.QUARTER;
+      case "years":
+        return TimestampIndexGranularity.YEAR;
+      default:
+        throw new UnsupportedOperationException("Unknown timeUnit argument for dateTrunc function: " + timeUnit);
+    }
+  }
+
+  public static TimestampIndexGranularity getTimestampIndexGranularityFromFunctionContext(FunctionContext function) {
+    String functionName = function.getFunctionName().toLowerCase();
+    if (!SUPPORTED_TIMESTAMP_GRANULAR_FUNCTIONS.contains(functionName)) {
+      return null;
+    }
+    List<ExpressionContext> arguments = function.getArguments();
+    switch (functionName) {
+      case "datetrunc":
+        if (arguments.size() != 2) {
+          throw new BadQueryRequestException("Expect 2 arguments for function: " + functionName);
+        }
+        return TimestampIndexGranularity.valueOf(arguments.get(0).getLiteral().toUpperCase());
+      default:
+        if (arguments.size() != 1) {
+          throw new BadQueryRequestException("Expect 1 arguments for function: " + functionName);
+        }
+        return getTimeGranularityFromSingleArgumentFunction(function.getFunctionName());
+    }
+  }
+
+
+  private static TimestampIndexGranularity getTimeGranularityFromSingleArgumentFunction(String function) {
+    switch (function.toLowerCase()) {
+      case "toDays":
+        return TimestampIndexGranularity.DAY;
+      default:
+        throw new RuntimeException();
+    }
+  }
+
+  public static String getColumnNameFromFunctionContext(FunctionContext function) {
+    String functionName = function.getFunctionName().toLowerCase();
+    if (!SUPPORTED_TIMESTAMP_GRANULAR_FUNCTIONS.contains(functionName)) {
+      return null;
+    }
+    List<ExpressionContext> arguments = function.getArguments();
+    switch (functionName) {
+      case "datetrunc":
+        if (arguments.size() != 2) {
+          throw new BadQueryRequestException("Expect 2 arguments for function: " + functionName);
+        }
+        return getColumnName(arguments.get(1));
+      default:
+        if (arguments.size() != 1) {
+          throw new BadQueryRequestException("Expect 1 arguments for function: " + functionName);
+        }
+        return getColumnName(arguments.get(0));
+    }
+  }
+
+  private static String getColumnName(ExpressionContext argument) {
+    return (argument.getType() == ExpressionContext.Type.IDENTIFIER) ? argument.getIdentifier() : null;
   }
 }

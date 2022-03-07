@@ -30,6 +30,7 @@ import org.apache.pinot.segment.spi.index.reader.JsonIndexReader;
 import org.apache.pinot.segment.spi.index.reader.NullValueVectorReader;
 import org.apache.pinot.segment.spi.index.reader.RangeIndexReader;
 import org.apache.pinot.segment.spi.index.reader.TextIndexReader;
+import org.apache.pinot.segment.spi.index.reader.TimestampIndexReader;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.spi.data.FieldSpec;
 
@@ -45,10 +46,11 @@ public class MutableDataSource extends BaseDataSource {
       @Nullable Comparable maxValue, ForwardIndexReader forwardIndex, @Nullable Dictionary dictionary,
       @Nullable InvertedIndexReader invertedIndex, @Nullable RangeIndexReader rangeIndex,
       @Nullable TextIndexReader textIndex, @Nullable JsonIndexReader jsonIndex, @Nullable H3IndexReader h3Index,
-      @Nullable BloomFilterReader bloomFilter, @Nullable NullValueVectorReader nullValueVector) {
+      @Nullable BloomFilterReader bloomFilter, @Nullable TimestampIndexReader timestampIndex,
+      @Nullable NullValueVectorReader nullValueVector) {
     super(new MutableDataSourceMetadata(fieldSpec, numDocs, numValues, maxNumValuesPerMVEntry, partitionFunction,
             partitions, minValue, maxValue), forwardIndex, dictionary, invertedIndex, rangeIndex, textIndex, null,
-        jsonIndex, h3Index, bloomFilter, nullValueVector);
+        jsonIndex, h3Index, bloomFilter, timestampIndex, nullValueVector);
   }
 
   private static class MutableDataSourceMetadata implements DataSourceMetadata {

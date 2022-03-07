@@ -112,12 +112,31 @@ public final class RangeIndexCreator implements CombinedInvertedIndexCreator {
   public RangeIndexCreator(File indexDir, FieldSpec fieldSpec, DataType valueType, int numRanges, int numValuesPerRange,
       int numDocs, int numValues)
       throws IOException {
+    this(indexDir, fieldSpec.getName(), fieldSpec.isSingleValueField(), valueType, numRanges, numValuesPerRange,
+        numDocs, numValues);
+  }
+
+  /**
+   *
+   * @param indexDir destination of the range index file
+   * @param columnName column name to generate the range index
+   * @param isSingleValueField if this column is a single valued field
+   * @param valueType DataType of the column, INT if dictionary encoded, or INT, FLOAT, LONG, DOUBLE for raw encoded
+   * @param numRanges Number of ranges, use DEFAULT_NUM_RANGES if not configured (<= 0)
+   * @param numValuesPerRange Number of values per range, calculate from numRanges if not configured (<= 0)
+   * @param numDocs total number of documents
+   * @param numValues total number of values, used for Multi value columns (for single value columns numDocs==
+   *                  numValues)
+   * @throws IOException
+   */
+  public RangeIndexCreator(File indexDir, String columnName, boolean isSingleValueField, DataType valueType,
+      int numRanges, int numValuesPerRange, int numDocs, int numValues)
+      throws IOException {
     _valueType = valueType;
-    String columnName = fieldSpec.getName();
     _rangeIndexFile = new File(indexDir, columnName + BITMAP_RANGE_INDEX_FILE_EXTENSION);
     _tempValueBufferFile = new File(indexDir, columnName + VALUE_BUFFER_SUFFIX);
     _tempDocIdBufferFile = new File(indexDir, columnName + DOC_ID_VALUE_BUFFER_SUFFIX);
-    _numValues = fieldSpec.isSingleValueField() ? numDocs : numValues;
+    _numValues = isSingleValueField ? numDocs : numValues;
     int valueSize = valueType.size();
     try {
       Preconditions.checkArgument(numRanges <= 0 || numValuesPerRange <= 0,
@@ -464,8 +483,8 @@ public final class RangeIndexCreator implements CombinedInvertedIndexCreator {
 
   private PinotDataBuffer createTempBuffer(long size, File mmapFile)
       throws IOException {
-    return PinotDataBuffer
-        .mapFile(mmapFile, false, 0, size, PinotDataBuffer.NATIVE_ORDER, "RangeIndexCreator: temp buffer");
+    return PinotDataBuffer.mapFile(mmapFile, false, 0, size, PinotDataBuffer.NATIVE_ORDER,
+        "RangeIndexCreator: temp buffer");
   }
 
   private void destroyBuffer(PinotDataBuffer buffer, File mmapFile)

@@ -16,37 +16,27 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.spi.store;
+package org.apache.pinot.segment.spi.index.reader;
 
-public enum ColumnIndexType {
-  DICTIONARY("dictionary"),
-  FORWARD_INDEX("forward_index"),
-  INVERTED_INDEX("inverted_index"),
-  BLOOM_FILTER("bloom_filter"),
-  NULLVALUE_VECTOR("nullvalue_vector"),
-  TEXT_INDEX("text_index"),
-  FST_INDEX("fst_index"),
-  JSON_INDEX("json_index"),
-  RANGE_INDEX("range_index"),
-  H3_INDEX("h3_index"),
-  TIMESTAMP_INDEX("timestamp_index");
+public enum TimestampIndexGranularity {
+  MILLISECOND, SECOND, MINUTE, HOUR, DAY, WEEK, MONTH, QUARTER, YEAR;
 
-  private final String _indexName;
-
-  ColumnIndexType(String name) {
-    _indexName = name;
-  }
-
-  public String getIndexName() {
-    return _indexName;
-  }
-
-  public static ColumnIndexType getValue(String val) {
-    for (ColumnIndexType type : values()) {
-      if (type.getIndexName().equalsIgnoreCase(val)) {
-        return type;
+  public static int indexOf(TimestampIndexGranularity value) {
+    TimestampIndexGranularity[] values = TimestampIndexGranularity.values();
+    for (int i = 0; i < values.length; i++) {
+      if (values[i] == value) {
+        return i;
       }
     }
-    throw new IllegalArgumentException("Unknown value: " + val);
+    return -1;
+  }
+
+  public static int indexOf(String enumString) {
+    return indexOf(TimestampIndexGranularity.valueOf(enumString));
+  }
+
+  public static TimestampIndexGranularity getFromIndex(int idx) {
+    assert idx >= 0 && idx < TimestampIndexGranularity.values().length;
+    return TimestampIndexGranularity.values()[idx];
   }
 }

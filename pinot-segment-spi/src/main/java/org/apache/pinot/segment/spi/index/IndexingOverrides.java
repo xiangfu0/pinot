@@ -43,6 +43,7 @@ import org.apache.pinot.segment.spi.index.mutable.MutableJsonIndex;
 import org.apache.pinot.segment.spi.index.mutable.MutableTextIndex;
 import org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexContext;
 import org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexProvider;
+import org.apache.pinot.segment.spi.index.creator.TimestampIndexCreator;
 import org.apache.pinot.segment.spi.index.reader.BloomFilterReader;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
 import org.apache.pinot.segment.spi.index.reader.H3IndexReader;
@@ -51,6 +52,7 @@ import org.apache.pinot.segment.spi.index.reader.JsonIndexReader;
 import org.apache.pinot.segment.spi.index.reader.RangeIndexReader;
 import org.apache.pinot.segment.spi.index.reader.SortedIndexReader;
 import org.apache.pinot.segment.spi.index.reader.TextIndexReader;
+import org.apache.pinot.segment.spi.index.reader.TimestampIndexReader;
 import org.apache.pinot.segment.spi.index.reader.provider.IndexReaderProvider;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
 import org.slf4j.Logger;
@@ -129,8 +131,7 @@ public class IndexingOverrides {
   private static <T> T invokeDefaultConstructor(String className) {
     try {
       Class<?> clazz = Class.forName(className, false, IndexingOverrides.class.getClassLoader());
-      return (T) MethodHandles.publicLookup()
-          .findConstructor(clazz, MethodType.methodType(void.class)).invoke();
+      return (T) MethodHandles.publicLookup().findConstructor(clazz, MethodType.methodType(void.class)).invoke();
     } catch (Throwable missing) {
       LOGGER.error("could not construct MethodHandle for {}", className, missing);
       return null;
@@ -189,6 +190,13 @@ public class IndexingOverrides {
         throws IOException {
       ensureCreatorPresent();
       return CREATOR_DEFAULTS.newTextIndexCreator(context);
+    }
+
+    @Override
+    public TimestampIndexCreator newTimestampIndexCreator(IndexCreationContext.Timestamp context)
+        throws IOException {
+      ensureReaderPresent();
+      return CREATOR_DEFAULTS.newTimestampIndexCreator(context);
     }
 
     @Override
@@ -282,6 +290,11 @@ public class IndexingOverrides {
     public MutableDictionary newDictionary(MutableIndexContext.Dictionary context) {
       ensureMutableReaderPresent();
       return MUTABLE_INDEX_DEFAULTS.newDictionary(context);
+    }
+
+    public TimestampIndexReader newTimestampIndexReader(PinotDataBuffer dataBuffer, ColumnMetadata metadata)
+        throws IOException {
+      return READER_DEFAULTS.newTimestampIndexReader(dataBuffer, metadata);
     }
 
     private void ensureReaderPresent() {

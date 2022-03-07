@@ -16,13 +16,26 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.spi.creator;
+package org.apache.pinot.segment.spi.index.creator;
+
+import java.io.Closeable;
+import java.io.IOException;
+
 
 /**
- * Plugin interface to abstract index creation.
+ * Index creator for timestamp.
  */
-public interface IndexCreatorProvider
-    extends ForwardIndexCreatorProvider, InvertedIndexCreatorProvider, JsonIndexCreatorProvider,
-            TextIndexCreatorProvider, GeoSpatialIndexCreatorProvider, RangeIndexCreatorProvider,
-            BloomFilterCreatorProvider, TimestampIndexCreatorProvider {
+public interface TimestampIndexCreator extends Closeable {
+
+  /**
+   * Adds the next timestamp value.
+   */
+  void add(Long value)
+      throws IOException;
+
+  /**
+   * Seals the index and flushes it to disk.
+   */
+  void seal()
+      throws IOException;
 }

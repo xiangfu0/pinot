@@ -23,6 +23,7 @@ import com.google.common.base.Preconditions;
 import java.io.File;
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -38,6 +39,7 @@ import org.apache.pinot.segment.spi.creator.name.FixedSegmentNameGenerator;
 import org.apache.pinot.segment.spi.creator.name.SegmentNameGenerator;
 import org.apache.pinot.segment.spi.creator.name.SimpleSegmentNameGenerator;
 import org.apache.pinot.segment.spi.index.creator.H3IndexConfig;
+import org.apache.pinot.segment.spi.index.reader.TimestampIndexGranularity;
 import org.apache.pinot.spi.config.table.FSTType;
 import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.IndexingConfig;
@@ -75,6 +77,7 @@ public class SegmentGeneratorConfig implements Serializable {
   private final List<String> _fstIndexCreationColumns = new ArrayList<>();
   private final List<String> _jsonIndexCreationColumns = new ArrayList<>();
   private final Map<String, H3IndexConfig> _h3IndexConfigs = new HashMap<>();
+  private final Map<String, Set<TimestampIndexGranularity>> _timestampIndexConfigs = new HashMap<>();
   private final List<String> _columnSortOrder = new ArrayList<>();
   private List<String> _varLengthDictionaryColumns = new ArrayList<>();
   private String _inputFilePath = null;
@@ -194,6 +197,7 @@ public class SegmentGeneratorConfig implements Serializable {
       extractTextIndexColumnsFromTableConfig(tableConfig);
       extractFSTIndexColumnsFromTableConfig(tableConfig);
       extractH3IndexConfigsFromTableConfig(tableConfig);
+      extractTimestampIndexConfigsFromTableConfig(tableConfig);
       extractCompressionCodecConfigsFromTableConfig(tableConfig);
 
       _fstTypeForFSTIndex = tableConfig.getIndexingConfig().getFSTIndexType();
@@ -256,6 +260,22 @@ public class SegmentGeneratorConfig implements Serializable {
         if (fieldConfig.getIndexType() == FieldConfig.IndexType.H3) {
           //noinspection ConstantConditions
           _h3IndexConfigs.put(fieldConfig.getName(), new H3IndexConfig(fieldConfig.getProperties()));
+        }
+      }
+    }
+  }
+
+  private void extractTimestampIndexConfigsFromTableConfig(TableConfig tableConfig) {
+    List<FieldConfig> fieldConfigList = tableConfig.getFieldConfigList();
+    if (fieldConfigList != null) {
+      for (FieldConfig fieldConfig : fieldConfigList) {
+        if (fieldConfig.getIndexType() == FieldConfig.IndexType.TIMESTAMP) {
+          //noinspection ConstantConditions
+          String[] granularities = fieldConfig.getProperties().get("granularities").split(",");
+          Set<TimestampIndexGranularity> timestampIndexGranularities = Arrays.stream(granularities)
+              .map(granularity -> TimestampIndexGranularity.valueOf(granularity.toUpperCase()))
+              .collect(Collectors.toSet());
+          _timestampIndexConfigs.put(fieldConfig.getName(), timestampIndexGranularities);
         }
       }
     }
@@ -335,6 +355,10 @@ public class SegmentGeneratorConfig implements Serializable {
 
   public Map<String, H3IndexConfig> getH3IndexConfigs() {
     return _h3IndexConfigs;
+  }
+
+  public Map<String, Set<TimestampIndexGranularity>> getTimestampIndexConfigs() {
+    return _timestampIndexConfigs;
   }
 
   public List<String> getColumnSortOrder() {

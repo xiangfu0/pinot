@@ -21,10 +21,12 @@ package org.apache.pinot.segment.spi.creator;
 import java.io.File;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.compression.ChunkCompressionType;
 import org.apache.pinot.segment.spi.index.creator.H3IndexConfig;
+import org.apache.pinot.segment.spi.index.reader.TimestampIndexGranularity;
 import org.apache.pinot.spi.config.table.BloomFilterConfig;
 import org.apache.pinot.spi.config.table.FSTType;
 import org.apache.pinot.spi.data.FieldSpec;
@@ -73,8 +75,9 @@ public interface IndexCreationContext {
     private boolean _hasDictionary = true;
 
     public Builder withColumnIndexCreationInfo(ColumnIndexCreationInfo columnIndexCreationInfo) {
-      return withLengthOfLongestEntry(columnIndexCreationInfo.getLengthOfLongestEntry())
-          .withMaxNumberOfMultiValueElements(columnIndexCreationInfo.getMaxNumberOfMultiValueElements())
+      return withLengthOfLongestEntry(
+          columnIndexCreationInfo.getLengthOfLongestEntry()).withMaxNumberOfMultiValueElements(
+              columnIndexCreationInfo.getMaxNumberOfMultiValueElements())
           .withMaxRowLengthInBytes(columnIndexCreationInfo.getMaxRowLengthInBytes());
     }
 
@@ -89,12 +92,10 @@ public interface IndexCreationContext {
     }
 
     public Builder withColumnMetadata(ColumnMetadata columnMetadata) {
-      return withFieldSpec(columnMetadata.getFieldSpec())
-          .sorted(columnMetadata.isSorted())
+      return withFieldSpec(columnMetadata.getFieldSpec()).sorted(columnMetadata.isSorted())
           .withCardinality(columnMetadata.getCardinality())
           .withTotalNumberOfEntries(columnMetadata.getTotalNumberOfEntries())
-          .withTotalDocs(columnMetadata.getTotalDocs())
-          .withDictionary(columnMetadata.hasDictionary());
+          .withTotalDocs(columnMetadata.getTotalDocs()).withDictionary(columnMetadata.hasDictionary());
     }
 
     public Builder withLengthOfLongestEntry(int lengthOfLongestEntry) {
@@ -143,10 +144,9 @@ public interface IndexCreationContext {
     }
 
     public Common build() {
-      return new Common(Objects.requireNonNull(_indexDir),
-          _lengthOfLongestEntry, _maxNumberOfMultiValueElements, _maxRowLengthInBytes,
-          _onHeap, Objects.requireNonNull(_fieldSpec),
-          _sorted, _cardinality, _totalNumberOfEntries, _totalDocs, _hasDictionary);
+      return new Common(Objects.requireNonNull(_indexDir), _lengthOfLongestEntry, _maxNumberOfMultiValueElements,
+          _maxRowLengthInBytes, _onHeap, Objects.requireNonNull(_fieldSpec), _sorted, _cardinality,
+          _totalNumberOfEntries, _totalDocs, _hasDictionary);
     }
   }
 
@@ -168,10 +168,9 @@ public interface IndexCreationContext {
     private final int _totalDocs;
     private final boolean _hasDictionary;
 
-    public Common(File indexDir, int lengthOfLongestEntry,
-        int maxNumberOfMultiValueElements, int maxRowLengthInBytes, boolean onHeap,
-        FieldSpec fieldSpec, boolean sorted, int cardinality, int totalNumberOfEntries,
-        int totalDocs, boolean hasDictionary) {
+    public Common(File indexDir, int lengthOfLongestEntry, int maxNumberOfMultiValueElements, int maxRowLengthInBytes,
+        boolean onHeap, FieldSpec fieldSpec, boolean sorted, int cardinality, int totalNumberOfEntries, int totalDocs,
+        boolean hasDictionary) {
       _indexDir = indexDir;
       _lengthOfLongestEntry = lengthOfLongestEntry;
       _maxNumberOfMultiValueElements = maxNumberOfMultiValueElements;
@@ -256,6 +255,10 @@ public interface IndexCreationContext {
 
     public Range forRangeIndex(int rangeIndexVersion, Comparable<?> min, Comparable<?> max) {
       return new Range(this, rangeIndexVersion, min, max);
+    }
+
+    public Timestamp forTimestamp(Set<TimestampIndexGranularity> granularities) {
+      return new Timestamp(this, granularities);
     }
 
     public Text forTextIndex(boolean commitOnClose) {
@@ -346,8 +349,7 @@ public interface IndexCreationContext {
     private final ChunkCompressionType _chunkCompressionType;
     private final Map<String, Map<String, String>> _columnProperties;
 
-    Forward(IndexCreationContext delegate,
-        ChunkCompressionType chunkCompressionType,
+    Forward(IndexCreationContext delegate, ChunkCompressionType chunkCompressionType,
         @Nullable Map<String, Map<String, String>> columnProperties) {
       super(delegate);
       _chunkCompressionType = chunkCompressionType;
@@ -397,7 +399,6 @@ public interface IndexCreationContext {
     private final Comparable<?> _min;
     private final Comparable<?> _max;
     private final int _rangeIndexVersion;
-
 
     Range(IndexCreationContext delegate, int rangeIndexVersion, Comparable<?> min, Comparable<?> max) {
       super(delegate);
@@ -461,6 +462,19 @@ public interface IndexCreationContext {
 
     public String[] getSortedUniqueElementsArray() {
       return _sortedUniqueElementsArray;
+    }
+  }
+
+  class Timestamp extends Wrapper {
+    private final Set<TimestampIndexGranularity> _granularities;
+
+    Timestamp(IndexCreationContext delegate, Set<TimestampIndexGranularity> granularities) {
+      super(delegate);
+      _granularities = granularities;
+    }
+
+    public Set<TimestampIndexGranularity> getGranularities() {
+      return _granularities;
     }
   }
 }

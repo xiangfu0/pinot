@@ -18,11 +18,19 @@
  */
 package org.apache.pinot.segment.spi.creator;
 
-/**
- * Plugin interface to abstract index creation.
- */
-public interface IndexCreatorProvider
-    extends ForwardIndexCreatorProvider, InvertedIndexCreatorProvider, JsonIndexCreatorProvider,
-            TextIndexCreatorProvider, GeoSpatialIndexCreatorProvider, RangeIndexCreatorProvider,
-            BloomFilterCreatorProvider, TimestampIndexCreatorProvider {
+import java.io.IOException;
+import org.apache.pinot.segment.spi.index.creator.TimestampIndexCreator;
+
+
+public interface TimestampIndexCreatorProvider {
+  /**
+   * Creates a {@see TimestampIndexCreatorProvider} from information about index creation.
+   * This allows a plugin to pattern match index creation information to select
+   * an appropriate implementation.
+   * @param context context about the index creation.
+   * @return a {@see ForwardIndexCreator}
+   * @throws IOException whenever something goes wrong matching or constructing the creator
+   */
+  TimestampIndexCreator newTimestampIndexCreator(IndexCreationContext.Timestamp context)
+      throws IOException;
 }

@@ -16,13 +16,23 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.spi.creator;
+package org.apache.pinot.segment.spi.index.reader.provider;
 
-/**
- * Plugin interface to abstract index creation.
- */
-public interface IndexCreatorProvider
-    extends ForwardIndexCreatorProvider, InvertedIndexCreatorProvider, JsonIndexCreatorProvider,
-            TextIndexCreatorProvider, GeoSpatialIndexCreatorProvider, RangeIndexCreatorProvider,
-            BloomFilterCreatorProvider, TimestampIndexCreatorProvider {
+import java.io.IOException;
+import org.apache.pinot.segment.spi.ColumnMetadata;
+import org.apache.pinot.segment.spi.index.reader.TimestampIndexReader;
+import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
+
+
+public interface TimestampIndexReaderProvider {
+
+  /**
+   * Creates a {@see TimestampIndexReader}
+   * @param dataBuffer the buffer, the caller is responsible for closing it
+   * @param metadata the column metadata, may be used to select a reader if the buffer does not start with a magic byte.
+   * @return a timestamp index reader
+   * @throws IOException if reading from the buffer fails.
+   */
+  TimestampIndexReader newTimestampIndexReader(PinotDataBuffer dataBuffer, ColumnMetadata metadata)
+      throws IOException;
 }

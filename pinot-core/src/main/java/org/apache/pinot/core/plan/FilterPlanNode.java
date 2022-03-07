@@ -25,6 +25,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import javax.annotation.Nullable;
+import org.apache.pinot.common.function.DateTimeUtils;
 import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.common.request.context.FilterContext;
 import org.apache.pinot.common.request.context.FunctionContext;
@@ -42,6 +43,7 @@ import org.apache.pinot.core.operator.filter.H3IndexFilterOperator;
 import org.apache.pinot.core.operator.filter.JsonMatchFilterOperator;
 import org.apache.pinot.core.operator.filter.MatchAllFilterOperator;
 import org.apache.pinot.core.operator.filter.TextMatchFilterOperator;
+import org.apache.pinot.core.operator.filter.TimestampIndexFilterOperator;
 import org.apache.pinot.core.operator.filter.predicate.FSTBasedRegexpPredicateEvaluatorFactory;
 import org.apache.pinot.core.operator.filter.predicate.PredicateEvaluator;
 import org.apache.pinot.core.operator.filter.predicate.PredicateEvaluatorProvider;
@@ -51,6 +53,7 @@ import org.apache.pinot.segment.spi.datasource.DataSource;
 import org.apache.pinot.segment.spi.index.mutable.ThreadSafeMutableRoaringBitmap;
 import org.apache.pinot.segment.spi.index.reader.JsonIndexReader;
 import org.apache.pinot.segment.spi.index.reader.NullValueVectorReader;
+import org.apache.pinot.segment.spi.index.reader.TimestampIndexGranularity;
 import org.apache.pinot.spi.exception.BadQueryRequestException;
 import org.roaringbitmap.buffer.MutableRoaringBitmap;
 
@@ -140,6 +143,29 @@ public class FilterPlanNode implements PlanNode {
   }
 
   /**
+   * Timestamp index can be applied iff:
+   * <ul>
+   *   <li>Supported predicate type: MATCH, RANGE</li>
+   *   <li>Left-hand-side of the predicate is a to <time granular> function</li>
+   *   <li>The identifier column has Timestamp index</li>
+   * </ul>
+   */
+  private boolean canApplyTimestampIndex(Predicate predicate, FunctionContext function) {
+    switch (predicate.getType()) {
+      case RANGE:
+      case EQ:
+      case NOT_EQ:
+        break;
+      default:
+        return false;
+    }
+    String columnName = DateTimeUtils.getColumnNameFromFunctionContext(function);
+    TimestampIndexGranularity granular = DateTimeUtils.getTimestampIndexGranularityFromFunctionContext(function);
+    return columnName != null && granular != null
+        && _indexSegment.getDataSource(columnName).getTimestampIndex(granular.toString()) != null;
+  }
+
+  /**
    * Helper method to build the operator tree from the filter.
    */
   private BaseFilterOperator constructPhysicalOperator(FilterContext filter, int numDocs) {
@@ -186,6 +212,9 @@ public class FilterPlanNode implements PlanNode {
           }
           // TODO: ExpressionFilterOperator does not support predicate types without PredicateEvaluator (IS_NULL,
           //       IS_NOT_NULL, TEXT_MATCH)
+          if (canApplyTimestampIndex(predicate, lhs.getFunction())) {
+            return new TimestampIndexFilterOperator(_indexSegment, predicate, numDocs);
+          }
           return new ExpressionFilterOperator(_indexSegment, predicate, numDocs);
         } else {
           String column = lhs.getIdentifier();

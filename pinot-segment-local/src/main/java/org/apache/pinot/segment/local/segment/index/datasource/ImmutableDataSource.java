@@ -37,7 +37,7 @@ public class ImmutableDataSource extends BaseDataSource {
         columnIndexContainer.getDictionary(), columnIndexContainer.getInvertedIndex(),
         columnIndexContainer.getRangeIndex(), columnIndexContainer.getTextIndex(), columnIndexContainer.getFSTIndex(),
         columnIndexContainer.getJsonIndex(), columnIndexContainer.getH3Index(), columnIndexContainer.getBloomFilter(),
-        columnIndexContainer.getNullValueVector());
+        columnIndexContainer.getTimestampIndex(), columnIndexContainer.getNullValueVector());
   }
 
   private static class ImmutableDataSourceMetadata implements DataSourceMetadata {
