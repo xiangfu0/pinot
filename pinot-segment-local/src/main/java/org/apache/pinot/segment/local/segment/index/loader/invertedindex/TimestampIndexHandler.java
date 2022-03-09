@@ -37,9 +37,9 @@ import org.apache.pinot.segment.spi.creator.TimestampIndexCreatorProvider;
 import org.apache.pinot.segment.spi.index.creator.TimestampIndexCreator;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReaderContext;
-import org.apache.pinot.segment.spi.index.reader.TimestampIndexGranularity;
 import org.apache.pinot.segment.spi.store.ColumnIndexType;
 import org.apache.pinot.segment.spi.store.SegmentDirectory;
+import org.apache.pinot.spi.config.table.TimestampIndexGranularity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

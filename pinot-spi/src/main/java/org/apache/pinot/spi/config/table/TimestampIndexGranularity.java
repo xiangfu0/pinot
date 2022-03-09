@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.spi.index.reader;
+package org.apache.pinot.spi.config.table;
 
 public enum TimestampIndexGranularity {
   MILLISECOND, SECOND, MINUTE, HOUR, DAY, WEEK, MONTH, QUARTER, YEAR;
@@ -38,5 +38,9 @@ public enum TimestampIndexGranularity {
   public static TimestampIndexGranularity getFromIndex(int idx) {
     assert idx >= 0 && idx < TimestampIndexGranularity.values().length;
     return TimestampIndexGranularity.values()[idx];
+  }
+
+  public static String getColumnNameWithGranularity(String column, TimestampIndexGranularity granularity) {
+    return column + "$" + granularity.toString();
   }
 }

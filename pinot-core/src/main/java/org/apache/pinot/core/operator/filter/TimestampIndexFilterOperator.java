@@ -21,7 +21,6 @@ package org.apache.pinot.core.operator.filter;
 import java.util.Collections;
 import java.util.List;
 import org.apache.pinot.common.function.DateTimeUtils;
-import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.common.request.context.FunctionContext;
 import org.apache.pinot.common.request.context.predicate.Predicate;
 import org.apache.pinot.common.request.context.predicate.RangePredicate;
@@ -30,11 +29,9 @@ import org.apache.pinot.core.operator.blocks.FilterBlock;
 import org.apache.pinot.core.operator.dociditerators.ScanBasedDocIdIterator;
 import org.apache.pinot.core.operator.docidsets.BitmapDocIdSet;
 import org.apache.pinot.core.operator.docidsets.FilterBlockDocIdSet;
-import org.apache.pinot.core.operator.filter.predicate.PredicateEvaluator;
 import org.apache.pinot.core.operator.filter.predicate.PredicateEvaluatorProvider;
 import org.apache.pinot.segment.spi.IndexSegment;
 import org.apache.pinot.segment.spi.datasource.DataSource;
-import org.apache.pinot.segment.spi.index.reader.TimestampIndexGranularity;
 import org.apache.pinot.segment.spi.index.reader.TimestampIndexReader;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 import org.roaringbitmap.buffer.MutableRoaringBitmap;
@@ -96,8 +93,8 @@ public class TimestampIndexFilterOperator extends BaseFilterOperator {
     if (partialMatches != null) {
       // Need to scan the first and last range as they might be partially matched
       DataSource dataSource = _segment.getDataSource(_columnName);
-      ScanBasedFilterOperator scanBasedFilterOperator =
-          new ScanBasedFilterOperator(PredicateEvaluatorProvider.getPredicateEvaluator(_predicate, dataSource.getDictionary(),
+      ScanBasedFilterOperator scanBasedFilterOperator = new ScanBasedFilterOperator(
+          PredicateEvaluatorProvider.getPredicateEvaluator(_predicate, dataSource.getDictionary(),
               dataSource.getDataSourceMetadata().getDataType()), dataSource, _numDocs);
       FilterBlockDocIdSet scanBasedDocIdSet = scanBasedFilterOperator.getNextBlock().getBlockDocIdSet();
       MutableRoaringBitmap docIds = ((ScanBasedDocIdIterator) scanBasedDocIdSet.iterator()).applyAnd(partialMatches);

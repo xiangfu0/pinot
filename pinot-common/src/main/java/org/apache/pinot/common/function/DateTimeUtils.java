@@ -23,7 +23,7 @@ import java.util.List;
 import java.util.Set;
 import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.common.request.context.FunctionContext;
-import org.apache.pinot.segment.spi.index.reader.TimestampIndexGranularity;
+import org.apache.pinot.spi.config.table.TimestampIndexGranularity;
 import org.apache.pinot.spi.exception.BadQueryRequestException;
 import org.joda.time.Chronology;
 import org.joda.time.DateTimeField;
