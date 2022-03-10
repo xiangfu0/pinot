@@ -21,5 +21,5 @@ package org.apache.pinot.segment.spi.index.reader.provider;
 public interface IndexReaderProvider
     extends BloomFilterReaderProvider, ForwardIndexReaderProvider, GeospatialIndexReaderProvider,
             InvertedIndexReaderProvider, JsonIndexReaderProvider, RangeIndexReaderProvider, SortedIndexReaderProvider,
-            TextIndexReaderProvider, TimestampIndexReaderProvider {
+            TextIndexReaderProvider {
 }

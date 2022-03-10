@@ -49,7 +49,6 @@ import org.apache.pinot.segment.spi.index.reader.JsonIndexReader;
 import org.apache.pinot.segment.spi.index.reader.RangeIndexReader;
 import org.apache.pinot.segment.spi.index.reader.SortedIndexReader;
 import org.apache.pinot.segment.spi.index.reader.TextIndexReader;
-import org.apache.pinot.segment.spi.index.reader.TimestampIndexReader;
 import org.apache.pinot.segment.spi.index.reader.provider.IndexReaderProvider;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
 import org.apache.pinot.spi.data.FieldSpec;
@@ -162,17 +161,5 @@ public class DefaultIndexReaderProvider implements IndexReaderProvider {
       @Nullable Map<String, String> textIndexProperties) {
     return new LuceneTextIndexReader(columnMetadata.getColumnName(), file, columnMetadata.getTotalDocs(),
         textIndexProperties);
-  }
-
-  @Override
-  public TimestampIndexReader newTimestampIndexReader(PinotDataBuffer dataBuffer, ColumnMetadata columnMetadata)
-      throws IOException {
-    int version = dataBuffer.getInt(0);
-    if (version == RangeIndexCreator.VERSION) {
-      return new ImmutableTimestampIndexReader(dataBuffer);
-    }
-    LOGGER.warn("Unknown timestamp index version: {}, skip loading timestamp index for column: {}", version,
-        columnMetadata.getColumnName());
-    return null;
   }
 }

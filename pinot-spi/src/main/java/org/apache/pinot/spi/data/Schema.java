@@ -628,6 +628,10 @@ public final class Schema implements Serializable {
       }
       return _schema;
     }
+
+    public void addFieldSpec(FieldSpec fieldSpec) {
+      _schema.addField(fieldSpec);
+    }
   }
 
   @Override

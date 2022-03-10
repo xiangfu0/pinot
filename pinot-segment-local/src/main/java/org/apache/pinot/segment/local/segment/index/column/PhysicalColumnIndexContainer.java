@@ -47,7 +47,6 @@ import org.apache.pinot.segment.spi.index.reader.NullValueVectorReader;
 import org.apache.pinot.segment.spi.index.reader.RangeIndexReader;
 import org.apache.pinot.segment.spi.index.reader.SortedIndexReader;
 import org.apache.pinot.segment.spi.index.reader.TextIndexReader;
-import org.apache.pinot.segment.spi.index.reader.TimestampIndexReader;
 import org.apache.pinot.segment.spi.index.reader.provider.IndexReaderProvider;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
 import org.apache.pinot.segment.spi.store.ColumnIndexType;
@@ -71,7 +70,6 @@ public final class PhysicalColumnIndexContainer implements ColumnIndexContainer 
   private final H3IndexReader _h3Index;
   private final BaseImmutableDictionary _dictionary;
   private final BloomFilterReader _bloomFilter;
-  private final TimestampIndexReader _timestampIndex;
   private final NullValueVectorReaderImpl _nullValueVectorReader;
 
   public PhysicalColumnIndexContainer(SegmentDirectory.Reader segmentReader, ColumnMetadata metadata,
@@ -86,7 +84,6 @@ public final class PhysicalColumnIndexContainer implements ColumnIndexContainer 
     boolean loadH3Index = indexLoadingConfig.getH3IndexConfigs().containsKey(columnName);
     boolean loadOnHeapDictionary = indexLoadingConfig.getOnHeapDictionaryColumns().contains(columnName);
     BloomFilterConfig bloomFilterConfig = indexLoadingConfig.getBloomFilterConfigs().get(columnName);
-    boolean loadTimestampIndex = indexLoadingConfig.getTimestampIndexConfigs().containsKey(columnName);
 
     if (segmentReader.hasIndexFor(columnName, ColumnIndexType.NULLVALUE_VECTOR)) {
       PinotDataBuffer nullValueVectorBuffer = segmentReader.getIndexFor(columnName, ColumnIndexType.NULLVALUE_VECTOR);
@@ -124,13 +121,6 @@ public final class PhysicalColumnIndexContainer implements ColumnIndexContainer 
       _bloomFilter = indexReaderProvider.newBloomFilterReader(bloomFilterBuffer, bloomFilterConfig.isLoadOnHeap());
     } else {
       _bloomFilter = null;
-    }
-
-    if (loadTimestampIndex) {
-      PinotDataBuffer timestampBuffer = segmentReader.getIndexFor(columnName, ColumnIndexType.TIMESTAMP_INDEX);
-      _timestampIndex = indexReaderProvider.newTimestampIndexReader(timestampBuffer, metadata);
-    } else {
-      _timestampIndex = null;
     }
 
     PinotDataBuffer fwdIndexBuffer = segmentReader.getIndexFor(columnName, ColumnIndexType.FORWARD_INDEX);
@@ -219,11 +209,6 @@ public final class PhysicalColumnIndexContainer implements ColumnIndexContainer 
   @Override
   public BloomFilterReader getBloomFilter() {
     return _bloomFilter;
-  }
-
-  @Override
-  public TimestampIndexReader getTimestampIndex() {
-    return _timestampIndex;
   }
 
   @Override

@@ -48,6 +48,7 @@ import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TimestampIndexGranularity;
 import org.apache.pinot.spi.data.DateTimeFieldSpec;
 import org.apache.pinot.spi.data.DateTimeFormatSpec;
+import org.apache.pinot.spi.data.DimensionFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.FieldSpec.FieldType;
 import org.apache.pinot.spi.data.Schema;
@@ -130,7 +131,7 @@ public class SegmentGeneratorConfig implements Serializable {
   public SegmentGeneratorConfig(TableConfig tableConfig, Schema schema) {
     Preconditions.checkNotNull(schema);
     Preconditions.checkNotNull(tableConfig);
-    setSchema(schema);
+    setSchema(updateSchema(tableConfig, schema));
 
     _tableConfig = tableConfig;
     setTableName(tableConfig.getTableName());
@@ -206,6 +207,38 @@ public class SegmentGeneratorConfig implements Serializable {
     }
   }
 
+  private Schema updateSchema(TableConfig tableConfig, Schema schema) {
+    Schema.SchemaBuilder schemaBuilder = new Schema.SchemaBuilder().setSchemaName(schema.getSchemaName())
+        .setPrimaryKeyColumns(schema.getPrimaryKeyColumns());
+    Map<String, Set<TimestampIndexGranularity>> timestampIndexConfigs =
+        extractTimestampIndexConfigsFromTableConfig(tableConfig);
+    if (timestampIndexConfigs.isEmpty()) {
+      return schema;
+    }
+    for (FieldSpec fieldSpec : schema.getAllFieldSpecs()) {
+      schemaBuilder.addFieldSpec(fieldSpec);
+    }
+    for (String columnName : timestampIndexConfigs.keySet()) {
+      Preconditions.checkState(schema.hasColumn(columnName),
+          "Cannot create Timestamp index for column: %s because it is not in schema", columnName);
+      FieldSpec fieldSpec = schema.getFieldSpecFor(columnName);
+      for (TimestampIndexGranularity granularity : timestampIndexConfigs.get(columnName)) {
+        if (fieldSpec instanceof DateTimeFieldSpec) {
+          DateTimeFieldSpec dateTimeFieldSpec = (DateTimeFieldSpec) fieldSpec;
+          schemaBuilder.addDateTime(TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granularity),
+              FieldSpec.DataType.TIMESTAMP, dateTimeFieldSpec.getFormat(), dateTimeFieldSpec.getGranularity(),
+              fieldSpec.getDefaultNullValue(), null);
+        }
+        if (fieldSpec instanceof DimensionFieldSpec) {
+          schemaBuilder.addSingleValueDimension(
+              TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granularity),
+              FieldSpec.DataType.TIMESTAMP, fieldSpec.getDefaultNullValue());
+        }
+      }
+    }
+    return schemaBuilder.build();
+  }
+
   public Map<String, Map<String, String>> getColumnProperties() {
     return _columnProperties;
   }
@@ -265,8 +298,10 @@ public class SegmentGeneratorConfig implements Serializable {
     }
   }
 
-  private void extractTimestampIndexConfigsFromTableConfig(TableConfig tableConfig) {
+  public static Map<String, Set<TimestampIndexGranularity>> extractTimestampIndexConfigsFromTableConfig(
+      TableConfig tableConfig) {
     List<FieldConfig> fieldConfigList = tableConfig.getFieldConfigList();
+    Map<String, Set<TimestampIndexGranularity>> timestampIndexConfigs = new HashMap<>();
     if (fieldConfigList != null) {
       for (FieldConfig fieldConfig : fieldConfigList) {
         if (fieldConfig.getIndexType() == FieldConfig.IndexType.TIMESTAMP) {
@@ -275,10 +310,11 @@ public class SegmentGeneratorConfig implements Serializable {
           Set<TimestampIndexGranularity> timestampIndexGranularities = Arrays.stream(granularities)
               .map(granularity -> TimestampIndexGranularity.valueOf(granularity.toUpperCase()))
               .collect(Collectors.toSet());
-          _timestampIndexConfigs.put(fieldConfig.getName(), timestampIndexGranularities);
+          timestampIndexConfigs.put(fieldConfig.getName(), timestampIndexGranularities);
         }
       }
     }
+    return timestampIndexConfigs;
   }
 
   private void extractCompressionCodecConfigsFromTableConfig(TableConfig tableConfig) {
@@ -288,8 +324,8 @@ public class SegmentGeneratorConfig implements Serializable {
         if (fieldConfig.getEncodingType() == FieldConfig.EncodingType.RAW
             && fieldConfig.getCompressionCodec() != null) {
           _rawIndexCreationColumns.add(fieldConfig.getName());
-          _rawIndexCompressionType
-              .put(fieldConfig.getName(), ChunkCompressionType.valueOf(fieldConfig.getCompressionCodec().name()));
+          _rawIndexCompressionType.put(fieldConfig.getName(),
+              ChunkCompressionType.valueOf(fieldConfig.getCompressionCodec().name()));
         }
       }
     }

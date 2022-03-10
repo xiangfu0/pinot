@@ -24,5 +24,5 @@ package org.apache.pinot.segment.spi.creator;
 public interface IndexCreatorProvider
     extends ForwardIndexCreatorProvider, InvertedIndexCreatorProvider, JsonIndexCreatorProvider,
             TextIndexCreatorProvider, GeoSpatialIndexCreatorProvider, RangeIndexCreatorProvider,
-            BloomFilterCreatorProvider, TimestampIndexCreatorProvider {
+            BloomFilterCreatorProvider {
 }

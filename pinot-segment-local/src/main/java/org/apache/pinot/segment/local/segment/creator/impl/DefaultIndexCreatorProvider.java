@@ -53,7 +53,6 @@ import org.apache.pinot.segment.spi.index.creator.ForwardIndexCreator;
 import org.apache.pinot.segment.spi.index.creator.GeoSpatialIndexCreator;
 import org.apache.pinot.segment.spi.index.creator.JsonIndexCreator;
 import org.apache.pinot.segment.spi.index.creator.TextIndexCreator;
-import org.apache.pinot.segment.spi.index.creator.TimestampIndexCreator;
 import org.apache.pinot.segment.spi.index.reader.H3IndexResolution;
 import org.apache.pinot.spi.config.table.FSTType;
 import org.apache.pinot.spi.config.table.FieldConfig;
@@ -197,8 +196,7 @@ public final class DefaultIndexCreatorProvider implements IndexCreatorProvider {
    */
   public static ForwardIndexCreator getRawIndexCreatorForSVColumn(File file, ChunkCompressionType compressionType,
       String column, FieldSpec.DataType dataType, int totalDocs, int lengthOfLongestEntry,
-      boolean deriveNumDocsPerChunk,
-      int writerVersion)
+      boolean deriveNumDocsPerChunk, int writerVersion)
       throws IOException {
     switch (dataType.getStoredType()) {
       case INT:
@@ -269,14 +267,7 @@ public final class DefaultIndexCreatorProvider implements IndexCreatorProvider {
     }
     // default to RangeIndexCreator for the time being
     return new RangeIndexCreator(context.getIndexDir(), context.getFieldSpec(),
-        context.hasDictionary() ? FieldSpec.DataType.INT : context.getFieldSpec().getDataType(), -1,
-        -1, context.getTotalDocs(), context.getTotalNumberOfEntries());
-  }
-
-  @Override
-  public TimestampIndexCreator newTimestampIndexCreator(IndexCreationContext.Timestamp context)
-      throws IOException {
-    return new org.apache.pinot.segment.local.segment.creator.impl.inv.TimestampIndexCreator(
-        context.getIndexDir(), context.getFieldSpec(), context.getGranularities(), context.getTotalDocs());
+        context.hasDictionary() ? FieldSpec.DataType.INT : context.getFieldSpec().getDataType(), -1, -1,
+        context.getTotalDocs(), context.getTotalNumberOfEntries());
   }
 }

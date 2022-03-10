@@ -21,25 +21,6 @@ package org.apache.pinot.spi.config.table;
 public enum TimestampIndexGranularity {
   MILLISECOND, SECOND, MINUTE, HOUR, DAY, WEEK, MONTH, QUARTER, YEAR;
 
-  public static int indexOf(TimestampIndexGranularity value) {
-    TimestampIndexGranularity[] values = TimestampIndexGranularity.values();
-    for (int i = 0; i < values.length; i++) {
-      if (values[i] == value) {
-        return i;
-      }
-    }
-    return -1;
-  }
-
-  public static int indexOf(String enumString) {
-    return indexOf(TimestampIndexGranularity.valueOf(enumString));
-  }
-
-  public static TimestampIndexGranularity getFromIndex(int idx) {
-    assert idx >= 0 && idx < TimestampIndexGranularity.values().length;
-    return TimestampIndexGranularity.values()[idx];
-  }
-
   public static String getColumnNameWithGranularity(String column, TimestampIndexGranularity granularity) {
     return column + "$" + granularity.toString();
   }

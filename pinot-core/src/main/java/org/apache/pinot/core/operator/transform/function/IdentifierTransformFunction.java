@@ -51,7 +51,7 @@ public class IdentifierTransformFunction implements TransformFunction, PushDownT
 
   @Override
   public String getName() {
-    throw new UnsupportedOperationException();
+    return _columnName;
   }
 
   @Override

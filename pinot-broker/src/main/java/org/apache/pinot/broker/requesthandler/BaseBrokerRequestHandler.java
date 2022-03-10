@@ -1783,10 +1783,18 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
         columnNameToCheck = columnName;
       }
     }
+    String columnNameSuffix = null;
+    if (columnName.contains("$")) {
+      splits = StringUtils.split(columnNameToCheck, "$", 2);
+      if (splits.length == 2) {
+        columnNameToCheck = splits[0];
+        columnNameSuffix = splits[1];
+      }
+    }
     if (columnNameMap != null) {
       String actualColumnName = columnNameMap.get(columnNameToCheck);
       if (actualColumnName != null) {
-        return actualColumnName;
+        return (columnNameSuffix == null) ? actualColumnName : actualColumnName + "$" + columnNameSuffix;
       }
     }
     if (aliasMap != null) {

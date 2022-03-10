@@ -28,8 +28,7 @@ public enum ColumnIndexType {
   FST_INDEX("fst_index"),
   JSON_INDEX("json_index"),
   RANGE_INDEX("range_index"),
-  H3_INDEX("h3_index"),
-  TIMESTAMP_INDEX("timestamp_index");
+  H3_INDEX("h3_index");
 
   private final String _indexName;
 

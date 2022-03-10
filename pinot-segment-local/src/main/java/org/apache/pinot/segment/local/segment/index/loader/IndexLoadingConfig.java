@@ -19,18 +19,17 @@
 package org.apache.pinot.segment.local.segment.index.loader;
 
 import com.google.common.annotations.VisibleForTesting;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.segment.local.segment.index.column.PhysicalColumnIndexContainer;
 import org.apache.pinot.segment.local.segment.index.loader.columnminmaxvalue.ColumnMinMaxValueGeneratorMode;
+import org.apache.pinot.segment.spi.creator.SegmentGeneratorConfig;
 import org.apache.pinot.segment.spi.creator.SegmentVersion;
 import org.apache.pinot.segment.spi.index.creator.H3IndexConfig;
 import org.apache.pinot.segment.spi.loader.SegmentDirectoryLoaderRegistry;
@@ -154,7 +153,12 @@ public class IndexLoadingConfig {
     extractTextIndexColumnsFromTableConfig(tableConfig);
     extractFSTIndexColumnsFromTableConfig(tableConfig);
     extractH3IndexConfigsFromTableConfig(tableConfig);
-    extractTimestampIndexConfigsFromTableConfig(tableConfig);
+    _timestampIndexConfigs = SegmentGeneratorConfig.extractTimestampIndexConfigsFromTableConfig(tableConfig);
+    for (String timestampColumn : _timestampIndexConfigs.keySet()) {
+      for (TimestampIndexGranularity granularity : _timestampIndexConfigs.get(timestampColumn)) {
+        _rangeIndexColumns.add(TimestampIndexGranularity.getColumnNameWithGranularity(timestampColumn, granularity));
+      }
+    }
 
     Map<String, String> noDictionaryConfig = indexingConfig.getNoDictionaryConfig();
     if (noDictionaryConfig != null) {
@@ -184,22 +188,6 @@ public class IndexLoadingConfig {
     if (columnMinMaxValueGeneratorMode != null) {
       _columnMinMaxValueGeneratorMode =
           ColumnMinMaxValueGeneratorMode.valueOf(columnMinMaxValueGeneratorMode.toUpperCase());
-    }
-  }
-
-  private void extractTimestampIndexConfigsFromTableConfig(TableConfig tableConfig) {
-    List<FieldConfig> fieldConfigList = tableConfig.getFieldConfigList();
-    if (fieldConfigList != null) {
-      for (FieldConfig fieldConfig : fieldConfigList) {
-        if (fieldConfig.getIndexType() == FieldConfig.IndexType.TIMESTAMP) {
-          //noinspection ConstantConditions
-          String[] granularities = fieldConfig.getProperties().get("granularities").split(",");
-          Set<TimestampIndexGranularity> timestampIndexGranularities = Arrays.stream(granularities)
-              .map(granularity -> TimestampIndexGranularity.valueOf(granularity.toUpperCase()))
-              .collect(Collectors.toSet());
-          _timestampIndexConfigs.put(fieldConfig.getName(), timestampIndexGranularities);
-        }
-      }
     }
   }
 

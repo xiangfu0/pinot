@@ -29,8 +29,11 @@ import org.apache.pinot.common.function.DateTimeUtils;
 import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.common.request.context.FilterContext;
 import org.apache.pinot.common.request.context.FunctionContext;
+import org.apache.pinot.common.request.context.predicate.EqPredicate;
 import org.apache.pinot.common.request.context.predicate.JsonMatchPredicate;
+import org.apache.pinot.common.request.context.predicate.NotEqPredicate;
 import org.apache.pinot.common.request.context.predicate.Predicate;
+import org.apache.pinot.common.request.context.predicate.RangePredicate;
 import org.apache.pinot.common.request.context.predicate.RegexpLikePredicate;
 import org.apache.pinot.common.request.context.predicate.TextMatchPredicate;
 import org.apache.pinot.core.geospatial.transform.function.StDistanceFunction;
@@ -43,7 +46,6 @@ import org.apache.pinot.core.operator.filter.H3IndexFilterOperator;
 import org.apache.pinot.core.operator.filter.JsonMatchFilterOperator;
 import org.apache.pinot.core.operator.filter.MatchAllFilterOperator;
 import org.apache.pinot.core.operator.filter.TextMatchFilterOperator;
-import org.apache.pinot.core.operator.filter.TimestampIndexFilterOperator;
 import org.apache.pinot.core.operator.filter.predicate.FSTBasedRegexpPredicateEvaluatorFactory;
 import org.apache.pinot.core.operator.filter.predicate.PredicateEvaluator;
 import org.apache.pinot.core.operator.filter.predicate.PredicateEvaluatorProvider;
@@ -162,7 +164,8 @@ public class FilterPlanNode implements PlanNode {
     String columnName = DateTimeUtils.getColumnNameFromFunctionContext(function);
     TimestampIndexGranularity granular = DateTimeUtils.getTimestampIndexGranularityFromFunctionContext(function);
     return columnName != null && granular != null
-        && _indexSegment.getDataSource(columnName).getTimestampIndex(granular.toString()) != null;
+        && _indexSegment.getDataSource(TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granular))
+        != null;
   }
 
   /**
@@ -210,11 +213,12 @@ public class FilterPlanNode implements PlanNode {
           if (canApplyH3Index(predicate, lhs.getFunction())) {
             return new H3IndexFilterOperator(_indexSegment, predicate, numDocs);
           }
+          if (canApplyTimestampIndex(predicate, lhs.getFunction())) {
+            return new ExpressionFilterOperator(_indexSegment, convertPredicateToUseTimestampIndex(predicate),
+                numDocs);
+          }
           // TODO: ExpressionFilterOperator does not support predicate types without PredicateEvaluator (IS_NULL,
           //       IS_NOT_NULL, TEXT_MATCH)
-          if (canApplyTimestampIndex(predicate, lhs.getFunction())) {
-            return new TimestampIndexFilterOperator(_indexSegment, predicate, numDocs);
-          }
           return new ExpressionFilterOperator(_indexSegment, predicate, numDocs);
         } else {
           String column = lhs.getIdentifier();
@@ -275,6 +279,27 @@ public class FilterPlanNode implements PlanNode {
         }
       default:
         throw new IllegalStateException();
+    }
+  }
+
+  private Predicate convertPredicateToUseTimestampIndex(Predicate predicate) {
+    FunctionContext function = predicate.getLhs().getFunction();
+    String columnName = DateTimeUtils.getColumnNameFromFunctionContext(function);
+    TimestampIndexGranularity granular = DateTimeUtils.getTimestampIndexGranularityFromFunctionContext(function);
+    String updatedColumnName = TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granular);
+    ExpressionContext updatedLhs = ExpressionContext.forIdentifier(updatedColumnName);
+    switch (predicate.getType()) {
+      case RANGE:
+        RangePredicate rangePredicate = (RangePredicate) predicate;
+        return new RangePredicate(updatedLhs, rangePredicate.getRange());
+      case EQ:
+        EqPredicate eqPredicate = (EqPredicate) predicate;
+        return new EqPredicate(updatedLhs, eqPredicate.getValue());
+      case NOT_EQ:
+        NotEqPredicate notEqPredicate = (NotEqPredicate) predicate;
+        return new NotEqPredicate(updatedLhs, notEqPredicate.getValue());
+      default:
+        return predicate;
     }
   }
 }

@@ -70,7 +70,6 @@ import org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexContext;
 import org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexProvider;
 import org.apache.pinot.segment.spi.index.reader.BloomFilterReader;
 import org.apache.pinot.segment.spi.index.reader.RangeIndexReader;
-import org.apache.pinot.segment.spi.index.reader.TimestampIndexReader;
 import org.apache.pinot.segment.spi.index.startree.StarTreeV2;
 import org.apache.pinot.segment.spi.memory.PinotDataBufferMemoryManager;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
@@ -316,7 +315,7 @@ public class MutableSegmentImpl implements MutableSegment {
       // TODO: Support range index and bloom filter for mutable segment
       _indexContainerMap.put(column,
           new IndexContainer(fieldSpec, partitionFunction, partitions, new NumValuesInfo(), forwardIndex, dictionary,
-              invertedIndexReader, null, textIndex, jsonIndex, h3Index, null, null, nullValueVector));
+              invertedIndexReader, null, textIndex, jsonIndex, h3Index, null, nullValueVector));
     }
 
     // TODO separate concerns: this logic does not belong here
@@ -1088,7 +1087,6 @@ public class MutableSegmentImpl implements MutableSegment {
     final MutableTextIndex _textIndex;
     final MutableJsonIndex _jsonIndex;
     final BloomFilterReader _bloomFilter;
-    final TimestampIndexReader _timestampIndex;
     final MutableNullValueVector _nullValueVector;
 
     volatile Comparable _minValue;
@@ -1102,8 +1100,7 @@ public class MutableSegmentImpl implements MutableSegment {
         @Nullable Set<Integer> partitions, NumValuesInfo numValuesInfo, MutableForwardIndex forwardIndex,
         @Nullable MutableDictionary dictionary, @Nullable MutableInvertedIndex invertedIndex,
         @Nullable RangeIndexReader rangeIndex, @Nullable MutableTextIndex textIndex,
-        @Nullable MutableJsonIndex jsonIndex, @Nullable MutableH3Index h3Index,
-        @Nullable BloomFilterReader bloomFilter, @Nullable TimestampIndexReader timestampIndex,
+        @Nullable MutableJsonIndex jsonIndex, @Nullable MutableH3Index h3Index, @Nullable BloomFilterReader bloomFilter,
         @Nullable MutableNullValueVector nullValueVector) {
       _fieldSpec = fieldSpec;
       _partitionFunction = partitionFunction;
@@ -1118,15 +1115,13 @@ public class MutableSegmentImpl implements MutableSegment {
       _textIndex = textIndex;
       _jsonIndex = jsonIndex;
       _bloomFilter = bloomFilter;
-      _timestampIndex = timestampIndex;
       _nullValueVector = nullValueVector;
     }
 
     DataSource toDataSource() {
       return new MutableDataSource(_fieldSpec, _numDocsIndexed, _numValuesInfo._numValues,
           _numValuesInfo._maxNumValuesPerMVEntry, _partitionFunction, _partitions, _minValue, _maxValue, _forwardIndex,
-          _dictionary, _invertedIndex, _rangeIndex, _textIndex, _jsonIndex, _h3Index, _bloomFilter, _timestampIndex,
-          _nullValueVector);
+          _dictionary, _invertedIndex, _rangeIndex, _textIndex, _jsonIndex, _h3Index, _bloomFilter, _nullValueVector);
     }
 
     @Override
@@ -1185,14 +1180,6 @@ public class MutableSegmentImpl implements MutableSegment {
           _bloomFilter.close();
         } catch (Exception e) {
           _logger.error("Caught exception while closing bloom filter for column: {}, continuing with error", column, e);
-        }
-      }
-      if (_timestampIndex != null) {
-        try {
-          _timestampIndex.close();
-        } catch (Exception e) {
-          _logger.error("Caught exception while closing timestamp index for column: {}, continuing with error", column,
-              e);
         }
       }
     }

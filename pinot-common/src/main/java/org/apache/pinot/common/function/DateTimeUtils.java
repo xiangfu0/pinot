@@ -48,8 +48,7 @@ public class DateTimeUtils {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(DateTimeUtils.class);
   private static final DateTimeFieldType QUARTER_OF_YEAR = new QuarterOfYearDateTimeField();
-  private final static Set<String> SUPPORTED_TIMESTAMP_GRANULAR_FUNCTIONS =
-      ImmutableSet.of("datetrunc", "years", "quarters", "months", "weeks", "days", "hours", "minutes");
+  private final static Set<String> SUPPORTED_TIMESTAMP_GRANULAR_FUNCTIONS = ImmutableSet.of("datetrunc");
 
   public static DateTimeField getTimestampField(ISOChronology chronology, String unitString) {
     switch (unitString.toLowerCase()) {
@@ -162,31 +161,6 @@ public class DateTimeUtils {
     }
   }
 
-  public static TimestampIndexGranularity getTimeGranularityFromDateTruncUnit(String timeUnit) {
-    switch (timeUnit.toLowerCase()) {
-      case "milliseconds":
-        return TimestampIndexGranularity.MILLISECOND;
-      case "seconds":
-        return TimestampIndexGranularity.SECOND;
-      case "minutes":
-        return TimestampIndexGranularity.MINUTE;
-      case "hours":
-        return TimestampIndexGranularity.HOUR;
-      case "days":
-        return TimestampIndexGranularity.DAY;
-      case "weeks":
-        return TimestampIndexGranularity.WEEK;
-      case "months":
-        return TimestampIndexGranularity.MONTH;
-      case "quarters":
-        return TimestampIndexGranularity.QUARTER;
-      case "years":
-        return TimestampIndexGranularity.YEAR;
-      default:
-        throw new UnsupportedOperationException("Unknown timeUnit argument for dateTrunc function: " + timeUnit);
-    }
-  }
-
   public static TimestampIndexGranularity getTimestampIndexGranularityFromFunctionContext(FunctionContext function) {
     String functionName = function.getFunctionName().toLowerCase();
     if (!SUPPORTED_TIMESTAMP_GRANULAR_FUNCTIONS.contains(functionName)) {
@@ -207,11 +181,8 @@ public class DateTimeUtils {
     }
   }
 
-
   private static TimestampIndexGranularity getTimeGranularityFromSingleArgumentFunction(String function) {
     switch (function.toLowerCase()) {
-      case "toDays":
-        return TimestampIndexGranularity.DAY;
       default:
         throw new RuntimeException();
     }

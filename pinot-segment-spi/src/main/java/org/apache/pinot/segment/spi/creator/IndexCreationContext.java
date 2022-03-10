@@ -61,6 +61,10 @@ public interface IndexCreationContext {
 
   boolean hasDictionary();
 
+  Comparable getMinValue();
+
+  Comparable getMaxValue();
+
   final class Builder {
     private File _indexDir;
     private int _lengthOfLongestEntry;
@@ -73,6 +77,8 @@ public interface IndexCreationContext {
     private int _totalNumberOfEntries;
     private int _totalDocs;
     private boolean _hasDictionary = true;
+    private Object _minValue;
+    private Object _maxValue;
 
     public Builder withColumnIndexCreationInfo(ColumnIndexCreationInfo columnIndexCreationInfo) {
       return withLengthOfLongestEntry(
@@ -95,7 +101,18 @@ public interface IndexCreationContext {
       return withFieldSpec(columnMetadata.getFieldSpec()).sorted(columnMetadata.isSorted())
           .withCardinality(columnMetadata.getCardinality())
           .withTotalNumberOfEntries(columnMetadata.getTotalNumberOfEntries())
-          .withTotalDocs(columnMetadata.getTotalDocs()).withDictionary(columnMetadata.hasDictionary());
+          .withTotalDocs(columnMetadata.getTotalDocs()).withDictionary(columnMetadata.hasDictionary())
+          .withMinValue(columnMetadata.getMinValue()).withMaxValue(columnMetadata.getMaxValue());
+    }
+
+    public Builder withMinValue(Object minValue) {
+      _minValue = minValue;
+      return this;
+    }
+
+    public Builder withMaxValue(Object maxValue) {
+      _maxValue = maxValue;
+      return this;
     }
 
     public Builder withLengthOfLongestEntry(int lengthOfLongestEntry) {
@@ -146,7 +163,7 @@ public interface IndexCreationContext {
     public Common build() {
       return new Common(Objects.requireNonNull(_indexDir), _lengthOfLongestEntry, _maxNumberOfMultiValueElements,
           _maxRowLengthInBytes, _onHeap, Objects.requireNonNull(_fieldSpec), _sorted, _cardinality,
-          _totalNumberOfEntries, _totalDocs, _hasDictionary);
+          _totalNumberOfEntries, _totalDocs, _hasDictionary, _minValue, _maxValue);
     }
   }
 
@@ -167,10 +184,12 @@ public interface IndexCreationContext {
     private final int _totalNumberOfEntries;
     private final int _totalDocs;
     private final boolean _hasDictionary;
+    private final Object _minValue;
+    private final Object _maxValue;
 
     public Common(File indexDir, int lengthOfLongestEntry, int maxNumberOfMultiValueElements, int maxRowLengthInBytes,
         boolean onHeap, FieldSpec fieldSpec, boolean sorted, int cardinality, int totalNumberOfEntries, int totalDocs,
-        boolean hasDictionary) {
+        boolean hasDictionary, Object minValue, Object maxValue) {
       _indexDir = indexDir;
       _lengthOfLongestEntry = lengthOfLongestEntry;
       _maxNumberOfMultiValueElements = maxNumberOfMultiValueElements;
@@ -182,6 +201,8 @@ public interface IndexCreationContext {
       _totalNumberOfEntries = totalNumberOfEntries;
       _totalDocs = totalDocs;
       _hasDictionary = hasDictionary;
+      _minValue = minValue;
+      _maxValue = maxValue;
     }
 
     public FieldSpec getFieldSpec() {
@@ -226,6 +247,16 @@ public interface IndexCreationContext {
 
     public boolean hasDictionary() {
       return _hasDictionary;
+    }
+
+    @Override
+    public Comparable getMinValue() {
+      return (Comparable) _minValue;
+    }
+
+    @Override
+    public Comparable getMaxValue() {
+      return (Comparable) _maxValue;
     }
 
     public BloomFilter forBloomFilter(BloomFilterConfig bloomFilterConfig) {
@@ -327,6 +358,16 @@ public interface IndexCreationContext {
     @Override
     public boolean hasDictionary() {
       return _delegate.hasDictionary();
+    }
+
+    @Override
+    public Comparable getMinValue() {
+      return _delegate.getMinValue();
+    }
+
+    @Override
+    public Comparable getMaxValue() {
+      return _delegate.getMaxValue();
     }
   }
 

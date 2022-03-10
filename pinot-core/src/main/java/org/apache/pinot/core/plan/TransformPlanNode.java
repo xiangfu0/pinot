@@ -23,12 +23,14 @@ import java.util.HashSet;
 import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.pinot.common.request.context.ExpressionContext;
+import org.apache.pinot.common.request.context.FunctionContext;
 import org.apache.pinot.core.operator.ProjectionOperator;
 import org.apache.pinot.core.operator.filter.BaseFilterOperator;
 import org.apache.pinot.core.operator.transform.PassThroughTransformOperator;
 import org.apache.pinot.core.operator.transform.TransformOperator;
 import org.apache.pinot.core.query.request.context.QueryContext;
 import org.apache.pinot.segment.spi.IndexSegment;
+import org.apache.pinot.spi.config.table.TimestampIndexGranularity;
 
 
 /**
@@ -64,6 +66,7 @@ public class TransformPlanNode implements PlanNode {
       if (expression.getType() != ExpressionContext.Type.IDENTIFIER) {
         hasNonIdentifierExpression = true;
       }
+      pushdownFunctions(_indexSegment, expression, projectionColumns);
     }
     ProjectionOperator projectionOperator =
         new ProjectionPlanNode(_indexSegment, _queryContext, projectionColumns, _maxDocsPerCall, _filterOperator).run();
@@ -71,6 +74,32 @@ public class TransformPlanNode implements PlanNode {
       return new TransformOperator(_queryContext, projectionOperator, _expressions);
     } else {
       return new PassThroughTransformOperator(projectionOperator, _expressions);
+    }
+  }
+
+  private void pushdownFunctions(IndexSegment indexSegment, ExpressionContext expression,
+      Set<String> projectionColumns) {
+    if (expression.getType() != ExpressionContext.Type.FUNCTION) {
+      return;
+    }
+    FunctionContext function = expression.getFunction();
+    switch (function.getFunctionName().toUpperCase()) {
+      case "DATETRUNC":
+        if (function.getArguments().size() != 2) {
+          break;
+        }
+        String columnWithGranularity =
+            TimestampIndexGranularity.getColumnNameWithGranularity(function.getArguments().get(1).getIdentifier(),
+                TimestampIndexGranularity.valueOf(function.getArguments().get(0).getLiteral().toUpperCase()));
+        if (indexSegment.getDataSource(columnWithGranularity) != null) {
+          projectionColumns.add(columnWithGranularity);
+        }
+        break;
+      default:
+        break;
+    }
+    for (ExpressionContext argument : function.getArguments()) {
+      pushdownFunctions(indexSegment, argument, projectionColumns);
     }
   }
 }

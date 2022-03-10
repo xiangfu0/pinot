@@ -23,14 +23,15 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.Iterables;
 import java.io.File;
 import java.io.IOException;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.apache.commons.configuration.ConfigurationException;
 import org.apache.commons.configuration.PropertiesConfiguration;
+import org.apache.pinot.common.function.scalar.DateTimeFunctions;
 import org.apache.pinot.common.utils.FileUtils;
 import org.apache.pinot.segment.local.io.util.PinotDataBitSet;
 import org.apache.pinot.segment.local.segment.creator.impl.nullvalue.NullValueVectorCreator;
@@ -50,12 +51,12 @@ import org.apache.pinot.segment.spi.index.creator.H3IndexConfig;
 import org.apache.pinot.segment.spi.index.creator.JsonIndexCreator;
 import org.apache.pinot.segment.spi.index.creator.SegmentIndexCreationInfo;
 import org.apache.pinot.segment.spi.index.creator.TextIndexCreator;
-import org.apache.pinot.segment.spi.index.creator.TimestampIndexCreator;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.TimestampIndexGranularity;
 import org.apache.pinot.spi.data.DateTimeFieldSpec;
 import org.apache.pinot.spi.data.DateTimeFormatSpec;
+import org.apache.pinot.spi.data.DimensionFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.apache.pinot.spi.data.FieldSpec.FieldType;
@@ -93,7 +94,6 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
   private final Map<String, TextIndexCreator> _fstIndexCreatorMap = new HashMap<>();
   private final Map<String, JsonIndexCreator> _jsonIndexCreatorMap = new HashMap<>();
   private final Map<String, GeoSpatialIndexCreator> _h3IndexCreatorMap = new HashMap<>();
-  private final Map<String, TimestampIndexCreator> _timestampIndexCreatorMap = new HashMap<>();
   private final Map<String, NullValueVectorCreator> _nullValueVectorCreatorMap = new HashMap<>();
   private String _segmentName;
   private Schema _schema;
@@ -124,7 +124,7 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
       return;
     }
 
-    Collection<FieldSpec> fieldSpecs = schema.getAllFieldSpecs();
+    Set<FieldSpec> fieldSpecs = new LinkedHashSet<>(schema.getAllFieldSpecs());
     Set<String> invertedIndexColumns = new HashSet<>();
     for (String columnName : _config.getInvertedIndexCreationColumns()) {
       Preconditions.checkState(schema.hasColumn(columnName),
@@ -163,6 +163,22 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
     for (String columnName : timestampIndexConfigs.keySet()) {
       Preconditions.checkState(schema.hasColumn(columnName),
           "Cannot create Timestamp index for column: %s because it is not in schema", columnName);
+      FieldSpec fieldSpec = _schema.getFieldSpecFor(columnName);
+      for (TimestampIndexGranularity granularity : timestampIndexConfigs.get(columnName)) {
+        if (fieldSpec instanceof DateTimeFieldSpec) {
+          DateTimeFieldSpec dateTimeFieldSpec = (DateTimeFieldSpec) fieldSpec;
+          fieldSpecs.add(
+              new DateTimeFieldSpec(TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granularity),
+                  FieldSpec.DataType.TIMESTAMP, dateTimeFieldSpec.getFormat(), dateTimeFieldSpec.getGranularity(),
+                  DateTimeFunctions.dateTrunc(granularity.toString(), (Long) fieldSpec.getDefaultNullValue()), null));
+        }
+        if (fieldSpec instanceof DimensionFieldSpec) {
+          fieldSpecs.add(
+              new DimensionFieldSpec(TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granularity),
+                  FieldSpec.DataType.TIMESTAMP, true,
+                  DateTimeFunctions.dateTrunc(granularity.toString(), (Long) fieldSpec.getDefaultNullValue())));
+        }
+      }
     }
 
     // Initialize creators for dictionary, forward index and inverted index
@@ -182,6 +198,7 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
       IndexCreationContext.Common context = IndexCreationContext.builder().withIndexDir(_indexDir)
           .withCardinality(columnIndexCreationInfo.getDistinctValueCount()).withDictionary(dictEnabledColumn)
           .withFieldSpec(fieldSpec).withTotalDocs(segmentIndexCreationInfo.getTotalDocs())
+          .withMinValue(columnIndexCreationInfo.getMin()).withMaxValue(columnIndexCreationInfo.getMax())
           .withTotalNumberOfEntries(columnIndexCreationInfo.getTotalNumberOfEntries())
           .withColumnIndexCreationInfo(columnIndexCreationInfo).sorted(columnIndexCreationInfo.isSorted())
           .onHeap(segmentCreationSpec.isOnHeap()).build();
@@ -232,12 +249,6 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
       if (h3IndexConfig != null) {
         _h3IndexCreatorMap.put(columnName,
             _indexCreatorProvider.newGeoSpatialIndexCreator(context.forGeospatialIndex(h3IndexConfig)));
-      }
-
-      Set<TimestampIndexGranularity> timestampIndexGranularities = _config.getTimestampIndexConfigs().get(columnName);
-      if (timestampIndexGranularities != null) {
-        _timestampIndexCreatorMap.put(columnName,
-            _indexCreatorProvider.newTimestampIndexCreator(context.forTimestamp(timestampIndexGranularities)));
       }
 
       _nullHandlingEnabled = _config.isNullHandlingEnabled();
@@ -346,10 +357,6 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
         GeoSpatialIndexCreator h3IndexCreator = _h3IndexCreatorMap.get(columnName);
         if (h3IndexCreator != null) {
           h3IndexCreator.add(GeometrySerializer.deserialize((byte[]) columnValueToIndex));
-        }
-        TimestampIndexCreator timestampIndexCreator = _timestampIndexCreatorMap.get(columnName);
-        if (timestampIndexCreator != null) {
-          timestampIndexCreator.add((Long) columnValueToIndex);
         }
         if (dictionaryCreator != null) {
           // dictionary encoded SV column
@@ -532,9 +539,6 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
     }
     for (GeoSpatialIndexCreator h3IndexCreator : _h3IndexCreatorMap.values()) {
       h3IndexCreator.seal();
-    }
-    for (TimestampIndexCreator timestampIndexCreator : _timestampIndexCreatorMap.values()) {
-      timestampIndexCreator.seal();
     }
     for (NullValueVectorCreator nullValueVectorCreator : _nullValueVectorCreatorMap.values()) {
       nullValueVectorCreator.seal();
@@ -737,7 +741,6 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
       throws IOException {
     FileUtils.close(Iterables.concat(_dictionaryCreatorMap.values(), _forwardIndexCreatorMap.values(),
         _invertedIndexCreatorMap.values(), _textIndexCreatorMap.values(), _fstIndexCreatorMap.values(),
-        _jsonIndexCreatorMap.values(), _h3IndexCreatorMap.values(), _timestampIndexCreatorMap.values(),
-        _nullValueVectorCreatorMap.values()));
+        _jsonIndexCreatorMap.values(), _h3IndexCreatorMap.values(), _nullValueVectorCreatorMap.values()));
   }
 }

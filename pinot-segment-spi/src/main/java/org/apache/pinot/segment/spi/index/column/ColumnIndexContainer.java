@@ -28,7 +28,6 @@ import org.apache.pinot.segment.spi.index.reader.JsonIndexReader;
 import org.apache.pinot.segment.spi.index.reader.NullValueVectorReader;
 import org.apache.pinot.segment.spi.index.reader.RangeIndexReader;
 import org.apache.pinot.segment.spi.index.reader.TextIndexReader;
-import org.apache.pinot.segment.spi.index.reader.TimestampIndexReader;
 
 
 /**
@@ -80,11 +79,6 @@ public interface ColumnIndexContainer extends Closeable {
    * Returns the bloom filter for the column, or {@code null} if it does not exist.
    */
   BloomFilterReader getBloomFilter();
-
-  /**
-   * Returns the timestamp index for the column, or {@code null} if it does not exist.
-   */
-  TimestampIndexReader getTimestampIndex();
 
   /**
    * Returns the null value vector for the column, or {@code null} if it does not exist.

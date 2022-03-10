@@ -25,7 +25,6 @@ import org.apache.pinot.segment.local.segment.index.loader.invertedindex.Inverte
 import org.apache.pinot.segment.local.segment.index.loader.invertedindex.JsonIndexHandler;
 import org.apache.pinot.segment.local.segment.index.loader.invertedindex.RangeIndexHandler;
 import org.apache.pinot.segment.local.segment.index.loader.invertedindex.TextIndexHandler;
-import org.apache.pinot.segment.local.segment.index.loader.invertedindex.TimestampIndexHandler;
 import org.apache.pinot.segment.spi.creator.IndexCreatorProvider;
 import org.apache.pinot.segment.spi.index.metadata.SegmentMetadataImpl;
 import org.apache.pinot.segment.spi.store.ColumnIndexType;
@@ -64,8 +63,6 @@ public class IndexHandlerFactory {
         return new H3IndexHandler(segmentMetadata, indexLoadingConfig);
       case BLOOM_FILTER:
         return new BloomFilterHandler(segmentMetadata, indexLoadingConfig);
-      case TIMESTAMP_INDEX:
-        return new TimestampIndexHandler(segmentMetadata, indexLoadingConfig);
       default:
         return NO_OP_HANDLER;
     }

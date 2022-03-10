@@ -28,7 +28,6 @@ import org.apache.pinot.segment.spi.index.reader.JsonIndexReader;
 import org.apache.pinot.segment.spi.index.reader.NullValueVectorReader;
 import org.apache.pinot.segment.spi.index.reader.RangeIndexReader;
 import org.apache.pinot.segment.spi.index.reader.TextIndexReader;
-import org.apache.pinot.segment.spi.index.reader.TimestampIndexReader;
 
 
 /**
@@ -94,13 +93,6 @@ public interface DataSource {
    */
   @Nullable
   BloomFilterReader getBloomFilter();
-
-  /**
-   * Returns the Timestamp index for the timestamp column if exists, or {@code null} if not.
-   * @param granular
-   */
-  @Nullable
-  TimestampIndexReader getTimestampIndex(String granular);
 
   /**
    * Returns null value vector for the column if exists, or {@code null} if not.

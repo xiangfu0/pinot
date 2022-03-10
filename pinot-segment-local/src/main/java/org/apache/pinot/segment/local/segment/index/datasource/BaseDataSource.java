@@ -30,7 +30,6 @@ import org.apache.pinot.segment.spi.index.reader.JsonIndexReader;
 import org.apache.pinot.segment.spi.index.reader.NullValueVectorReader;
 import org.apache.pinot.segment.spi.index.reader.RangeIndexReader;
 import org.apache.pinot.segment.spi.index.reader.TextIndexReader;
-import org.apache.pinot.segment.spi.index.reader.TimestampIndexReader;
 
 
 public abstract class BaseDataSource implements DataSource {
@@ -44,14 +43,12 @@ public abstract class BaseDataSource implements DataSource {
   private final JsonIndexReader _jsonIndex;
   private final H3IndexReader _h3Index;
   private final BloomFilterReader _bloomFilter;
-  private final TimestampIndexReader _timestampIndex;
   private final NullValueVectorReader _nullValueVector;
 
   public BaseDataSource(DataSourceMetadata dataSourceMetadata, ForwardIndexReader<?> forwardIndex,
       @Nullable Dictionary dictionary, @Nullable InvertedIndexReader<?> invertedIndex,
-      @Nullable RangeIndexReader<?> rangeIndex, @Nullable TextIndexReader textIndex,
-      @Nullable TextIndexReader fstIndex, @Nullable JsonIndexReader jsonIndex, @Nullable H3IndexReader h3Index,
-      @Nullable BloomFilterReader bloomFilter, @Nullable TimestampIndexReader timestampIndex,
+      @Nullable RangeIndexReader<?> rangeIndex, @Nullable TextIndexReader textIndex, @Nullable TextIndexReader fstIndex,
+      @Nullable JsonIndexReader jsonIndex, @Nullable H3IndexReader h3Index, @Nullable BloomFilterReader bloomFilter,
       @Nullable NullValueVectorReader nullValueVector) {
     _dataSourceMetadata = dataSourceMetadata;
     _forwardIndex = forwardIndex;
@@ -63,7 +60,6 @@ public abstract class BaseDataSource implements DataSource {
     _jsonIndex = jsonIndex;
     _h3Index = h3Index;
     _bloomFilter = bloomFilter;
-    _timestampIndex = timestampIndex;
     _nullValueVector = nullValueVector;
   }
 
@@ -123,12 +119,6 @@ public abstract class BaseDataSource implements DataSource {
   @Override
   public BloomFilterReader getBloomFilter() {
     return _bloomFilter;
-  }
-
-  @Nullable
-  @Override
-  public TimestampIndexReader getTimestampIndex(String granularity) {
-    return _timestampIndex.get(granularity);
   }
 
   @Nullable

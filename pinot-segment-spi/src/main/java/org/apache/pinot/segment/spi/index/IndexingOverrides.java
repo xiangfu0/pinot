@@ -36,7 +36,6 @@ import org.apache.pinot.segment.spi.index.creator.ForwardIndexCreator;
 import org.apache.pinot.segment.spi.index.creator.GeoSpatialIndexCreator;
 import org.apache.pinot.segment.spi.index.creator.JsonIndexCreator;
 import org.apache.pinot.segment.spi.index.creator.TextIndexCreator;
-import org.apache.pinot.segment.spi.index.creator.TimestampIndexCreator;
 import org.apache.pinot.segment.spi.index.mutable.MutableDictionary;
 import org.apache.pinot.segment.spi.index.mutable.MutableForwardIndex;
 import org.apache.pinot.segment.spi.index.mutable.MutableInvertedIndex;
@@ -52,7 +51,6 @@ import org.apache.pinot.segment.spi.index.reader.JsonIndexReader;
 import org.apache.pinot.segment.spi.index.reader.RangeIndexReader;
 import org.apache.pinot.segment.spi.index.reader.SortedIndexReader;
 import org.apache.pinot.segment.spi.index.reader.TextIndexReader;
-import org.apache.pinot.segment.spi.index.reader.TimestampIndexReader;
 import org.apache.pinot.segment.spi.index.reader.provider.IndexReaderProvider;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
 import org.slf4j.Logger;
@@ -193,13 +191,6 @@ public class IndexingOverrides {
     }
 
     @Override
-    public TimestampIndexCreator newTimestampIndexCreator(IndexCreationContext.Timestamp context)
-        throws IOException {
-      ensureReaderPresent();
-      return CREATOR_DEFAULTS.newTimestampIndexCreator(context);
-    }
-
-    @Override
     public BloomFilterReader newBloomFilterReader(PinotDataBuffer dataBuffer, boolean onHeap)
         throws IOException {
       ensureReaderPresent();
@@ -290,11 +281,6 @@ public class IndexingOverrides {
     public MutableDictionary newDictionary(MutableIndexContext.Dictionary context) {
       ensureMutableReaderPresent();
       return MUTABLE_INDEX_DEFAULTS.newDictionary(context);
-    }
-
-    public TimestampIndexReader newTimestampIndexReader(PinotDataBuffer dataBuffer, ColumnMetadata metadata)
-        throws IOException {
-      return READER_DEFAULTS.newTimestampIndexReader(dataBuffer, metadata);
     }
 
     private void ensureReaderPresent() {

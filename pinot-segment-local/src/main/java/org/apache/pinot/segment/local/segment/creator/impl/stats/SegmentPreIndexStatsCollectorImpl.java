@@ -20,9 +20,12 @@ package org.apache.pinot.segment.local.segment.creator.impl.stats;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import org.apache.pinot.segment.spi.creator.ColumnStatistics;
+import org.apache.pinot.segment.spi.creator.SegmentGeneratorConfig;
 import org.apache.pinot.segment.spi.creator.SegmentPreIndexStatsCollector;
 import org.apache.pinot.segment.spi.creator.StatsCollectorConfig;
+import org.apache.pinot.spi.config.table.TimestampIndexGranularity;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.readers.GenericRow;
@@ -46,8 +49,17 @@ public class SegmentPreIndexStatsCollectorImpl implements SegmentPreIndexStatsCo
     _columnStatsCollectorMap = new HashMap<>();
 
     Schema dataSchema = _statsCollectorConfig.getSchema();
+    Map<String, Set<TimestampIndexGranularity>> timestampIndexConfigs =
+        SegmentGeneratorConfig.extractTimestampIndexConfigsFromTableConfig(_statsCollectorConfig.getTableConfig());
     for (FieldSpec fieldSpec : dataSchema.getAllFieldSpecs()) {
       String column = fieldSpec.getName();
+      if (fieldSpec.getDataType() == FieldSpec.DataType.TIMESTAMP && timestampIndexConfigs.containsKey(column)) {
+        for (TimestampIndexGranularity granularity : timestampIndexConfigs.get(column)) {
+          String newColumn = TimestampIndexGranularity.getColumnNameWithGranularity(column, granularity);
+          _columnStatsCollectorMap.put(newColumn,
+              new LongColumnPreIndexStatsCollector(newColumn, _statsCollectorConfig));
+        }
+      }
       switch (fieldSpec.getDataType().getStoredType()) {
         case INT:
           _columnStatsCollectorMap.put(column, new IntColumnPreIndexStatsCollector(column, _statsCollectorConfig));

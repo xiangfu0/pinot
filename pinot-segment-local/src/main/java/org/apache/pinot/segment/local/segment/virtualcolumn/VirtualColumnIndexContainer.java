@@ -29,7 +29,6 @@ import org.apache.pinot.segment.spi.index.reader.JsonIndexReader;
 import org.apache.pinot.segment.spi.index.reader.NullValueVectorReader;
 import org.apache.pinot.segment.spi.index.reader.RangeIndexReader;
 import org.apache.pinot.segment.spi.index.reader.TextIndexReader;
-import org.apache.pinot.segment.spi.index.reader.TimestampIndexReader;
 
 
 /**
@@ -89,11 +88,6 @@ public class VirtualColumnIndexContainer implements ColumnIndexContainer {
 
   @Override
   public BloomFilterReader getBloomFilter() {
-    return null;
-  }
-
-  @Override
-  public TimestampIndexReader getTimestampIndex() {
     return null;
   }
 
