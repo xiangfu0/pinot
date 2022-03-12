@@ -198,7 +198,8 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
       IndexCreationContext.Common context = IndexCreationContext.builder().withIndexDir(_indexDir)
           .withCardinality(columnIndexCreationInfo.getDistinctValueCount()).withDictionary(dictEnabledColumn)
           .withFieldSpec(fieldSpec).withTotalDocs(segmentIndexCreationInfo.getTotalDocs())
-          .withMinValue(columnIndexCreationInfo.getMin()).withMaxValue(columnIndexCreationInfo.getMax())
+          .withMinValue((Comparable<?>) columnIndexCreationInfo.getMin())
+          .withMaxValue((Comparable<?>) columnIndexCreationInfo.getMax())
           .withTotalNumberOfEntries(columnIndexCreationInfo.getTotalNumberOfEntries())
           .withColumnIndexCreationInfo(columnIndexCreationInfo).sorted(columnIndexCreationInfo.isSorted())
           .onHeap(segmentCreationSpec.isOnHeap()).build();

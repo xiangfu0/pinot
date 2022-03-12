@@ -77,8 +77,8 @@ public interface IndexCreationContext {
     private int _totalNumberOfEntries;
     private int _totalDocs;
     private boolean _hasDictionary = true;
-    private Object _minValue;
-    private Object _maxValue;
+    private Comparable<?> _minValue;
+    private Comparable<?> _maxValue;
 
     public Builder withColumnIndexCreationInfo(ColumnIndexCreationInfo columnIndexCreationInfo) {
       return withLengthOfLongestEntry(
@@ -105,12 +105,12 @@ public interface IndexCreationContext {
           .withMinValue(columnMetadata.getMinValue()).withMaxValue(columnMetadata.getMaxValue());
     }
 
-    public Builder withMinValue(Object minValue) {
+    public Builder withMinValue(Comparable<?> minValue) {
       _minValue = minValue;
       return this;
     }
 
-    public Builder withMaxValue(Object maxValue) {
+    public Builder withMaxValue(Comparable<?> maxValue) {
       _maxValue = maxValue;
       return this;
     }
@@ -184,12 +184,12 @@ public interface IndexCreationContext {
     private final int _totalNumberOfEntries;
     private final int _totalDocs;
     private final boolean _hasDictionary;
-    private final Object _minValue;
-    private final Object _maxValue;
+    private final Comparable<?> _minValue;
+    private final Comparable<?> _maxValue;
 
     public Common(File indexDir, int lengthOfLongestEntry, int maxNumberOfMultiValueElements, int maxRowLengthInBytes,
         boolean onHeap, FieldSpec fieldSpec, boolean sorted, int cardinality, int totalNumberOfEntries, int totalDocs,
-        boolean hasDictionary, Object minValue, Object maxValue) {
+        boolean hasDictionary, Comparable<?> minValue, Comparable<?> maxValue) {
       _indexDir = indexDir;
       _lengthOfLongestEntry = lengthOfLongestEntry;
       _maxNumberOfMultiValueElements = maxNumberOfMultiValueElements;
@@ -284,8 +284,8 @@ public interface IndexCreationContext {
       return new Json(this);
     }
 
-    public Range forRangeIndex(int rangeIndexVersion, Comparable<?> min, Comparable<?> max) {
-      return new Range(this, rangeIndexVersion, min, max);
+    public Range forRangeIndex(int rangeIndexVersion) {
+      return new Range(this, rangeIndexVersion);
     }
 
     public Timestamp forTimestamp(Set<TimestampIndexGranularity> granularities) {
@@ -436,24 +436,11 @@ public interface IndexCreationContext {
   }
 
   class Range extends Wrapper {
-
-    private final Comparable<?> _min;
-    private final Comparable<?> _max;
     private final int _rangeIndexVersion;
 
-    Range(IndexCreationContext delegate, int rangeIndexVersion, Comparable<?> min, Comparable<?> max) {
+    Range(IndexCreationContext delegate, int rangeIndexVersion) {
       super(delegate);
       _rangeIndexVersion = rangeIndexVersion;
-      _min = min;
-      _max = max;
-    }
-
-    public Comparable<?> getMin() {
-      return _min;
-    }
-
-    public Comparable<?> getMax() {
-      return _max;
     }
 
     public int getRangeIndexVersion() {
