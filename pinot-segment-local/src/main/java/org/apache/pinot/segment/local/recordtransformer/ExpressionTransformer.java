@@ -20,14 +20,12 @@ package org.apache.pinot.segment.local.recordtransformer;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 import org.apache.pinot.segment.local.function.FunctionEvaluator;
 import org.apache.pinot.segment.local.function.FunctionEvaluatorFactory;
 import org.apache.pinot.spi.config.table.FieldConfig;
@@ -69,14 +67,11 @@ public class ExpressionTransformer implements RecordTransformer {
         }
       }
     }
+    // For fields with Timestamp indexes, also generate the corresponding values during record transformation.
     if (tableConfig.getFieldConfigList() != null) {
       for (FieldConfig fieldConfig : tableConfig.getFieldConfigList()) {
         if (fieldConfig.getIndexTypes().contains(FieldConfig.IndexType.TIMESTAMP)) {
-          String[] granularities = fieldConfig.getProperties().get("granularities").split(",");
-          Set<TimestampIndexGranularity> timestampIndexGranularities = Arrays.stream(granularities)
-              .map(granularity -> TimestampIndexGranularity.valueOf(granularity.toUpperCase()))
-              .collect(Collectors.toSet());
-          for (TimestampIndexGranularity granularity : timestampIndexGranularities) {
+          for (TimestampIndexGranularity granularity : fieldConfig.getTimestampConfig().getGranularities()) {
             expressionEvaluators.put(
                 TimestampIndexGranularity.getColumnNameWithGranularity(fieldConfig.getName(), granularity),
                 FunctionEvaluatorFactory.getExpressionEvaluator(

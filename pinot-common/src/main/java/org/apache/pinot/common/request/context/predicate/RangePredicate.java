@@ -138,6 +138,9 @@ public class RangePredicate implements Predicate {
         ? " <= '" : " < '") + _upperBound + "')";
   }
 
+  /**
+   * @return Generated range string, this string has the same format used in the Constructor.
+   */
   public String getRange() {
     return (_lowerInclusive ? "[" : "(") + (_lowerBound.equals(UNBOUNDED) ? "*" : _lowerBound) + DELIMITER + (
         _upperBound.equals(UNBOUNDED) ? "*" : _upperBound) + (_upperInclusive ? "]" : ")");

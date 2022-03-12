@@ -21,10 +21,14 @@ package org.apache.pinot.spi.config.table;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import javax.annotation.Nullable;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.spi.config.BaseJsonConfig;
 
 
@@ -45,11 +49,16 @@ public class FieldConfig extends BaseJsonConfig {
   public static final String TEXT_INDEX_RAW_VALUE = "rawValueForTextIndex";
   public static final String TEXT_INDEX_DEFAULT_RAW_VALUE = "n";
 
+  // Timestamp index related constants
+  public static final String TIMESTAMP_INDEX_GRANULARITIES = "granularities";
+  public static final String TIMESTAMP_INDEX_GRANULARITIES_SPLITOR = ",";
+
   private final String _name;
   private final EncodingType _encodingType;
   private final List<IndexType> _indexTypes;
   private final CompressionCodec _compressionCodec;
   private final Map<String, String> _properties;
+  private final TimestampConfig _timestampConfig;
 
   @Deprecated
   public FieldConfig(String name, EncodingType encodingType, IndexType indexType, CompressionCodec compressionCodec,
@@ -72,10 +81,24 @@ public class FieldConfig extends BaseJsonConfig {
     Preconditions.checkArgument(name != null, "'name' must be configured");
     _name = name;
     _encodingType = encodingType;
-    _indexTypes = indexTypes != null ? indexTypes : (
-        indexType == null ? Lists.newArrayList() : Lists.newArrayList(indexType));
+    _indexTypes =
+        indexTypes != null ? indexTypes : (indexType == null ? Lists.newArrayList() : Lists.newArrayList(indexType));
     _compressionCodec = compressionCodec;
     _properties = properties;
+    _timestampConfig = extractTimestampConfig();
+  }
+
+  private TimestampConfig extractTimestampConfig() {
+    String timestampIndexGranularitiesString = _properties.get(TIMESTAMP_INDEX_GRANULARITIES);
+    if (timestampIndexGranularitiesString != null) {
+      String[] granularities =
+          StringUtils.split(timestampIndexGranularitiesString, TIMESTAMP_INDEX_GRANULARITIES_SPLITOR);
+      List<TimestampIndexGranularity> timestampIndexGranularities = Arrays.stream(granularities)
+          .map(granularity -> TimestampIndexGranularity.valueOf(granularity.trim().toUpperCase()))
+          .collect(Collectors.toList());
+      return new TimestampConfig(timestampIndexGranularities);
+    }
+    return new TimestampConfig(ImmutableList.of());
   }
 
   // If null, we will create dictionary encoded forward index by default
@@ -118,5 +141,10 @@ public class FieldConfig extends BaseJsonConfig {
   @Nullable
   public Map<String, String> getProperties() {
     return _properties;
+  }
+
+  @Nullable
+  public TimestampConfig getTimestampConfig() {
+    return _timestampConfig;
   }
 }

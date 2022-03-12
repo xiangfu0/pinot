@@ -33,7 +33,12 @@ import org.apache.commons.httpclient.methods.multipart.Part;
 import org.apache.commons.httpclient.methods.multipart.StringPart;
 import org.apache.commons.httpclient.params.HttpMethodParams;
 import org.apache.helix.ZNRecord;
+import org.apache.pinot.common.function.scalar.DateTimeFunctions;
+import org.apache.pinot.spi.config.table.TimestampIndexGranularity;
+import org.apache.pinot.spi.data.DateTimeFieldSpec;
+import org.apache.pinot.spi.data.DimensionFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
+import org.apache.pinot.spi.data.MetricFieldSpec;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.TimeGranularitySpec;
 import org.apache.pinot.spi.utils.CommonConstants;
@@ -182,6 +187,36 @@ public class SchemaUtils {
 
     return schema1.getSchemaName().equals(schema2.getSchemaName()) && schema1.getFieldSpecMap()
         .equals(schema2.getFieldSpecMap());
+  }
+
+  /**
+   * Generate the time column with granularity FieldSpec from existing time column FieldSpec and granularity.
+   * The new FieldSpec keeps same FieldType, only update the field name.
+   *
+   * @param fieldSpec
+   * @param granularity
+   * @return time column with granularity FieldSpec, null if FieldSpec is not Dimension/Metric/DateTime type.
+   */
+  public static FieldSpec getFieldSpecForTimestampColumnWithGranularity(FieldSpec fieldSpec,
+      TimestampIndexGranularity granularity) {
+    String columnName = fieldSpec.getName();
+    if (fieldSpec instanceof DateTimeFieldSpec) {
+      DateTimeFieldSpec dateTimeFieldSpec = (DateTimeFieldSpec) fieldSpec;
+      return new DateTimeFieldSpec(TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granularity),
+          FieldSpec.DataType.TIMESTAMP, dateTimeFieldSpec.getFormat(), dateTimeFieldSpec.getGranularity(),
+          DateTimeFunctions.dateTrunc(granularity.toString(), (Long) fieldSpec.getDefaultNullValue()), null);
+    }
+    if (fieldSpec instanceof DimensionFieldSpec) {
+      return new DimensionFieldSpec(TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granularity),
+          FieldSpec.DataType.TIMESTAMP, true,
+          DateTimeFunctions.dateTrunc(granularity.toString(), (Long) fieldSpec.getDefaultNullValue()));
+    }
+    if (fieldSpec instanceof MetricFieldSpec) {
+      return new MetricFieldSpec(TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granularity),
+          FieldSpec.DataType.TIMESTAMP,
+          DateTimeFunctions.dateTrunc(granularity.toString(), (Long) fieldSpec.getDefaultNullValue()));
+    }
+    return null;
   }
 
   /**

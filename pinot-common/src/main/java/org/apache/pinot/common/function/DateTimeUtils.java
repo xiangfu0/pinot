@@ -48,7 +48,8 @@ public class DateTimeUtils {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(DateTimeUtils.class);
   private static final DateTimeFieldType QUARTER_OF_YEAR = new QuarterOfYearDateTimeField();
-  private final static Set<String> SUPPORTED_TIMESTAMP_GRANULAR_FUNCTIONS = ImmutableSet.of("datetrunc");
+  public static final String DATE_TRUNC_FUNCTION_NAME = "DATETRUNC";
+  private final static Set<String> SUPPORTED_TIMESTAMP_GRANULAR_FUNCTIONS = ImmutableSet.of(DATE_TRUNC_FUNCTION_NAME);
 
   public static DateTimeField getTimestampField(ISOChronology chronology, String unitString) {
     switch (unitString.toLowerCase()) {
@@ -161,50 +162,51 @@ public class DateTimeUtils {
     }
   }
 
-  public static TimestampIndexGranularity getTimestampIndexGranularityFromFunctionContext(FunctionContext function) {
-    String functionName = function.getFunctionName().toLowerCase();
+  /**
+   * Extract TimestampIndexGranularity from FunctionContext.
+   *
+   * @param functionContext
+   * @return timestampIndexGranularity extracted from FunctionContext
+   */
+  public static TimestampIndexGranularity getTimestampIndexGranularityFromFunctionContext(
+      FunctionContext functionContext) {
+    String functionName = functionContext.getFunctionName().toUpperCase();
     if (!SUPPORTED_TIMESTAMP_GRANULAR_FUNCTIONS.contains(functionName)) {
       return null;
     }
-    List<ExpressionContext> arguments = function.getArguments();
+    List<ExpressionContext> arguments = functionContext.getArguments();
     switch (functionName) {
-      case "datetrunc":
+      case DATE_TRUNC_FUNCTION_NAME:
         if (arguments.size() != 2) {
           throw new BadQueryRequestException("Expect 2 arguments for function: " + functionName);
         }
         return TimestampIndexGranularity.valueOf(arguments.get(0).getLiteral().toUpperCase());
       default:
-        if (arguments.size() != 1) {
-          throw new BadQueryRequestException("Expect 1 arguments for function: " + functionName);
-        }
-        return getTimeGranularityFromSingleArgumentFunction(function.getFunctionName());
+        throw new UnsupportedOperationException(
+            "Extracting TimestampIndexGranularity from function: " + functionName + " is not supported");
     }
   }
 
-  private static TimestampIndexGranularity getTimeGranularityFromSingleArgumentFunction(String function) {
-    switch (function.toLowerCase()) {
-      default:
-        throw new RuntimeException();
-    }
-  }
-
-  public static String getColumnNameFromFunctionContext(FunctionContext function) {
-    String functionName = function.getFunctionName().toLowerCase();
+  /**
+   * Extract time column name from FunctionContext.
+   *
+   * @param functionContext
+   * @return time column name
+   */
+  public static String getColumnNameFromFunctionContext(FunctionContext functionContext) {
+    String functionName = functionContext.getFunctionName().toUpperCase();
     if (!SUPPORTED_TIMESTAMP_GRANULAR_FUNCTIONS.contains(functionName)) {
       return null;
     }
-    List<ExpressionContext> arguments = function.getArguments();
+    List<ExpressionContext> arguments = functionContext.getArguments();
     switch (functionName) {
-      case "datetrunc":
+      case DATE_TRUNC_FUNCTION_NAME:
         if (arguments.size() != 2) {
           throw new BadQueryRequestException("Expect 2 arguments for function: " + functionName);
         }
         return getColumnName(arguments.get(1));
       default:
-        if (arguments.size() != 1) {
-          throw new BadQueryRequestException("Expect 1 arguments for function: " + functionName);
-        }
-        return getColumnName(arguments.get(0));
+        throw new UnsupportedOperationException("Unable to extract column name from function: " + functionName);
     }
   }
 

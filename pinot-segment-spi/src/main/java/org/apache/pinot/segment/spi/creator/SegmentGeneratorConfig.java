@@ -20,10 +20,10 @@ package org.apache.pinot.segment.spi.creator;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableMap;
 import java.io.File;
 import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -51,6 +51,7 @@ import org.apache.pinot.spi.data.DateTimeFormatSpec;
 import org.apache.pinot.spi.data.DimensionFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.FieldSpec.FieldType;
+import org.apache.pinot.spi.data.MetricFieldSpec;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.readers.FileFormat;
 import org.apache.pinot.spi.data.readers.RecordReaderConfig;
@@ -78,7 +79,7 @@ public class SegmentGeneratorConfig implements Serializable {
   private final List<String> _fstIndexCreationColumns = new ArrayList<>();
   private final List<String> _jsonIndexCreationColumns = new ArrayList<>();
   private final Map<String, H3IndexConfig> _h3IndexConfigs = new HashMap<>();
-  private final Map<String, Set<TimestampIndexGranularity>> _timestampIndexConfigs = new HashMap<>();
+  private final Map<String, List<TimestampIndexGranularity>> _timestampIndexConfigs = new HashMap<>();
   private final List<String> _columnSortOrder = new ArrayList<>();
   private List<String> _varLengthDictionaryColumns = new ArrayList<>();
   private String _inputFilePath = null;
@@ -210,7 +211,7 @@ public class SegmentGeneratorConfig implements Serializable {
   private Schema updateSchema(TableConfig tableConfig, Schema schema) {
     Schema.SchemaBuilder schemaBuilder = new Schema.SchemaBuilder().setSchemaName(schema.getSchemaName())
         .setPrimaryKeyColumns(schema.getPrimaryKeyColumns());
-    Map<String, Set<TimestampIndexGranularity>> timestampIndexConfigs =
+    Map<String, List<TimestampIndexGranularity>> timestampIndexConfigs =
         extractTimestampIndexConfigsFromTableConfig(tableConfig);
     if (timestampIndexConfigs.isEmpty()) {
       return schema;
@@ -231,6 +232,12 @@ public class SegmentGeneratorConfig implements Serializable {
         }
         if (fieldSpec instanceof DimensionFieldSpec) {
           schemaBuilder.addSingleValueDimension(
+              TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granularity),
+              FieldSpec.DataType.TIMESTAMP, fieldSpec.getDefaultNullValue());
+        }
+
+        if (fieldSpec instanceof MetricFieldSpec) {
+          schemaBuilder.addMetric(
               TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granularity),
               FieldSpec.DataType.TIMESTAMP, fieldSpec.getDefaultNullValue());
         }
@@ -298,19 +305,17 @@ public class SegmentGeneratorConfig implements Serializable {
     }
   }
 
-  public static Map<String, Set<TimestampIndexGranularity>> extractTimestampIndexConfigsFromTableConfig(
+  public static Map<String, List<TimestampIndexGranularity>> extractTimestampIndexConfigsFromTableConfig(
       TableConfig tableConfig) {
+    if (tableConfig == null) {
+      return ImmutableMap.of();
+    }
     List<FieldConfig> fieldConfigList = tableConfig.getFieldConfigList();
-    Map<String, Set<TimestampIndexGranularity>> timestampIndexConfigs = new HashMap<>();
+    Map<String, List<TimestampIndexGranularity>> timestampIndexConfigs = new HashMap<>();
     if (fieldConfigList != null) {
       for (FieldConfig fieldConfig : fieldConfigList) {
         if (fieldConfig.getIndexType() == FieldConfig.IndexType.TIMESTAMP) {
-          //noinspection ConstantConditions
-          String[] granularities = fieldConfig.getProperties().get("granularities").split(",");
-          Set<TimestampIndexGranularity> timestampIndexGranularities = Arrays.stream(granularities)
-              .map(granularity -> TimestampIndexGranularity.valueOf(granularity.toUpperCase()))
-              .collect(Collectors.toSet());
-          timestampIndexConfigs.put(fieldConfig.getName(), timestampIndexGranularities);
+          timestampIndexConfigs.put(fieldConfig.getName(), fieldConfig.getTimestampConfig().getGranularities());
         }
       }
     }
@@ -393,7 +398,7 @@ public class SegmentGeneratorConfig implements Serializable {
     return _h3IndexConfigs;
   }
 
-  public Map<String, Set<TimestampIndexGranularity>> getTimestampIndexConfigs() {
+  public Map<String, List<TimestampIndexGranularity>> getTimestampIndexConfigs() {
     return _timestampIndexConfigs;
   }
 

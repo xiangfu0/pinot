@@ -47,9 +47,9 @@ public abstract class BaseDataSource implements DataSource {
 
   public BaseDataSource(DataSourceMetadata dataSourceMetadata, ForwardIndexReader<?> forwardIndex,
       @Nullable Dictionary dictionary, @Nullable InvertedIndexReader<?> invertedIndex,
-      @Nullable RangeIndexReader<?> rangeIndex, @Nullable TextIndexReader textIndex, @Nullable TextIndexReader fstIndex,
-      @Nullable JsonIndexReader jsonIndex, @Nullable H3IndexReader h3Index, @Nullable BloomFilterReader bloomFilter,
-      @Nullable NullValueVectorReader nullValueVector) {
+      @Nullable RangeIndexReader<?> rangeIndex, @Nullable TextIndexReader textIndex,
+      @Nullable TextIndexReader fstIndex, @Nullable JsonIndexReader jsonIndex, @Nullable H3IndexReader h3Index,
+      @Nullable BloomFilterReader bloomFilter, @Nullable NullValueVectorReader nullValueVector) {
     _dataSourceMetadata = dataSourceMetadata;
     _forwardIndex = forwardIndex;
     _dictionary = dictionary;

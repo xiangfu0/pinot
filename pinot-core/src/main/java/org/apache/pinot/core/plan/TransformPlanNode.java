@@ -22,6 +22,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
 import javax.annotation.Nullable;
+import org.apache.pinot.common.function.DateTimeUtils;
 import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.common.request.context.FunctionContext;
 import org.apache.pinot.core.operator.ProjectionOperator;
@@ -84,7 +85,7 @@ public class TransformPlanNode implements PlanNode {
     }
     FunctionContext function = expression.getFunction();
     switch (function.getFunctionName().toUpperCase()) {
-      case "DATETRUNC":
+      case DateTimeUtils.DATE_TRUNC_FUNCTION_NAME:
         if (function.getArguments().size() != 2) {
           break;
         }

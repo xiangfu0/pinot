@@ -26,13 +26,14 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.apache.commons.configuration.ConfigurationException;
 import org.apache.commons.configuration.PropertiesConfiguration;
-import org.apache.pinot.common.function.scalar.DateTimeFunctions;
 import org.apache.pinot.common.utils.FileUtils;
+import org.apache.pinot.common.utils.SchemaUtils;
 import org.apache.pinot.segment.local.io.util.PinotDataBitSet;
 import org.apache.pinot.segment.local.segment.creator.impl.nullvalue.NullValueVectorCreator;
 import org.apache.pinot.segment.local.utils.GeometrySerializer;
@@ -56,7 +57,6 @@ import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.TimestampIndexGranularity;
 import org.apache.pinot.spi.data.DateTimeFieldSpec;
 import org.apache.pinot.spi.data.DateTimeFormatSpec;
-import org.apache.pinot.spi.data.DimensionFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.apache.pinot.spi.data.FieldSpec.FieldType;
@@ -159,24 +159,17 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
           "Cannot create H3 index for column: %s because it is not in schema", columnName);
     }
 
-    Map<String, Set<TimestampIndexGranularity>> timestampIndexConfigs = _config.getTimestampIndexConfigs();
+    // Adding Timestamp Index columns for column index
+    Map<String, List<TimestampIndexGranularity>> timestampIndexConfigs = _config.getTimestampIndexConfigs();
     for (String columnName : timestampIndexConfigs.keySet()) {
       Preconditions.checkState(schema.hasColumn(columnName),
           "Cannot create Timestamp index for column: %s because it is not in schema", columnName);
       FieldSpec fieldSpec = _schema.getFieldSpecFor(columnName);
       for (TimestampIndexGranularity granularity : timestampIndexConfigs.get(columnName)) {
-        if (fieldSpec instanceof DateTimeFieldSpec) {
-          DateTimeFieldSpec dateTimeFieldSpec = (DateTimeFieldSpec) fieldSpec;
-          fieldSpecs.add(
-              new DateTimeFieldSpec(TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granularity),
-                  FieldSpec.DataType.TIMESTAMP, dateTimeFieldSpec.getFormat(), dateTimeFieldSpec.getGranularity(),
-                  DateTimeFunctions.dateTrunc(granularity.toString(), (Long) fieldSpec.getDefaultNullValue()), null));
-        }
-        if (fieldSpec instanceof DimensionFieldSpec) {
-          fieldSpecs.add(
-              new DimensionFieldSpec(TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granularity),
-                  FieldSpec.DataType.TIMESTAMP, true,
-                  DateTimeFunctions.dateTrunc(granularity.toString(), (Long) fieldSpec.getDefaultNullValue())));
+        FieldSpec timestampFieldWithGranularity =
+            SchemaUtils.getFieldSpecForTimestampColumnWithGranularity(fieldSpec, granularity);
+        if (timestampFieldWithGranularity != null) {
+          fieldSpecs.add(timestampFieldWithGranularity);
         }
       }
     }

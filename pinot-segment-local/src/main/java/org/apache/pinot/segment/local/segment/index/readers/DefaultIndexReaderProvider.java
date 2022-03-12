@@ -157,8 +157,8 @@ public class DefaultIndexReaderProvider implements IndexReaderProvider {
   }
 
   @Override
-  public TextIndexReader newTextIndexReader(File file, ColumnMetadata columnMetadata,
-      @Nullable Map<String, String> textIndexProperties) {
+  public TextIndexReader newTextIndexReader(File file, ColumnMetadata columnMetadata, @Nullable
+      Map<String, String> textIndexProperties) {
     return new LuceneTextIndexReader(columnMetadata.getColumnName(), file, columnMetadata.getTotalDocs(),
         textIndexProperties);
   }

@@ -18,10 +18,42 @@
  */
 package org.apache.pinot.spi.config.table;
 
+import org.apache.commons.lang3.StringUtils;
+
+
+/**
+ * TimestampIndexGranularity is the enum of different time granularities from MILLIS to YEAR.
+ */
 public enum TimestampIndexGranularity {
   MILLISECOND, SECOND, MINUTE, HOUR, DAY, WEEK, MONTH, QUARTER, YEAR;
 
+  public static final String TIMESTAMP_COLUMN_WITH_GRANULARITY_PATTERN = "$%s$%s";
+
   public static String getColumnNameWithGranularity(String column, TimestampIndexGranularity granularity) {
-    return column + "$" + granularity.toString();
+    return String.format(TIMESTAMP_COLUMN_WITH_GRANULARITY_PATTERN, column, granularity.toString());
+  }
+
+  public static String extractColumnNameFromColumnWithGranularity(String columnWithGranularity) {
+    return StringUtils.split(columnWithGranularity, "$")[0];
+  }
+
+  public static TimestampIndexGranularity extractGranularityFromColumnWithGranularity(String columnWithGranularity) {
+    return TimestampIndexGranularity.valueOf(StringUtils.split(columnWithGranularity, "$")[1]);
+  }
+
+  public static boolean isValidTimeColumnWithGranularityName(String columnName) {
+    if (columnName.charAt(0) != '$') {
+      return false;
+    }
+    String[] splits = StringUtils.split(columnName, "$", 2);
+    if (splits.length != 2) {
+      return false;
+    }
+    try {
+      TimestampIndexGranularity.valueOf(splits[1]);
+    } catch (Exception e) {
+      return false;
+    }
+    return true;
   }
 }

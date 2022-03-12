@@ -68,7 +68,7 @@ public class IndexLoadingConfig {
   private Set<String> _varLengthDictionaryColumns = new HashSet<>();
   private Set<String> _onHeapDictionaryColumns = new HashSet<>();
   private Map<String, BloomFilterConfig> _bloomFilterConfigs = new HashMap<>();
-  private Map<String, Set<TimestampIndexGranularity>> _timestampIndexConfigs = new HashMap<>();
+  private Map<String, List<TimestampIndexGranularity>> _timestampIndexConfigs = new HashMap<>();
   private boolean _enableDynamicStarTreeCreation;
   private List<StarTreeIndexConfig> _starTreeIndexConfigs;
   private boolean _enableDefaultStarTree;
@@ -154,6 +154,8 @@ public class IndexLoadingConfig {
     extractFSTIndexColumnsFromTableConfig(tableConfig);
     extractH3IndexConfigsFromTableConfig(tableConfig);
     _timestampIndexConfigs = SegmentGeneratorConfig.extractTimestampIndexConfigsFromTableConfig(tableConfig);
+
+    // Apply range index for all Timestamp column with granularities columns.
     for (String timestampColumn : _timestampIndexConfigs.keySet()) {
       for (TimestampIndexGranularity granularity : _timestampIndexConfigs.get(timestampColumn)) {
         _rangeIndexColumns.add(TimestampIndexGranularity.getColumnNameWithGranularity(timestampColumn, granularity));
@@ -327,7 +329,7 @@ public class IndexLoadingConfig {
     return _h3IndexConfigs;
   }
 
-  public Map<String, Set<TimestampIndexGranularity>> getTimestampIndexConfigs() {
+  public Map<String, List<TimestampIndexGranularity>> getTimestampIndexConfigs() {
     return _timestampIndexConfigs;
   }
 
@@ -392,7 +394,7 @@ public class IndexLoadingConfig {
   }
 
   @VisibleForTesting
-  public void setTimestampIndexColumns(Map<String, Set<TimestampIndexGranularity>> timestampIndexConfigs) {
+  public void setTimestampIndexColumns(Map<String, List<TimestampIndexGranularity>> timestampIndexConfigs) {
     _timestampIndexConfigs = timestampIndexConfigs;
   }
 

@@ -19,8 +19,8 @@
 package org.apache.pinot.segment.local.segment.creator.impl.stats;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import org.apache.pinot.segment.spi.creator.ColumnStatistics;
 import org.apache.pinot.segment.spi.creator.SegmentGeneratorConfig;
 import org.apache.pinot.segment.spi.creator.SegmentPreIndexStatsCollector;
@@ -49,7 +49,9 @@ public class SegmentPreIndexStatsCollectorImpl implements SegmentPreIndexStatsCo
     _columnStatsCollectorMap = new HashMap<>();
 
     Schema dataSchema = _statsCollectorConfig.getSchema();
-    Map<String, Set<TimestampIndexGranularity>> timestampIndexConfigs =
+
+    // Adding Timestamp index with granularities as new columns for stats collector.
+    Map<String, List<TimestampIndexGranularity>> timestampIndexConfigs =
         SegmentGeneratorConfig.extractTimestampIndexConfigsFromTableConfig(_statsCollectorConfig.getTableConfig());
     for (FieldSpec fieldSpec : dataSchema.getAllFieldSpecs()) {
       String column = fieldSpec.getName();

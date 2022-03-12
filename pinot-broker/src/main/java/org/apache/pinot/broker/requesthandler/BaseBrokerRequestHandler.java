@@ -85,6 +85,7 @@ import org.apache.pinot.segment.spi.AggregationFunctionType;
 import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableType;
+import org.apache.pinot.spi.config.table.TimestampIndexGranularity;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.exception.BadQueryRequestException;
@@ -1783,18 +1784,18 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
         columnNameToCheck = columnName;
       }
     }
-    String columnNameSuffix = null;
-    if (columnName.contains("$")) {
-      splits = StringUtils.split(columnNameToCheck, "$", 2);
-      if (splits.length == 2) {
-        columnNameToCheck = splits[0];
-        columnNameSuffix = splits[1];
-      }
-    }
     if (columnNameMap != null) {
+      if (TimestampIndexGranularity.isValidTimeColumnWithGranularityName(columnName)) {
+        String actualColumnName =
+            columnNameMap.get(TimestampIndexGranularity.extractColumnNameFromColumnWithGranularity(columnName));
+        if (actualColumnName != null) {
+          return TimestampIndexGranularity.getColumnNameWithGranularity(actualColumnName,
+              TimestampIndexGranularity.extractGranularityFromColumnWithGranularity(columnName));
+        }
+      }
       String actualColumnName = columnNameMap.get(columnNameToCheck);
       if (actualColumnName != null) {
-        return (columnNameSuffix == null) ? actualColumnName : actualColumnName + "$" + columnNameSuffix;
+        return actualColumnName;
       }
     }
     if (aliasMap != null) {

@@ -109,41 +109,25 @@ public class TimestampIndexQuickstart extends QuickStartBase {
     printStatus(Color.YELLOW, "*****    9. Sleep 5 Seconds to wait for all components brought up *****");
     Thread.sleep(5000);
 
-    String q1 = "select count(*) from airlineStats limit 1";
+    String q1 = "select ts, $ts$DAY, $ts$WEEK, $ts$MONTH from airlineStats limit 1";
     printStatus(Color.YELLOW, "Total number of documents in the table");
     printStatus(Color.CYAN, "Query : " + q1);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q1)));
     printStatus(Color.GREEN, "***************************************************");
 
     String q2 =
-        "select AirlineID, sum(Cancelled) from airlineStats group by AirlineID order by sum(Cancelled) desc limit 5";
+        "select ts, dateTrunc('DAY', ts), dateTrunc('WEEK', ts), dateTrunc('MONTH', ts) from airlineStats limit 1";
     printStatus(Color.YELLOW, "Top 5 airlines in cancellation ");
     printStatus(Color.CYAN, "Query : " + q2);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q2)));
     printStatus(Color.GREEN, "***************************************************");
 
     String q3 =
-        "select AirlineID, Year, sum(Flights) from airlineStats where Year > 2010 group by AirlineID, Year order by "
-            + "sum(Flights) desc limit 5";
-    printStatus(Color.YELLOW, "Top 5 airlines in number of flights after 2010");
+        "select count(*), dateTrunc('WEEK', ts) as tsWeek from airlineStats GROUP BY tsWeek limit 1";
+    printStatus(Color.YELLOW, "Top 5 airlines in cancellation ");
     printStatus(Color.CYAN, "Query : " + q3);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q3)));
     printStatus(Color.GREEN, "***************************************************");
-
-    String q4 =
-        "select OriginCityName, max(Flights) from airlineStats group by OriginCityName order by max(Flights) desc "
-            + "limit 5";
-    printStatus(Color.YELLOW, "Top 5 cities for number of flights");
-    printStatus(Color.CYAN, "Query : " + q4);
-    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q4)));
-    printStatus(Color.GREEN, "***************************************************");
-
-    String q5 = "select AirlineID, OriginCityName, DestCityName, Year from airlineStats order by Year limit 5";
-    printStatus(Color.YELLOW, "Print AirlineID, OriginCityName, DestCityName, Year for 5 records ordered by Year");
-    printStatus(Color.CYAN, "Query : " + q5);
-    printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q5)));
-    printStatus(Color.GREEN, "***************************************************");
-
     printStatus(Color.GREEN, "You can always go to http://localhost:9000 to play around in the query console");
   }
 }
