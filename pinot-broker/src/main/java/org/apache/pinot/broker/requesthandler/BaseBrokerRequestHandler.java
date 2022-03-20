@@ -18,7 +18,9 @@
  */
 package org.apache.pinot.broker.requesthandler;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Splitter;
@@ -37,6 +39,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import org.apache.commons.lang3.StringUtils;
@@ -65,6 +68,9 @@ import org.apache.pinot.common.request.Literal;
 import org.apache.pinot.common.request.PinotQuery;
 import org.apache.pinot.common.request.Selection;
 import org.apache.pinot.common.request.SelectionSort;
+import org.apache.pinot.common.request.context.ExpressionContext;
+import org.apache.pinot.common.request.context.FunctionContext;
+import org.apache.pinot.common.request.context.RequestContextUtils;
 import org.apache.pinot.common.request.transform.TransformExpressionTree;
 import org.apache.pinot.common.response.BrokerResponse;
 import org.apache.pinot.common.response.ProcessingException;
@@ -285,6 +291,7 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
     if (_enableDistinctCountBitmapOverride) {
       handleDistinctCountBitmapOverride(pinotQuery);
     }
+    handleTimestampIndexOverride(pinotQuery);
 
     long compilationEndTimeNs = System.nanoTime();
     _brokerMetrics.addPhaseTiming(rawTableName, BrokerQueryPhase.REQUEST_COMPILATION,
@@ -562,6 +569,58 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
     logBrokerResponse(requestId, query, requestStatistics, brokerRequest, numUnavailableSegments, serverStats,
         brokerResponse, totalTimeMs);
     return brokerResponse;
+  }
+
+  private void handleTimestampIndexOverride(PinotQuery pinotQuery)
+      throws JsonProcessingException {
+    Map<Integer, String> pushdownExpressions = new HashMap<>();
+    for (Expression expression : pinotQuery.getSelectList()) {
+      getPushdownExpression(expression, pushdownExpressions);
+      if (!pushdownExpressions.isEmpty()) {
+        pinotQuery.getQueryOptions().put(Broker.Request.QueryOptionKey.PUSHDOWN_TIMESTAMP_INDEX_EXPRESSION,
+            new ObjectMapper().writeValueAsString(pushdownExpressions));
+      }
+    }
+  }
+
+  private void getPushdownExpression(Expression expression, Map<Integer, String> pushdownExpressions) {
+    Function function = expression.getFunctionCall();
+    if (function == null) {
+      return;
+    }
+    switch (function.getOperator().toUpperCase()) {
+      case "DATETRUNC":
+        String granularString = function.getOperands().get(0).getLiteral().getStringValue();
+        if (function.getOperandsSize() == 2 && TimestampIndexGranularity.isValidTimeGranularity(granularString)) {
+          pushdownExpressions.put(RequestContextUtils.getExpression(expression).hashCode(),
+              TimestampIndexGranularity.getColumnNameWithGranularity(
+                  function.getOperands().get(1).getIdentifier().getName(),
+                  TimestampIndexGranularity.valueOf(granularString)));
+        }
+        break;
+      default:
+        break;
+    }
+    for (Expression operand : function.getOperands()) {
+      getPushdownExpression(operand, pushdownExpressions);
+    }
+  }
+
+  private ExpressionContext convertExpressionToExpressionContext(Expression expression) {
+    if (expression.getLiteral() != null) {
+      return ExpressionContext.forLiteral(expression.getLiteral().getStringValue());
+    }
+    if (expression.getIdentifier() != null) {
+      return ExpressionContext.forIdentifier(expression.getIdentifier().getName());
+    }
+    if (expression.getFunctionCall() != null) {
+      FunctionContext functionContext =
+          new FunctionContext(FunctionContext.Type.TRANSFORM, expression.getFunctionCall().getOperator(),
+              expression.getFunctionCall().getOperands().stream().map(arg -> convertExpressionToExpressionContext(arg))
+                  .collect(Collectors.toList()));
+      return ExpressionContext.forFunction(functionContext);
+    }
+    return null;
   }
 
   /** Set EXPLAIN PLAN query to route to only one segment on one server. */
@@ -2200,9 +2259,10 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
    * Processes the optimized broker requests for both OFFLINE and REALTIME table.
    */
   protected abstract BrokerResponseNative processBrokerRequest(long requestId, BrokerRequest originalBrokerRequest,
-      BrokerRequest serverBrokerRequest, @Nullable BrokerRequest offlineBrokerRequest, @Nullable Map<ServerInstance,
-      List<String>> offlineRoutingTable, @Nullable BrokerRequest realtimeBrokerRequest, @Nullable Map<ServerInstance,
-      List<String>> realtimeRoutingTable, long timeoutMs, ServerStats serverStats, RequestStatistics requestStatistics)
+      BrokerRequest serverBrokerRequest, @Nullable BrokerRequest offlineBrokerRequest,
+      @Nullable Map<ServerInstance, List<String>> offlineRoutingTable, @Nullable BrokerRequest realtimeBrokerRequest,
+      @Nullable Map<ServerInstance, List<String>> realtimeRoutingTable, long timeoutMs, ServerStats serverStats,
+      RequestStatistics requestStatistics)
       throws Exception;
 
   /**

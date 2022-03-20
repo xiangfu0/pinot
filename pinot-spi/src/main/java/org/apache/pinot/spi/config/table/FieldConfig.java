@@ -89,16 +89,16 @@ public class FieldConfig extends BaseJsonConfig {
   }
 
   private TimestampConfig extractTimestampConfig() {
-    String timestampIndexGranularitiesString = _properties.get(TIMESTAMP_INDEX_GRANULARITIES);
-    if (timestampIndexGranularitiesString != null) {
-      String[] granularities =
-          StringUtils.split(timestampIndexGranularitiesString, TIMESTAMP_INDEX_GRANULARITIES_SPLITOR);
-      List<TimestampIndexGranularity> timestampIndexGranularities = Arrays.stream(granularities)
-          .map(granularity -> TimestampIndexGranularity.valueOf(granularity.trim().toUpperCase()))
-          .collect(Collectors.toList());
-      return new TimestampConfig(timestampIndexGranularities);
+    if (_properties == null || !_properties.containsKey(TIMESTAMP_INDEX_GRANULARITIES)) {
+      return new TimestampConfig(ImmutableList.of());
     }
-    return new TimestampConfig(ImmutableList.of());
+    String timestampIndexGranularitiesString = _properties.get(TIMESTAMP_INDEX_GRANULARITIES);
+    String[] granularities =
+        StringUtils.split(timestampIndexGranularitiesString, TIMESTAMP_INDEX_GRANULARITIES_SPLITOR);
+    List<TimestampIndexGranularity> timestampIndexGranularities = Arrays.stream(granularities)
+        .map(granularity -> TimestampIndexGranularity.valueOf(granularity.trim().toUpperCase()))
+        .collect(Collectors.toList());
+    return new TimestampConfig(timestampIndexGranularities);
   }
 
   // If null, we will create dictionary encoded forward index by default

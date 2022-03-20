@@ -110,21 +110,21 @@ public class TimestampIndexQuickstart extends QuickStartBase {
     Thread.sleep(5000);
 
     String q1 = "select ts, $ts$DAY, $ts$WEEK, $ts$MONTH from airlineStats limit 1";
-    printStatus(Color.YELLOW, "Total number of documents in the table");
+    printStatus(Color.YELLOW, "Pick one row with timestamp and different granularity using generated column name ");
     printStatus(Color.CYAN, "Query : " + q1);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q1)));
     printStatus(Color.GREEN, "***************************************************");
 
     String q2 =
         "select ts, dateTrunc('DAY', ts), dateTrunc('WEEK', ts), dateTrunc('MONTH', ts) from airlineStats limit 1";
-    printStatus(Color.YELLOW, "Top 5 airlines in cancellation ");
+    printStatus(Color.YELLOW, "Pick one row with timestamp and different granularity using dateTrunc function");
     printStatus(Color.CYAN, "Query : " + q2);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q2)));
     printStatus(Color.GREEN, "***************************************************");
 
     String q3 =
-        "select count(*), dateTrunc('WEEK', ts) as tsWeek from airlineStats GROUP BY tsWeek limit 1";
-    printStatus(Color.YELLOW, "Top 5 airlines in cancellation ");
+        "select count(*), toTimestamp(dateTrunc('WEEK', ts)) as tsWeek from airlineStats GROUP BY tsWeek limit 1";
+    printStatus(Color.YELLOW, "Count events in week basis ");
     printStatus(Color.CYAN, "Query : " + q3);
     printStatus(Color.YELLOW, prettyPrintResponse(runner.runQuery(q3)));
     printStatus(Color.GREEN, "***************************************************");

@@ -21,6 +21,8 @@ package org.apache.pinot.common.request.context;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import org.apache.pinot.common.request.Expression;
 import org.apache.pinot.common.request.ExpressionType;
 import org.apache.pinot.common.request.FilterOperator;
@@ -32,6 +34,7 @@ import org.apache.pinot.common.request.context.predicate.IsNullPredicate;
 import org.apache.pinot.common.request.context.predicate.JsonMatchPredicate;
 import org.apache.pinot.common.request.context.predicate.NotEqPredicate;
 import org.apache.pinot.common.request.context.predicate.NotInPredicate;
+import org.apache.pinot.common.request.context.predicate.Predicate;
 import org.apache.pinot.common.request.context.predicate.RangePredicate;
 import org.apache.pinot.common.request.context.predicate.RegexpLikePredicate;
 import org.apache.pinot.common.request.context.predicate.TextMatchPredicate;
@@ -44,6 +47,7 @@ import org.apache.pinot.pql.parsers.pql2.ast.FunctionCallAstNode;
 import org.apache.pinot.pql.parsers.pql2.ast.IdentifierAstNode;
 import org.apache.pinot.pql.parsers.pql2.ast.LiteralAstNode;
 import org.apache.pinot.segment.spi.AggregationFunctionType;
+import org.apache.pinot.segment.spi.IndexSegment;
 import org.apache.pinot.spi.exception.BadQueryRequestException;
 import org.apache.pinot.sql.parsers.CalciteSqlParser;
 
@@ -410,5 +414,67 @@ public class RequestContextUtils {
       default:
         throw new IllegalStateException();
     }
+  }
+
+  public static FilterContext overrideFilterWithPushdownFunctions(FilterContext filter, IndexSegment indexSegment,
+      Map<Integer, String> overrideFunctions) {
+    if (filter.getChildren() != null) {
+      // AND, OR, NOT
+      List<FilterContext> newChildren = filter.getChildren().stream()
+          .map(filterContext -> overrideFilterWithPushdownFunctions(filterContext, indexSegment, overrideFunctions))
+          .collect(Collectors.toList());
+      return new FilterContext(filter.getType(), newChildren, null);
+    }
+    // PREDICATE
+    Predicate predicate = filter.getPredicate();
+    ExpressionContext newPredicateLhs = overrideWithFunctionIndex(indexSegment, overrideFunctions, predicate.getLhs());
+    Predicate newPredicate = getNewPredicate(predicate, newPredicateLhs);
+    return new FilterContext(filter.getType(), null, newPredicate);
+  }
+
+  public static Predicate getNewPredicate(Predicate predicate, ExpressionContext lhs) {
+    switch (predicate.getType()) {
+      case EQ:
+        return new EqPredicate(lhs, ((EqPredicate) predicate).getValue());
+      case NOT_EQ:
+        return new NotEqPredicate(lhs, ((NotEqPredicate) predicate).getValue());
+      case IN:
+        return new InPredicate(lhs, ((InPredicate) predicate).getValues());
+      case NOT_IN:
+        return new NotInPredicate(lhs, ((NotInPredicate) predicate).getValues());
+      case RANGE:
+        return new RangePredicate(lhs, ((RangePredicate) predicate).getRange());
+      case REGEXP_LIKE:
+        return new RegexpLikePredicate(lhs, ((RegexpLikePredicate) predicate).getValue());
+      case TEXT_MATCH:
+        return new TextMatchPredicate(lhs, ((TextMatchPredicate) predicate).getValue());
+      case JSON_MATCH:
+        return new JsonMatchPredicate(lhs, ((JsonMatchPredicate) predicate).getValue());
+      case IS_NULL:
+        return new IsNullPredicate(lhs);
+      case IS_NOT_NULL:
+        return new IsNotNullPredicate(lhs);
+      default:
+        throw new IllegalStateException();
+    }
+  }
+
+  public static ExpressionContext overrideWithFunctionIndex(IndexSegment indexSegment,
+      Map<Integer, String> pushdownExpressions, ExpressionContext expression) {
+    if (expression.getType() != ExpressionContext.Type.FUNCTION) {
+      return expression;
+    }
+    String pushdownExpression = pushdownExpressions.get(expression.hashCode());
+    if (pushdownExpression != null && indexSegment.getPhysicalColumnNames().contains(pushdownExpression)) {
+      return ExpressionContext.forIdentifier(pushdownExpression);
+    }
+    List<ExpressionContext> newArguments = new ArrayList<>();
+    for (ExpressionContext argument : expression.getFunction().getArguments()) {
+      newArguments.add(overrideWithFunctionIndex(indexSegment, pushdownExpressions, argument));
+    }
+
+    return ExpressionContext.forFunction(
+        new FunctionContext(expression.getFunction().getType(), expression.getFunction().getFunctionName(),
+            newArguments));
   }
 }

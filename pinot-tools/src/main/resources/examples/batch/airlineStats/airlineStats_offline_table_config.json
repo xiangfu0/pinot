@@ -30,6 +30,10 @@
       {
         "columnName": "ts",
         "transformFunction": "fromEpochDays(DaysSinceEpoch)"
+      },
+      {
+        "columnName": "tsRaw",
+        "transformFunction": "fromEpochDays(DaysSinceEpoch)"
       }
     ]
   }

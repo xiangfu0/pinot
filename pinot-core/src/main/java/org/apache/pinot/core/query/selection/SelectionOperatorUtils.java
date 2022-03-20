@@ -138,7 +138,7 @@ public class SelectionOperatorUtils {
     return expressions;
   }
 
-  /**
+   /**
    * Expands {@code 'SELECT *'} to all columns (excluding transform functions) within {@link DataSchema} with
    * alphabetical order if applies.
    */

@@ -18,7 +18,10 @@
  */
 package org.apache.pinot.core.query.request.context;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableMap;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -40,6 +43,7 @@ import org.apache.pinot.core.plan.maker.InstancePlanMakerImplV2;
 import org.apache.pinot.core.query.aggregation.function.AggregationFunction;
 import org.apache.pinot.core.query.aggregation.function.AggregationFunctionFactory;
 import org.apache.pinot.core.util.MemoizedClassAssociation;
+import org.apache.pinot.spi.utils.CommonConstants;
 
 
 /**
@@ -70,6 +74,7 @@ import org.apache.pinot.core.util.MemoizedClassAssociation;
  */
 @SuppressWarnings({"rawtypes", "unchecked"})
 public class QueryContext {
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
   private final String _tableName;
   private final List<ExpressionContext> _selectExpressions;
   private final List<String> _aliasList;
@@ -81,6 +86,7 @@ public class QueryContext {
   private final int _offset;
   private final Map<String, String> _queryOptions;
   private final Map<String, String> _debugOptions;
+  private final Map<Integer, String> _overrideFunctions;
 
   // Keep the BrokerRequest to make incremental changes
   // TODO: Remove it once the whole query engine is using the QueryContext
@@ -137,6 +143,23 @@ public class QueryContext {
     _debugOptions = debugOptions;
     _brokerRequest = brokerRequest;
     _subquery = subquery;
+    _overrideFunctions = extractOverrideFunctionsMap(_queryOptions);
+  }
+
+  private Map<Integer, String> extractOverrideFunctionsMap(Map<String, String> queryOptions) {
+    String pushdownExpressionsOption =
+        queryOptions.get(CommonConstants.Broker.Request.QueryOptionKey.PUSHDOWN_TIMESTAMP_INDEX_EXPRESSION);
+    if (pushdownExpressionsOption == null) {
+      return ImmutableMap.of();
+    }
+    try {
+      Map<String, String> pushdownExpressions = OBJECT_MAPPER.readValue(pushdownExpressionsOption, Map.class);
+      Map<Integer, String> res = new HashMap<>();
+      pushdownExpressions.forEach((k, v) -> res.put(Integer.parseInt(k), v));
+      return res;
+    } catch (JsonProcessingException e) {
+    }
+    return ImmutableMap.of();
   }
 
   /**
@@ -215,6 +238,13 @@ public class QueryContext {
    */
   public Map<String, String> getQueryOptions() {
     return _queryOptions;
+  }
+
+  /**
+   * Returns the override function mapping from ExpressionContext hash to identifier name.
+   */
+  public Map<Integer, String> getOverrideFunctions() {
+    return _overrideFunctions;
   }
 
   /**

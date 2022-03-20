@@ -56,4 +56,13 @@ public enum TimestampIndexGranularity {
     }
     return true;
   }
+
+  public static boolean isValidTimeGranularity(String stringValue) {
+    try {
+      valueOf(stringValue);
+      return true;
+    } catch (Exception e) {
+      return false;
+    }
+  }
 }

@@ -336,6 +336,12 @@
       "dataType": "TIMESTAMP",
       "format": "1:MILLISECONDS:TIMESTAMP",
       "granularity": "1:SECONDS"
+    },
+    {
+      "name": "tsRaw",
+      "dataType": "TIMESTAMP",
+      "format": "1:MILLISECONDS:TIMESTAMP",
+      "granularity": "1:SECONDS"
     }
   ],
   "schemaName": "airlineStats"

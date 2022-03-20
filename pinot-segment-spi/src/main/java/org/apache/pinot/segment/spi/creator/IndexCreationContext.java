@@ -61,9 +61,9 @@ public interface IndexCreationContext {
 
   boolean hasDictionary();
 
-  Comparable getMinValue();
+  Comparable<?> getMinValue();
 
-  Comparable getMaxValue();
+  Comparable<?> getMaxValue();
 
   final class Builder {
     private File _indexDir;
@@ -250,13 +250,13 @@ public interface IndexCreationContext {
     }
 
     @Override
-    public Comparable getMinValue() {
-      return (Comparable) _minValue;
+    public Comparable<?> getMinValue() {
+      return _minValue;
     }
 
     @Override
-    public Comparable getMaxValue() {
-      return (Comparable) _maxValue;
+    public Comparable<?> getMaxValue() {
+      return _maxValue;
     }
 
     public BloomFilter forBloomFilter(BloomFilterConfig bloomFilterConfig) {

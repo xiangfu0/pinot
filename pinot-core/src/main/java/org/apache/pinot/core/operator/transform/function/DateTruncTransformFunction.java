@@ -28,8 +28,6 @@ import org.apache.pinot.core.operator.blocks.ProjectionBlock;
 import org.apache.pinot.core.operator.transform.TransformResultMetadata;
 import org.apache.pinot.core.plan.DocIdSetPlanNode;
 import org.apache.pinot.segment.spi.datasource.DataSource;
-import org.apache.pinot.segment.spi.index.reader.Dictionary;
-import org.apache.pinot.spi.config.table.TimestampIndexGranularity;
 import org.joda.time.DateTimeField;
 
 
@@ -93,10 +91,6 @@ public class DateTruncTransformFunction extends BaseTransformFunction {
   private DateTimeField _field;
   private TimeUnit _inputTimeUnit;
   private TimeUnit _outputTimeUnit;
-  private boolean _pushdownTimestampFunction;
-  private Map<String, DataSource> _dataSourceMap;
-  private TimestampIndexGranularity _granularity;
-  private String _column;
 
   @Override
   public String getName() {
@@ -108,13 +102,11 @@ public class DateTruncTransformFunction extends BaseTransformFunction {
     Preconditions.checkArgument(arguments.size() >= 2 && arguments.size() <= 5,
         "Between two to five arguments are required, example: %s", EXAMPLE_INVOCATION);
     String unit = ((LiteralTransformFunction) arguments.get(0)).getLiteral().toLowerCase();
-    _granularity = TimestampIndexGranularity.valueOf(unit.toUpperCase());
     TransformFunction valueArgument = arguments.get(1);
     Preconditions.checkArgument(
         !(valueArgument instanceof LiteralTransformFunction) && valueArgument.getResultMetadata().isSingleValue(),
         "The second argument of dateTrunc transform function must be a single-valued column or a transform function");
     _mainTransformFunction = valueArgument;
-    _dataSourceMap = dataSourceMap;
     String inputTimeUnitStr =
         (arguments.size() >= 3) ? ((LiteralTransformFunction) arguments.get(2)).getLiteral().toUpperCase()
             : TimeUnit.MILLISECONDS.name();
@@ -127,21 +119,8 @@ public class DateTruncTransformFunction extends BaseTransformFunction {
     TimeZoneKey timeZoneKey = TimeZoneKey.getTimeZoneKey(timeZone);
 
     _field = DateTimeUtils.getTimestampField(DateTimeUtils.getChronology(timeZoneKey), unit);
+    _resultMetadata = LONG_SV_NO_DICTIONARY_METADATA;
     _outputTimeUnit = TimeUnit.valueOf(outputTimeUnitStr);
-    _column = _mainTransformFunction.getName();
-    String columnWithGranularity = TimestampIndexGranularity.getColumnNameWithGranularity(_column, _granularity);
-    DataSource pushdownDatasource =
-        _dataSourceMap.get(TimestampIndexGranularity.getColumnNameWithGranularity(_column, _granularity));
-    if (arguments.size() == 2 && dataSourceMap.containsKey(_column) && pushdownDatasource != null) {
-      _pushdownTimestampFunction = true;
-      _column = columnWithGranularity;
-      _resultMetadata =
-          new TransformResultMetadata(pushdownDatasource.getDataSourceMetadata().getFieldSpec().getDataType(), true,
-              pushdownDatasource.getDictionary() != null);
-      _mainTransformFunction = new IdentifierTransformFunction(_column, pushdownDatasource);
-    } else {
-      _resultMetadata = LONG_SV_NO_DICTIONARY_METADATA;
-    }
   }
 
   @Override
@@ -150,32 +129,16 @@ public class DateTruncTransformFunction extends BaseTransformFunction {
   }
 
   @Override
-  public Dictionary getDictionary() {
-    if (_pushdownTimestampFunction) {
-      return _dataSourceMap.get(_column).getDictionary();
-    }
-    return null;
-  }
-
-  @Override
-  public int[] transformToDictIdsSV(ProjectionBlock projectionBlock) {
-    if (_pushdownTimestampFunction) {
-      return _mainTransformFunction.transformToDictIdsSV(projectionBlock);
-    }
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
   public long[] transformToLongValuesSV(ProjectionBlock projectionBlock) {
     if (_longOutputTimes == null) {
       _longOutputTimes = new long[DocIdSetPlanNode.MAX_DOC_PER_CALL];
     }
+
     int length = projectionBlock.getNumDocs();
     long[] input = _mainTransformFunction.transformToLongValuesSV(projectionBlock);
     for (int i = 0; i < length; i++) {
-      _longOutputTimes[i] =
-          _outputTimeUnit.convert(_field.roundFloor(TimeUnit.MILLISECONDS.convert(input[i], _inputTimeUnit)),
-              TimeUnit.MILLISECONDS);
+      _longOutputTimes[i] = _outputTimeUnit
+          .convert(_field.roundFloor(TimeUnit.MILLISECONDS.convert(input[i], _inputTimeUnit)), TimeUnit.MILLISECONDS);
     }
     return _longOutputTimes;
   }
