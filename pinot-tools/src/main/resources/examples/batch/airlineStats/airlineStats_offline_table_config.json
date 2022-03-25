@@ -13,9 +13,13 @@
     {
       "name": "ts",
       "encodingType": "DICTIONARY",
-      "indexType": "TIMESTAMP",
-      "properties": {
-        "granularities": "DAY,WEEK,MONTH"
+      "indexTypes": ["TIMESTAMP"],
+      "timestampConfig": {
+        "granularities": [
+          "DAY",
+          "WEEK",
+          "MONTH"
+        ]
       }
     }
   ],

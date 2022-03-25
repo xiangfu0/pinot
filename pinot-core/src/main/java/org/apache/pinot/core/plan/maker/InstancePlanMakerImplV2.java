@@ -233,7 +233,9 @@ public class InstancePlanMakerImplV2 implements PlanMaker {
   @Override
   public PlanNode makeSegmentPlanNode(IndexSegment indexSegment, QueryContext queryContext) {
     if (!queryContext.getOverrideFunctions().isEmpty()) {
+      LOGGER.info("Trying to override functions in queryContext: {}", queryContext.getOverrideFunctions());
       queryContext = rewriteFunctionsWithGeneratedColumns(indexSegment, queryContext);
+      LOGGER.info("Override functions in queryContext: {}", queryContext);
     }
     if (QueryContextUtils.isAggregationQuery(queryContext)) {
       List<ExpressionContext> groupByExpressions = queryContext.getGroupByExpressions();
