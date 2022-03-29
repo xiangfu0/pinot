@@ -114,8 +114,8 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
     TableConfig tableConfig = segmentGeneratorConfig.getTableConfig();
     FileFormat fileFormat = segmentGeneratorConfig.getFormat();
     String recordReaderClassName = segmentGeneratorConfig.getRecordReaderPath();
-    Set<String> sourceFields = IngestionUtils.getFieldsForRecordExtractor(tableConfig.getIngestionConfig(),
-        segmentGeneratorConfig.getSchema());
+    Set<String> sourceFields = IngestionUtils
+        .getFieldsForRecordExtractor(tableConfig.getIngestionConfig(), segmentGeneratorConfig.getSchema());
 
     // Allow for instantiation general record readers from a record reader path passed into segment generator config
     // If this is set, this will override the file format
@@ -134,8 +134,8 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
     if (fileFormat == FileFormat.PINOT) {
       return new PinotSegmentRecordReader(dataFile, schema, segmentGeneratorConfig.getColumnSortOrder());
     } else {
-      return RecordReaderFactory.getRecordReader(fileFormat, dataFile, sourceFields,
-          segmentGeneratorConfig.getReaderConfig());
+      return RecordReaderFactory
+          .getRecordReader(fileFormat, dataFile, sourceFields, segmentGeneratorConfig.getReaderConfig());
     }
   }
 
@@ -186,9 +186,8 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
       indexDir.mkdirs();
     }
 
-    _ingestionSchemaValidator =
-        SchemaValidatorFactory.getSchemaValidator(_dataSchema, _recordReader.getClass().getName(),
-            config.getInputFilePath());
+    _ingestionSchemaValidator = SchemaValidatorFactory
+        .getSchemaValidator(_dataSchema, _recordReader.getClass().getName(), config.getInputFilePath());
 
     // Create a temporary directory used in segment creation
     _tempIndexDir = new File(indexDir, "tmp-" + UUID.randomUUID());
@@ -253,8 +252,8 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
         // When totalDoc is 0, check whether 'failOnEmptySegment' option is true. If so, directly fail the segment
         // creation.
         Preconditions.checkArgument(!_config.isFailOnEmptySegment(),
-            "Failing the empty segment creation as the option 'failOnEmptySegment' is set to: "
-                + _config.isFailOnEmptySegment());
+            "Failing the empty segment creation as the option 'failOnEmptySegment' is set to: " + _config
+                .isFailOnEmptySegment());
         // Generate a unique name for a segment with no rows
         long now = System.currentTimeMillis();
         _segmentName = _config.getSegmentNameGenerator().generateSegmentName(sequenceId, now, now);

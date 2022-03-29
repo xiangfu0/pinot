@@ -132,7 +132,7 @@ public class SegmentGeneratorConfig implements Serializable {
   public SegmentGeneratorConfig(TableConfig tableConfig, Schema schema) {
     Preconditions.checkNotNull(schema);
     Preconditions.checkNotNull(tableConfig);
-    setSchema(updateSchema(tableConfig, schema));
+    setSchema(updateSchema(schema));
 
     _tableConfig = tableConfig;
     setTableName(tableConfig.getTableName());
@@ -199,7 +199,7 @@ public class SegmentGeneratorConfig implements Serializable {
       extractTextIndexColumnsFromTableConfig(tableConfig);
       extractFSTIndexColumnsFromTableConfig(tableConfig);
       extractH3IndexConfigsFromTableConfig(tableConfig);
-      extractTimestampIndexConfigsFromTableConfig(tableConfig);
+      _timestampIndexConfigs.putAll(extractTimestampIndexConfigsFromTableConfig(tableConfig));
       extractCompressionCodecConfigsFromTableConfig(tableConfig);
 
       _fstTypeForFSTIndex = tableConfig.getIndexingConfig().getFSTIndexType();
@@ -208,22 +208,20 @@ public class SegmentGeneratorConfig implements Serializable {
     }
   }
 
-  private Schema updateSchema(TableConfig tableConfig, Schema schema) {
+  private Schema updateSchema(Schema schema) {
     Schema.SchemaBuilder schemaBuilder = new Schema.SchemaBuilder().setSchemaName(schema.getSchemaName())
         .setPrimaryKeyColumns(schema.getPrimaryKeyColumns());
-    Map<String, List<TimestampIndexGranularity>> timestampIndexConfigs =
-        extractTimestampIndexConfigsFromTableConfig(tableConfig);
-    if (timestampIndexConfigs.isEmpty()) {
+    if (_timestampIndexConfigs.isEmpty()) {
       return schema;
     }
     for (FieldSpec fieldSpec : schema.getAllFieldSpecs()) {
       schemaBuilder.addFieldSpec(fieldSpec);
     }
-    for (String columnName : timestampIndexConfigs.keySet()) {
+    for (String columnName : _timestampIndexConfigs.keySet()) {
       Preconditions.checkState(schema.hasColumn(columnName),
           "Cannot create Timestamp index for column: %s because it is not in schema", columnName);
       FieldSpec fieldSpec = schema.getFieldSpecFor(columnName);
-      for (TimestampIndexGranularity granularity : timestampIndexConfigs.get(columnName)) {
+      for (TimestampIndexGranularity granularity : _timestampIndexConfigs.get(columnName)) {
         if (fieldSpec instanceof DateTimeFieldSpec) {
           DateTimeFieldSpec dateTimeFieldSpec = (DateTimeFieldSpec) fieldSpec;
           schemaBuilder.addDateTime(TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granularity),
@@ -237,8 +235,7 @@ public class SegmentGeneratorConfig implements Serializable {
         }
 
         if (fieldSpec instanceof MetricFieldSpec) {
-          schemaBuilder.addMetric(
-              TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granularity),
+          schemaBuilder.addMetric(TimestampIndexGranularity.getColumnNameWithGranularity(columnName, granularity),
               FieldSpec.DataType.TIMESTAMP, fieldSpec.getDefaultNullValue());
         }
       }
@@ -313,11 +310,10 @@ public class SegmentGeneratorConfig implements Serializable {
     List<FieldConfig> fieldConfigList = tableConfig.getFieldConfigList();
     Map<String, List<TimestampIndexGranularity>> timestampIndexConfigs = new HashMap<>();
     if (fieldConfigList != null) {
-      for (FieldConfig fieldConfig : fieldConfigList) {
-        if (fieldConfig.getIndexType() == FieldConfig.IndexType.TIMESTAMP) {
-          timestampIndexConfigs.put(fieldConfig.getName(), fieldConfig.getTimestampConfig().getGranularities());
-        }
-      }
+      fieldConfigList.stream()
+          .filter(fieldConfig -> fieldConfig.getIndexTypes().contains(FieldConfig.IndexType.TIMESTAMP)).forEach(
+              fieldConfig -> timestampIndexConfigs.put(fieldConfig.getName(),
+                  fieldConfig.getTimestampConfig().getGranularities()));
     }
     return timestampIndexConfigs;
   }

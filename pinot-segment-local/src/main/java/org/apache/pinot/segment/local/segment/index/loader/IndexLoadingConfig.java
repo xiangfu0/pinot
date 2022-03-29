@@ -153,7 +153,7 @@ public class IndexLoadingConfig {
     extractTextIndexColumnsFromTableConfig(tableConfig);
     extractFSTIndexColumnsFromTableConfig(tableConfig);
     extractH3IndexConfigsFromTableConfig(tableConfig);
-    _timestampIndexConfigs = SegmentGeneratorConfig.extractTimestampIndexConfigsFromTableConfig(tableConfig);
+    _timestampIndexConfigs.putAll(SegmentGeneratorConfig.extractTimestampIndexConfigsFromTableConfig(tableConfig));
 
     // Apply range index for all Timestamp column with granularities columns.
     for (String timestampColumn : _timestampIndexConfigs.keySet()) {

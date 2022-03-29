@@ -18,13 +18,21 @@
  */
 package org.apache.pinot.segment.spi.creator;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableType;
+import org.apache.pinot.spi.config.table.TimestampConfig;
+import org.apache.pinot.spi.config.table.TimestampIndexGranularity;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.TimeGranularitySpec;
 import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
+import org.testng.Assert;
 import org.testng.annotations.Test;
 
 import static org.testng.Assert.assertEquals;
@@ -37,8 +45,8 @@ public class SegmentGeneratorConfigTest {
 
   @Test
   public void testEpochTime() {
-    Schema schema = new Schema.SchemaBuilder()
-        .addTime(new TimeGranularitySpec(FieldSpec.DataType.INT, TimeUnit.DAYS, "daysSinceEpoch"), null).build();
+    Schema schema = new Schema.SchemaBuilder().addTime(
+        new TimeGranularitySpec(FieldSpec.DataType.INT, TimeUnit.DAYS, "daysSinceEpoch"), null).build();
     TableConfig tableConfig =
         new TableConfigBuilder(TableType.OFFLINE).setTableName("test").setTimeColumnName("daysSinceEpoch").build();
     SegmentGeneratorConfig segmentGeneratorConfig = new SegmentGeneratorConfig(tableConfig, schema);
@@ -86,8 +94,9 @@ public class SegmentGeneratorConfigTest {
     assertNull(segmentGeneratorConfig.getSegmentTimeUnit());
     assertNull(segmentGeneratorConfig.getDateTimeFormatSpec());
 
-    schema = new Schema.SchemaBuilder()
-        .addDateTime("Date", FieldSpec.DataType.STRING, "1:DAYS:SIMPLE_DATE_FORMAT:yyyyMMdd", "1:DAYS").build();
+    schema =
+        new Schema.SchemaBuilder().addDateTime("Date", FieldSpec.DataType.STRING, "1:DAYS:SIMPLE_DATE_FORMAT:yyyyMMdd",
+            "1:DAYS").build();
     tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName("test").setTimeColumnName("Date").build();
     segmentGeneratorConfig = new SegmentGeneratorConfig(tableConfig, schema);
     assertEquals(segmentGeneratorConfig.getTimeColumnName(), "Date");
@@ -95,5 +104,28 @@ public class SegmentGeneratorConfigTest {
     assertNull(segmentGeneratorConfig.getSegmentTimeUnit());
     assertNotNull(segmentGeneratorConfig.getDateTimeFormatSpec());
     assertEquals(segmentGeneratorConfig.getDateTimeFormatSpec().getSDFPattern(), "yyyyMMdd");
+  }
+
+  @Test
+  public void testExtractTimestampIndexConfigsFromTableConfig() {
+    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName("t1").setFieldConfigList(
+        ImmutableList.of(new FieldConfig("f1", FieldConfig.EncodingType.DICTIONARY, null,
+                ImmutableList.of(FieldConfig.IndexType.TIMESTAMP), FieldConfig.CompressionCodec.ZSTANDARD,
+                ImmutableMap.of(), new TimestampConfig(ImmutableList.of(TimestampIndexGranularity.DAY))),
+            new FieldConfig("f2", FieldConfig.EncodingType.DICTIONARY, null,
+                ImmutableList.of(FieldConfig.IndexType.TIMESTAMP), FieldConfig.CompressionCodec.LZ4, ImmutableMap.of(),
+                new TimestampConfig(ImmutableList.of(TimestampIndexGranularity.WEEK))),
+            new FieldConfig("f3", FieldConfig.EncodingType.DICTIONARY, null,
+                ImmutableList.of(FieldConfig.IndexType.TIMESTAMP), FieldConfig.CompressionCodec.PASS_THROUGH,
+                ImmutableMap.of(), new TimestampConfig(ImmutableList.of(TimestampIndexGranularity.MONTH))))).build();
+    Map<String, List<TimestampIndexGranularity>> timestampIndexGranularityMap =
+        SegmentGeneratorConfig.extractTimestampIndexConfigsFromTableConfig(tableConfig);
+    Assert.assertEquals(3, timestampIndexGranularityMap.size());
+    Assert.assertTrue(timestampIndexGranularityMap.containsKey("f1"));
+    Assert.assertTrue(timestampIndexGranularityMap.get("f1").contains(TimestampIndexGranularity.DAY));
+    Assert.assertTrue(timestampIndexGranularityMap.containsKey("f2"));
+    Assert.assertTrue(timestampIndexGranularityMap.get("f2").contains(TimestampIndexGranularity.WEEK));
+    Assert.assertTrue(timestampIndexGranularityMap.containsKey("f3"));
+    Assert.assertTrue(timestampIndexGranularityMap.get("f3").contains(TimestampIndexGranularity.MONTH));
   }
 }

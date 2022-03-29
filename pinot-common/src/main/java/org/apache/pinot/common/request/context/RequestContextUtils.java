@@ -416,18 +416,20 @@ public class RequestContextUtils {
     }
   }
 
-  public static FilterContext overrideFilterWithPushdownFunctions(FilterContext filter, IndexSegment indexSegment,
-      Map<Integer, String> overrideFunctions) {
+  public static FilterContext overrideFilterWithExpressionOverrideHints(FilterContext filter, IndexSegment indexSegment,
+      Map<ExpressionContext, ExpressionContext> getExpressionOverrideHints) {
     if (filter.getChildren() != null) {
       // AND, OR, NOT
-      List<FilterContext> newChildren = filter.getChildren().stream()
-          .map(filterContext -> overrideFilterWithPushdownFunctions(filterContext, indexSegment, overrideFunctions))
+      List<FilterContext> newChildren = filter.getChildren().stream().map(
+              filterContext -> overrideFilterWithExpressionOverrideHints(filterContext, indexSegment,
+                  getExpressionOverrideHints))
           .collect(Collectors.toList());
       return new FilterContext(filter.getType(), newChildren, null);
     }
     // PREDICATE
     Predicate predicate = filter.getPredicate();
-    ExpressionContext newPredicateLhs = overrideWithFunctionIndex(indexSegment, overrideFunctions, predicate.getLhs());
+    ExpressionContext newPredicateLhs =
+        overrideWithExpressionHints(indexSegment, getExpressionOverrideHints, predicate.getLhs());
     Predicate newPredicate = getNewPredicate(predicate, newPredicateLhs);
     return new FilterContext(filter.getType(), null, newPredicate);
   }
@@ -459,18 +461,19 @@ public class RequestContextUtils {
     }
   }
 
-  public static ExpressionContext overrideWithFunctionIndex(IndexSegment indexSegment,
-      Map<Integer, String> pushdownExpressions, ExpressionContext expression) {
+  public static ExpressionContext overrideWithExpressionHints(IndexSegment indexSegment,
+      Map<ExpressionContext, ExpressionContext> expressionOverrideHints, ExpressionContext expression) {
     if (expression.getType() != ExpressionContext.Type.FUNCTION) {
       return expression;
     }
-    String pushdownExpression = pushdownExpressions.get(expression.hashCode());
-    if (pushdownExpression != null && indexSegment.getPhysicalColumnNames().contains(pushdownExpression)) {
-      return ExpressionContext.forIdentifier(pushdownExpression);
+    ExpressionContext overrideExpression = expressionOverrideHints.get(expression);
+    if (overrideExpression != null && indexSegment.getPhysicalColumnNames()
+        .contains(overrideExpression.getIdentifier())) {
+      return overrideExpression;
     }
     List<ExpressionContext> newArguments = new ArrayList<>();
     for (ExpressionContext argument : expression.getFunction().getArguments()) {
-      newArguments.add(overrideWithFunctionIndex(indexSegment, pushdownExpressions, argument));
+      newArguments.add(overrideWithExpressionHints(indexSegment, expressionOverrideHints, argument));
     }
 
     return ExpressionContext.forFunction(

@@ -18,9 +18,7 @@
  */
 package org.apache.pinot.broker.requesthandler;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Splitter;
@@ -68,9 +66,6 @@ import org.apache.pinot.common.request.Literal;
 import org.apache.pinot.common.request.PinotQuery;
 import org.apache.pinot.common.request.Selection;
 import org.apache.pinot.common.request.SelectionSort;
-import org.apache.pinot.common.request.context.ExpressionContext;
-import org.apache.pinot.common.request.context.FunctionContext;
-import org.apache.pinot.common.request.context.RequestContextUtils;
 import org.apache.pinot.common.request.transform.TransformExpressionTree;
 import org.apache.pinot.common.response.BrokerResponse;
 import org.apache.pinot.common.response.ProcessingException;
@@ -291,7 +286,6 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
     if (_enableDistinctCountBitmapOverride) {
       handleDistinctCountBitmapOverride(pinotQuery);
     }
-    handleTimestampIndexOverride(pinotQuery);
 
     long compilationEndTimeNs = System.nanoTime();
     _brokerMetrics.addPhaseTiming(rawTableName, BrokerQueryPhase.REQUEST_COMPILATION,
@@ -388,10 +382,12 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
       // Hybrid
       offlineBrokerRequest = getOfflineBrokerRequest(serverBrokerRequest);
       PinotQuery offlinePinotQuery = offlineBrokerRequest.getPinotQuery();
+      handleTimestampIndexOverride(offlinePinotQuery, offlineTableConfig);
       handleExpressionOverride(offlinePinotQuery, _tableCache.getExpressionOverrideMap(offlineTableName));
       _queryOptimizer.optimize(offlinePinotQuery, offlineTableConfig, schema);
       realtimeBrokerRequest = getRealtimeBrokerRequest(serverBrokerRequest);
       PinotQuery realtimePinotQuery = realtimeBrokerRequest.getPinotQuery();
+      handleTimestampIndexOverride(realtimePinotQuery, realtimeTableConfig);
       handleExpressionOverride(realtimePinotQuery, _tableCache.getExpressionOverrideMap(realtimeTableName));
       _queryOptimizer.optimize(realtimePinotQuery, realtimeTableConfig, schema);
       requestStatistics.setFanoutType(RequestStatistics.FanoutType.HYBRID);
@@ -400,6 +396,7 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
     } else if (offlineTableName != null) {
       // OFFLINE only
       setTableName(serverBrokerRequest, offlineTableName);
+      handleTimestampIndexOverride(pinotQuery, offlineTableConfig);
       handleExpressionOverride(pinotQuery, _tableCache.getExpressionOverrideMap(offlineTableName));
       _queryOptimizer.optimize(pinotQuery, offlineTableConfig, schema);
       offlineBrokerRequest = serverBrokerRequest;
@@ -408,8 +405,9 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
     } else {
       // REALTIME only
       setTableName(serverBrokerRequest, realtimeTableName);
+      handleTimestampIndexOverride(pinotQuery, realtimeTableConfig);
       handleExpressionOverride(pinotQuery, _tableCache.getExpressionOverrideMap(realtimeTableName));
-      _queryOptimizer.optimize(pinotQuery, offlineTableConfig, schema);
+      _queryOptimizer.optimize(pinotQuery, realtimeTableConfig, schema);
       realtimeBrokerRequest = serverBrokerRequest;
       requestStatistics.setFanoutType(RequestStatistics.FanoutType.REALTIME);
       requestStatistics.setRealtimeServerTenant(getServerTenant(realtimeTableName));
@@ -571,56 +569,53 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
     return brokerResponse;
   }
 
-  private void handleTimestampIndexOverride(PinotQuery pinotQuery)
-      throws JsonProcessingException {
-    Map<Integer, String> pushdownExpressions = new HashMap<>();
+  private void handleTimestampIndexOverride(PinotQuery pinotQuery, TableConfig tableConfig) {
+    if (tableConfig != null && tableConfig.getFieldConfigList() == null) {
+      return;
+    }
+    Set<String> timestampIndexColumns = tableConfig.getFieldConfigList().stream()
+        .filter(fieldConfig -> fieldConfig.getIndexTypes().contains(FieldConfig.IndexType.TIMESTAMP))
+        .map(fieldConfig -> fieldConfig.getName()).collect(Collectors.toSet());
     for (Expression expression : pinotQuery.getSelectList()) {
-      getPushdownExpression(expression, pushdownExpressions);
-      if (!pushdownExpressions.isEmpty()) {
-        pinotQuery.getQueryOptions().put(Broker.Request.QueryOptionKey.PUSHDOWN_TIMESTAMP_INDEX_EXPRESSION,
-            new ObjectMapper().writeValueAsString(pushdownExpressions));
-      }
+      setTimestampIndexExpressionOverrideHints(expression, timestampIndexColumns, pinotQuery);
+    }
+    if (pinotQuery.getFilterExpression() != null) {
+      setTimestampIndexExpressionOverrideHints(pinotQuery.getFilterExpression(), timestampIndexColumns, pinotQuery);
+    }
+    if (pinotQuery.getGroupByList() != null) {
+      pinotQuery.getGroupByList().stream().forEach(
+          expression -> setTimestampIndexExpressionOverrideHints(expression, timestampIndexColumns, pinotQuery));
+    }
+    if (pinotQuery.getOrderByList() != null) {
+      pinotQuery.getOrderByList().stream().forEach(
+          expression -> setTimestampIndexExpressionOverrideHints(expression, timestampIndexColumns, pinotQuery));
     }
   }
 
-  private void getPushdownExpression(Expression expression, Map<Integer, String> pushdownExpressions) {
-    Function function = expression.getFunctionCall();
-    if (function == null) {
+  private void setTimestampIndexExpressionOverrideHints(Expression expression, Set<String> timestampIndexColumns,
+      PinotQuery pinotQuery) {
+    if (expression == null || expression.getFunctionCall() == null) {
       return;
     }
+    Function function = expression.getFunctionCall();
     switch (function.getOperator().toUpperCase()) {
       case "DATETRUNC":
         String granularString = function.getOperands().get(0).getLiteral().getStringValue();
         if (function.getOperandsSize() == 2 && TimestampIndexGranularity.isValidTimeGranularity(granularString)) {
-          pushdownExpressions.put(RequestContextUtils.getExpression(expression).hashCode(),
-              TimestampIndexGranularity.getColumnNameWithGranularity(
-                  function.getOperands().get(1).getIdentifier().getName(),
-                  TimestampIndexGranularity.valueOf(granularString)));
+          String timeColumn = function.getOperands().get(1).getIdentifier().getName();
+          if (timestampIndexColumns.contains(timeColumn)) {
+            pinotQuery.putToExpressionOverrideHints(expression, RequestUtils.getIdentifierExpression(
+                TimestampIndexGranularity.getColumnNameWithGranularity(timeColumn,
+                    TimestampIndexGranularity.valueOf(granularString))));
+          }
         }
         break;
       default:
         break;
     }
     for (Expression operand : function.getOperands()) {
-      getPushdownExpression(operand, pushdownExpressions);
+      setTimestampIndexExpressionOverrideHints(operand, timestampIndexColumns, pinotQuery);
     }
-  }
-
-  private ExpressionContext convertExpressionToExpressionContext(Expression expression) {
-    if (expression.getLiteral() != null) {
-      return ExpressionContext.forLiteral(expression.getLiteral().getStringValue());
-    }
-    if (expression.getIdentifier() != null) {
-      return ExpressionContext.forIdentifier(expression.getIdentifier().getName());
-    }
-    if (expression.getFunctionCall() != null) {
-      FunctionContext functionContext =
-          new FunctionContext(FunctionContext.Type.TRANSFORM, expression.getFunctionCall().getOperator(),
-              expression.getFunctionCall().getOperands().stream().map(arg -> convertExpressionToExpressionContext(arg))
-                  .collect(Collectors.toList()));
-      return ExpressionContext.forFunction(functionContext);
-    }
-    return null;
   }
 
   /** Set EXPLAIN PLAN query to route to only one segment on one server. */

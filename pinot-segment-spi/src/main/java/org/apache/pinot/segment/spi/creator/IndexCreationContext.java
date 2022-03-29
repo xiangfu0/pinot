@@ -81,9 +81,8 @@ public interface IndexCreationContext {
     private Comparable<?> _maxValue;
 
     public Builder withColumnIndexCreationInfo(ColumnIndexCreationInfo columnIndexCreationInfo) {
-      return withLengthOfLongestEntry(
-          columnIndexCreationInfo.getLengthOfLongestEntry()).withMaxNumberOfMultiValueElements(
-              columnIndexCreationInfo.getMaxNumberOfMultiValueElements())
+      return withLengthOfLongestEntry(columnIndexCreationInfo.getLengthOfLongestEntry())
+          .withMaxNumberOfMultiValueElements(columnIndexCreationInfo.getMaxNumberOfMultiValueElements())
           .withMaxRowLengthInBytes(columnIndexCreationInfo.getMaxRowLengthInBytes());
     }
 
@@ -101,8 +100,10 @@ public interface IndexCreationContext {
       return withFieldSpec(columnMetadata.getFieldSpec()).sorted(columnMetadata.isSorted())
           .withCardinality(columnMetadata.getCardinality())
           .withTotalNumberOfEntries(columnMetadata.getTotalNumberOfEntries())
-          .withTotalDocs(columnMetadata.getTotalDocs()).withDictionary(columnMetadata.hasDictionary())
-          .withMinValue(columnMetadata.getMinValue()).withMaxValue(columnMetadata.getMaxValue());
+          .withTotalDocs(columnMetadata.getTotalDocs())
+          .withDictionary(columnMetadata.hasDictionary())
+          .withMinValue(columnMetadata.getMinValue())
+          .withMaxValue(columnMetadata.getMaxValue());
     }
 
     public Builder withMinValue(Comparable<?> minValue) {
