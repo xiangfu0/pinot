@@ -295,6 +295,7 @@ public class InstancePlanMakerImplV2 implements PlanMaker {
   @VisibleForTesting
   public static void rewriteQueryContextWithHints(QueryContext queryContext, IndexSegment indexSegment) {
     Map<ExpressionContext, ExpressionContext> expressionOverrideHints = queryContext.getExpressionOverrideHints();
+    LOGGER.info("Query expressionOverrideHints: {}", expressionOverrideHints);
     if (MapUtils.isEmpty(expressionOverrideHints)) {
       return;
     }
@@ -302,6 +303,7 @@ public class InstancePlanMakerImplV2 implements PlanMaker {
     List<ExpressionContext> selectExpressions = queryContext.getSelectExpressions();
     selectExpressions.replaceAll(
         expression -> overrideWithExpressionHints(expression, indexSegment, expressionOverrideHints));
+    LOGGER.info("selectExpressions after override: {}", selectExpressions);
 
     List<ExpressionContext> groupByExpressions = queryContext.getGroupByExpressions();
     if (CollectionUtils.isNotEmpty(groupByExpressions)) {
@@ -351,6 +353,12 @@ public class InstancePlanMakerImplV2 implements PlanMaker {
       return expression;
     }
     ExpressionContext overrideExpression = expressionOverrideHints.get(expression);
+    if (overrideExpression != null) {
+      LOGGER.info("indexSegment.getColumnNames() = {}, overrideExpression.getIdentifier() = {},"
+              + " indexSegment.getColumnNames().contains(overrideExpression.getIdentifier()) = {}",
+          indexSegment.getColumnNames(), overrideExpression.getIdentifier(),
+          indexSegment.getColumnNames().contains(overrideExpression.getIdentifier()));
+    }
     if (overrideExpression != null && overrideExpression.getIdentifier() != null && indexSegment.getColumnNames()
         .contains(overrideExpression.getIdentifier())) {
       return overrideExpression;

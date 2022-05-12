@@ -163,6 +163,7 @@ public class ImmutableSegmentLoader {
     if (schema != null) {
       schema = SegmentGeneratorConfig.updateSchemaWithTimestampIndexes(schema,
           SegmentGeneratorConfig.extractTimestampIndexConfigsFromTableConfig(indexLoadingConfig.getTableConfig()));
+      LOGGER.info("Segment dir: {}, schema to load {}", segmentDirectory, schema);
       Set<String> columnsInMetadata = new HashSet<>(columnMetadataMap.keySet());
       columnsInMetadata.removeIf(schema::hasColumn);
       if (!columnsInMetadata.isEmpty()) {
