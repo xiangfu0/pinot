@@ -41,6 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executor;
+import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.ws.rs.Consumes;
@@ -199,6 +200,9 @@ public class PinotSegmentUploadDownloadRestletResource {
   private SuccessResponse uploadSegment(@Nullable String tableName, TableType tableType,
       @Nullable FormDataMultiPart multiPart, boolean moveSegmentToFinalLocation, boolean enableParallelPushProtection,
       boolean allowRefresh, HttpHeaders headers, Request request) {
+    String headerString = StringUtils.join(
+        headers.getRequestHeaders().entrySet().stream().map(entry -> entry.getKey() + " : " + entry.getValue())
+            .collect(Collectors.toList()), ", ");
     if (StringUtils.isNotEmpty(tableName)) {
       TableType tableTypeFromTableName = TableNameBuilder.getTableTypeFromTableName(tableName);
       if (tableTypeFromTableName != null && tableTypeFromTableName != tableType) {
@@ -216,6 +220,14 @@ public class PinotSegmentUploadDownloadRestletResource {
     String downloadURI = extractHttpHeader(headers, FileUploadDownloadClient.CustomHeaders.DOWNLOAD_URI);
     String crypterClassNameInHeader = extractHttpHeader(headers, FileUploadDownloadClient.CustomHeaders.CRYPTER);
     String ingestionDescriptor = extractHttpHeader(headers, CommonConstants.Controller.INGESTION_DESCRIPTOR);
+
+    LOGGER.warn(
+        "PinotSegmentUploadDownloadRestletResource - 1: Got an upload segment request - table name: {}, table type: "
+            + "{}, moveSegmentToFinalLocation: {}, "
+            + "enableParallelPushProtection: {}, allowRefresh: {}, uploadTypeStr: {}, downloadURI: {}, "
+            + "crypterClassNameInHeader: {}, ingestionDescriptor: {}, headerString: ({})",
+        tableName, tableType, moveSegmentToFinalLocation, enableParallelPushProtection, allowRefresh, uploadTypeStr,
+        downloadURI, crypterClassNameInHeader, ingestionDescriptor, headerString);
 
     File tempEncryptedFile = null;
     File tempDecryptedFile = null;
@@ -270,6 +282,9 @@ public class PinotSegmentUploadDownloadRestletResource {
             URI segmentURI = new URI(downloadURI);
             PinotFS pinotFS = PinotFSFactory.create(segmentURI.getScheme());
             segmentSizeInBytes = pinotFS.length(segmentURI);
+            LOGGER.warn("PinotSegmentUploadDownloadRestletResource - 2 : segmentURI: {}, segmentSizeInBytes: {}",
+                segmentURI,
+                segmentSizeInBytes);
           } catch (Exception e) {
             segmentSizeInBytes = -1;
             LOGGER.warn("Could not fetch segment size for metadata push", e);
@@ -287,6 +302,7 @@ public class PinotSegmentUploadDownloadRestletResource {
       String metadataProviderClass = DefaultMetadataExtractor.class.getName();
       SegmentMetadata segmentMetadata = getSegmentMetadata(tempDecryptedFile, tempSegmentDir, metadataProviderClass);
 
+      LOGGER.warn("PinotSegmentUploadDownloadRestletResource - 3 : segmentMetadata: {}", segmentMetadata);
       // Fetch segment name
       String segmentName = segmentMetadata.getName();
 
