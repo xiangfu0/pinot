@@ -26,6 +26,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.yaml.snakeyaml.Yaml;
 
 
 public class CompatibilityOpsRunner {
@@ -45,10 +46,8 @@ public class CompatibilityOpsRunner {
     Path path = Paths.get(_configFileName);
     _parentDir = path.getParent().toString();
     InputStream inputStream = Files.newInputStream(path);
-
-    ObjectMapper om = new ObjectMapper(new YAMLFactory());
-    CompatTestOperation operation = om.readValue(inputStream, CompatTestOperation.class);
-    LOGGER.info("Running compat verifications from file:{} ({})", path.toString(), operation.getDescription());
+    CompatTestOperation operation = new Yaml().loadAs(inputStream, CompatTestOperation.class);
+    LOGGER.info("Running compat verifications from file:{} ({})", path, operation.getDescription());
 
     boolean passed = true;
     for (BaseOp op : operation.getOperations()) {
