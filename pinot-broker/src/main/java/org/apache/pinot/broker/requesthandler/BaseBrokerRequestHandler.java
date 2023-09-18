@@ -21,6 +21,7 @@ package org.apache.pinot.broker.requesthandler;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableMap;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -1415,7 +1416,8 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
       }
       Expression filterExpression = pinotQuery.getFilterExpression();
       if (filterExpression != null) {
-        fixColumnName(rawTableName, filterExpression, columnNameMap, aliasMap, isCaseInsensitive);
+        // We don't support alias in filter expression, so we don't need to pass aliasMap
+        fixColumnName(rawTableName, filterExpression, columnNameMap, ImmutableMap.of(), isCaseInsensitive);
       }
       List<Expression> groupByList = pinotQuery.getGroupByList();
       if (groupByList != null) {

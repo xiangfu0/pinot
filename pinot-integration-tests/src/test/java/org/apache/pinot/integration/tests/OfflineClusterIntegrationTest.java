@@ -2384,6 +2384,19 @@ public class OfflineClusterIntegrationTest extends BaseClusterIntegrationTestSet
   }
 
   @Test(dataProvider = "useBothQueryEngines")
+  public void testAliasQuery(boolean useMultiStageQueryEngine)
+      throws Exception {
+    setUseMultiStageQueryEngine(useMultiStageQueryEngine);
+    // by default 10 rows will be returned, so use high limit
+    String pinotQuery = "SELECT DaysSinceEpoch as d FROM mytable WHERE d = 16138";
+    JsonNode jsonNode = postQuery(pinotQuery);
+    System.out.println(jsonNode);
+    JsonNode exceptions = jsonNode.get("exceptions");
+    assertFalse(exceptions.isEmpty());
+    assertEquals(exceptions.get(0).get("errorCode").asInt(), 710);
+  }
+
+  @Test(dataProvider = "useBothQueryEngines")
   public void testDistinctQuery(boolean useMultiStageQueryEngine)
       throws Exception {
     setUseMultiStageQueryEngine(useMultiStageQueryEngine);
