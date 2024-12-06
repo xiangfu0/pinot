@@ -492,6 +492,7 @@ public class QueryContext {
   public static class Builder {
     private String _tableName;
     private QueryContext _subquery;
+    private TimeSeriesContext _timeSeriesContext;
     private List<ExpressionContext> _selectExpressions;
     private boolean _distinct;
     private List<String> _aliasList;
@@ -512,6 +513,11 @@ public class QueryContext {
 
     public Builder setSubquery(QueryContext subquery) {
       _subquery = subquery;
+      return this;
+    }
+
+    public Builder setTimeSeriesContext(TimeSeriesContext timeSeriesContext) {
+      _timeSeriesContext = timeSeriesContext;
       return this;
     }
 
@@ -591,7 +597,7 @@ public class QueryContext {
         _queryOptions = Collections.emptyMap();
       }
       QueryContext queryContext =
-          new QueryContext(_tableName, _subquery, _selectExpressions, _distinct, _aliasList,
+          new QueryContext(_tableName, _subquery, _timeSeriesContext, _selectExpressions, _distinct, _aliasList,
               _filter, _groupByExpressions, _havingFilter, _orderByExpressions, _limit, _offset, _queryOptions,
               _expressionOverrideHints, _explain);
       queryContext.setNullHandlingEnabled(QueryOptionsUtils.isNullHandlingEnabled(_queryOptions));
