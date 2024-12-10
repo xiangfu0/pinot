@@ -35,6 +35,7 @@ import org.apache.pinot.segment.local.aggregator.PercentileEstValueAggregator;
 import org.apache.pinot.segment.local.customobject.AvgPair;
 import org.apache.pinot.segment.local.customobject.QuantileDigest;
 import org.apache.pinot.segment.spi.AggregationFunctionType;
+import org.apache.pinot.spi.utils.CommonConstants;
 
 
 public class FunnelStepDurationStatsAggregationFunction extends FunnelBaseAggregationFunction<DoubleArrayList> {
@@ -94,7 +95,7 @@ public class FunnelStepDurationStatsAggregationFunction extends FunnelBaseAggreg
     if (stepEvents == null || stepEvents.isEmpty()) {
       return new DoubleArrayList();
     }
-    Map<Integer, List<Object>> stepValueAggregators = initValueAggregator(_durationFunctions);
+    Map<Integer, List<Object>> stepValueAggregators = initValueAggregator();
     boolean hasMatchedFunnel = false;
     ArrayDeque<FunnelStepEvent> slidingWindow = new ArrayDeque<>();
     while (!stepEvents.isEmpty()) {
@@ -108,7 +109,7 @@ public class FunnelStepDurationStatsAggregationFunction extends FunnelBaseAggreg
         hasMatchedFunnel = true;
       } else {
         // Add counts for not completed funnels
-        for (int i = 0; i < maxSteps - 1; i++) {
+        for (int i = 0; i < maxSteps; i++) {
           List<Object> objects = stepValueAggregators.get(i);
           for (Object count : objects) {
             if (count instanceof AtomicInteger) {
@@ -148,22 +149,23 @@ public class FunnelStepDurationStatsAggregationFunction extends FunnelBaseAggreg
         }
       }
     }
+    if (stepAggregatorValues.get(_numSteps - 1) != null) {
+      for (Object stepAggregatorValue : stepAggregatorValues.get(_numSteps - 1)) {
+        if (stepAggregatorValue instanceof AtomicInteger) {
+          ((AtomicInteger) stepAggregatorValue).set(1);
+        }
+      }
+    }
   }
 
-  private Map<Integer, List<Object>> initValueAggregator(List<String> durationFunctions) {
+  private Map<Integer, List<Object>> initValueAggregator() {
     Map<Integer, List<Object>> stepValueAggregators = new HashMap<>();
-    for (int step = 0; step < _numSteps - 1; step++) {
-      List<Object> aggregatorValues = new ArrayList<>();
-      if (durationFunctions.contains("COUNT")) {
-        aggregatorValues.add(new AtomicInteger(0));
-      }
-      if (durationFunctions.contains("AVG")) {
-        aggregatorValues.add(new AvgPair());
-      }
-      if (aggregatorValues.size() < durationFunctions.size()) {
-        aggregatorValues.add(new QuantileDigest(0));
-      }
-      stepValueAggregators.put(step, aggregatorValues);
+    for (int step = 0; step < _numSteps; step++) {
+      List<Object> valueAggregators = new ArrayList<>();
+      valueAggregators.add(new AtomicInteger(0));
+      valueAggregators.add(new AvgPair());
+      valueAggregators.add(new QuantileDigest(0));
+      stepValueAggregators.put(step, valueAggregators);
     }
     return stepValueAggregators;
   }
@@ -171,7 +173,7 @@ public class FunnelStepDurationStatsAggregationFunction extends FunnelBaseAggreg
   private DoubleArrayList getStepDurationResults(Map<Integer, List<Object>> valueAggregatorResults,
       boolean hasMatchedFunnel) {
     DoubleArrayList result = new DoubleArrayList(_durationFunctions.size() * (_numSteps - 1));
-    for (int step = 0; step < _numSteps - 1; step++) {
+    for (int step = 0; step < _numSteps; step++) {
       AtomicReference<AvgPair> avgPair = new AtomicReference<>();
       AtomicReference<QuantileDigest> quantileDigest = new AtomicReference<>();
       AtomicInteger count = new AtomicInteger();
@@ -192,8 +194,8 @@ public class FunnelStepDurationStatsAggregationFunction extends FunnelBaseAggreg
           result.add(count.get());
           continue;
         }
-        if (!hasMatchedFunnel) {
-          result.add(Double.NaN);
+        if (!hasMatchedFunnel || step == _numSteps - 1) {
+          result.add(CommonConstants.NullValuePlaceHolder.DOUBLE);
           continue;
         }
         if (durationFunction.equals("AVG")) {
