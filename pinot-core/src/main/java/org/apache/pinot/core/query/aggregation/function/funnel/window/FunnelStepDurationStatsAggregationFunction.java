@@ -35,6 +35,7 @@ import org.apache.pinot.segment.local.aggregator.PercentileEstValueAggregator;
 import org.apache.pinot.segment.local.customobject.AvgPair;
 import org.apache.pinot.segment.local.customobject.QuantileDigest;
 import org.apache.pinot.segment.spi.AggregationFunctionType;
+import org.apache.pinot.spi.utils.CommonConstants;
 
 
 public class FunnelStepDurationStatsAggregationFunction extends FunnelBaseAggregationFunction<DoubleArrayList> {
@@ -193,7 +194,7 @@ public class FunnelStepDurationStatsAggregationFunction extends FunnelBaseAggreg
           continue;
         }
         if (!hasMatchedFunnel) {
-          result.add(Double.NaN);
+          result.add(CommonConstants.NullValuePlaceHolder.DOUBLE);
           continue;
         }
         if (durationFunction.equals("AVG")) {
