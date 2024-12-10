@@ -117,7 +117,9 @@ public class SumAggregationFunction extends NullableSingleInputAggregationFuncti
         sum = foldNotNull(length, blockValSet, null, (acum, from, to) -> {
           double innerSum = 0;
           for (int i = from; i < to; i++) {
-            innerSum += values[i];
+            if (!Double.isNaN(values[i])) {
+              innerSum += values[i];
+            }
           }
           return acum == null ? innerSum : acum + innerSum;
         });
