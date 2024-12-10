@@ -69,7 +69,9 @@ public class AvgAggregationFunction extends NullableSingleInputAggregationFuncti
       AvgPair avgPair = new AvgPair();
       forEachNotNull(length, blockValSet, (from, to) -> {
         for (int i = from; i < to; i++) {
-          avgPair.apply(doubleValues[i], 1);
+          if (!Double.isNaN(doubleValues[i])) {
+            avgPair.apply(doubleValues[i], 1);
+          }
         }
       });
       // Only set the aggregation result when there is at least one non-null input value
