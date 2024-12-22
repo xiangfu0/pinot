@@ -23,6 +23,7 @@ import com.google.common.base.Preconditions;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import org.apache.commons.collections4.CollectionUtils;
@@ -33,6 +34,8 @@ import org.apache.pinot.common.request.context.FilterContext;
 import org.apache.pinot.common.request.context.OrderByExpressionContext;
 import org.apache.pinot.common.request.context.predicate.Predicate;
 import org.apache.pinot.common.utils.config.QueryOptionsUtils;
+import org.apache.pinot.core.operator.combine.GroupByCombineOperator;
+import org.apache.pinot.core.operator.combine.PartitionedGroupByCombineOperator;
 import org.apache.pinot.core.plan.AcquireReleaseColumnsSegmentPlanNode;
 import org.apache.pinot.core.plan.AggregationPlanNode;
 import org.apache.pinot.core.plan.CombinePlanNode;
@@ -100,6 +103,8 @@ public class InstancePlanMakerImplV2 implements PlanMaker {
   public static final String GROUPBY_TRIM_THRESHOLD_KEY = Server.GROUPBY_TRIM_THRESHOLD;
   @Deprecated
   public static final int DEFAULT_GROUPBY_TRIM_THRESHOLD = Server.DEFAULT_QUERY_EXECUTOR_GROUPBY_TRIM_THRESHOLD;
+  public static final String DEFAULT_GROUP_BY_ALGORITHM = GroupByCombineOperator.ALGORITHM;
+  public static final int DEFAULT_NUM_GROUP_BY_PARTITIONS = 1;
 
   private static final Logger LOGGER = LoggerFactory.getLogger(InstancePlanMakerImplV2.class);
 
@@ -256,6 +261,23 @@ public class InstancePlanMakerImplV2 implements PlanMaker {
         queryContext.setMinInitialIndexedTableCapacity(minInitialIndexedTableCapacity);
       } else {
         queryContext.setMinInitialIndexedTableCapacity(_minInitialIndexedTableCapacity);
+      }
+      String groupByAlgorithm = QueryOptionsUtils.getGroupByAlgorithm(queryOptions);
+      if (groupByAlgorithm != null) {
+        groupByAlgorithm = groupByAlgorithm.trim().toUpperCase(Locale.ROOT);
+        queryContext.setGroupByAlgorithm(groupByAlgorithm);
+      } else {
+        groupByAlgorithm = DEFAULT_GROUP_BY_ALGORITHM;
+        queryContext.setGroupByAlgorithm(DEFAULT_GROUP_BY_ALGORITHM);
+      }
+      Integer numGroupByPartitions = QueryOptionsUtils.getNumGroupByPartitions(queryOptions);
+      if (numGroupByPartitions != null) {
+        queryContext.setNumGroupByPartitions(numGroupByPartitions);
+      } else if (PartitionedGroupByCombineOperator.ALGORITHM.equals(groupByAlgorithm)) {
+        queryContext.setNumGroupByPartitions(Math.max(DEFAULT_NUM_GROUP_BY_PARTITIONS,
+            queryContext.getMaxExecutionThreads()));
+      } else {
+        queryContext.setNumGroupByPartitions(DEFAULT_NUM_GROUP_BY_PARTITIONS);
       }
       // Set numGroupsLimit
       Integer numGroupsLimit = QueryOptionsUtils.getNumGroupsLimit(queryOptions);

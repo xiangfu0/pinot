@@ -20,6 +20,7 @@ package org.apache.pinot.core.plan;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import javax.annotation.Nullable;
 import org.apache.pinot.common.request.context.ExpressionContext;
@@ -30,6 +31,8 @@ import org.apache.pinot.core.operator.combine.BaseCombineOperator;
 import org.apache.pinot.core.operator.combine.DistinctCombineOperator;
 import org.apache.pinot.core.operator.combine.GroupByCombineOperator;
 import org.apache.pinot.core.operator.combine.MinMaxValueBasedSelectionOrderByCombineOperator;
+import org.apache.pinot.core.operator.combine.NonblockingGroupByCombineOperator;
+import org.apache.pinot.core.operator.combine.PartitionedGroupByCombineOperator;
 import org.apache.pinot.core.operator.combine.SelectionOnlyCombineOperator;
 import org.apache.pinot.core.operator.combine.SelectionOrderByCombineOperator;
 import org.apache.pinot.core.operator.combine.SequentialSortedGroupByCombineOperator;
@@ -63,10 +66,10 @@ public class CombinePlanNode implements PlanNode {
   /**
    * Constructor for the class.
    *
-   * @param planNodes List of underlying plan nodes
-   * @param queryContext Query context
+   * @param planNodes       List of underlying plan nodes
+   * @param queryContext    Query context
    * @param executorService Executor service
-   * @param streamer Optional results block streamer for streaming query
+   * @param streamer        Optional results block streamer for streaming query
    */
   public CombinePlanNode(List<PlanNode> planNodes, QueryContext queryContext, ExecutorService executorService,
       @Nullable ResultsBlockStreamer streamer) {
@@ -125,8 +128,7 @@ public class CombinePlanNode implements PlanNode {
       }, _executorService, _queryContext.getEndTimeMs());
     }
 
-    if (_streamer != null
-          && QueryContextUtils.isSelectionOnlyQuery(_queryContext) && _queryContext.getLimit() != 0) {
+    if (_streamer != null && QueryContextUtils.isSelectionOnlyQuery(_queryContext) && _queryContext.getLimit() != 0) {
       // Use streaming operator only for non-empty selection-only query
       return new StreamingSelectionOnlyCombineOperator(operators, _queryContext, _executorService);
     } else {
@@ -135,15 +137,7 @@ public class CombinePlanNode implements PlanNode {
           // Aggregation only
           return new AggregationCombineOperator(operators, _queryContext, _executorService);
         } else {
-          // Sorted aggregation group-by, when safeTrim and limit is not too large
-          if (_queryContext.shouldSortAggregateUnderSafeTrim()) {
-            if (operators.size() < _queryContext.getSortAggregateSequentialCombineNumSegmentsThreshold()) {
-              return new SequentialSortedGroupByCombineOperator(operators, _queryContext, _executorService);
-            }
-            return new SortedGroupByCombineOperator(operators, _queryContext, _executorService);
-          }
-          // Aggregation group-by
-          return new GroupByCombineOperator(operators, _queryContext, _executorService);
+          return getGroupByCombineOperator(operators);
         }
       } else if (QueryContextUtils.isSelectionQuery(_queryContext)) {
         if (_queryContext.getLimit() == 0 || _queryContext.getOrderByExpressions() == null) {
@@ -163,6 +157,29 @@ public class CombinePlanNode implements PlanNode {
         assert QueryContextUtils.isDistinctQuery(_queryContext);
         return new DistinctCombineOperator(operators, _queryContext, _executorService);
       }
+    }
+  }
+
+  private BaseCombineOperator getGroupByCombineOperator(List<Operator> operators) {
+    String groupByAlgorithm = _queryContext.getGroupByAlgorithm();
+    String normalizedGroupByAlgorithm = groupByAlgorithm != null ? groupByAlgorithm.trim().toUpperCase(Locale.ROOT)
+        : GroupByCombineOperator.ALGORITHM;
+
+    if (GroupByCombineOperator.ALGORITHM.equals(normalizedGroupByAlgorithm)
+        && _queryContext.shouldSortAggregateUnderSafeTrim()) {
+      if (operators.size() < _queryContext.getSortAggregateSequentialCombineNumSegmentsThreshold()) {
+        return new SequentialSortedGroupByCombineOperator(operators, _queryContext, _executorService);
+      }
+      return new SortedGroupByCombineOperator(operators, _queryContext, _executorService);
+    }
+
+    switch (normalizedGroupByAlgorithm) {
+      case NonblockingGroupByCombineOperator.ALGORITHM:
+        return new NonblockingGroupByCombineOperator(operators, _queryContext, _executorService);
+      case PartitionedGroupByCombineOperator.ALGORITHM:
+        return new PartitionedGroupByCombineOperator(operators, _queryContext, _executorService);
+      default:
+        return new GroupByCombineOperator(operators, _queryContext, _executorService);
     }
   }
 }
