@@ -60,6 +60,7 @@ import org.apache.pinot.sql.parsers.CalciteSqlParser;
 import org.roaringbitmap.IntConsumer;
 import org.roaringbitmap.PeekableIntIterator;
 import org.roaringbitmap.RoaringBitmap;
+import org.roaringbitmap.buffer.BufferFastAggregation;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 import org.roaringbitmap.buffer.MutableRoaringBitmap;
 
@@ -116,6 +117,25 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
         dataBuffer.view(dictionaryEndOffset, invertedIndexEndOffset, ByteOrder.BIG_ENDIAN), _dictionary.length());
     long docIdMappingEndOffset = invertedIndexEndOffset + docIdMappingLength;
     _docIdMapping = dataBuffer.view(invertedIndexEndOffset, docIdMappingEndOffset, ByteOrder.LITTLE_ENDIAN);
+//    int totalUncompressedSize= 0;
+//    int totalCompressedSize= 0;
+//    for (int i=0;i<_dictionary.length();i++) {
+//      ImmutableRoaringBitmap roaringBitmap = _invertedIndex.getDocIds(i);
+//      roaringBitmap.toMutableRoaringBitmap().runOptimize();
+//      int uncompressedSize = roaringBitmap.serializedSizeInBytes();
+//      byte[] buf = new byte[uncompressedSize];
+//      roaringBitmap.serialize(ByteBuffer.wrap(buf));
+//      byte[] compressed = Zstd.compress(buf);
+//      //System.out.println(uncompressedSize +" -> " + compressed.length);
+//      totalUncompressedSize += uncompressedSize;
+//      totalCompressedSize += compressed.length;
+//
+//      String stringValue = _dictionary.getStringValue(i);
+//      if(stringValue.indexOf("index") > -1)
+//      System.out.println("_dictionary.getStringValue(i) = " + stringValue);
+//    }
+//    System.out.println(totalUncompressedSize +" -> " + totalCompressedSize);
+
     if (_version <= BaseJsonIndexCreator.VERSION_2) {
       _numFlattenedDocs = (docIdMappingLength / Integer.BYTES);
     } else {
@@ -128,7 +148,7 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
       return getMatchingDocIds(filterString);
     }
     FilterContext filter;
-    Map<Integer, Integer> docMatchCountMap = new HashMap<>();
+    Map<Integer, Integer> docMatchCountMap = null;
     try {
       filter = RequestContextUtils.getFilter(CalciteSqlParser.compileToExpression(filterString));
       Preconditions.checkArgument(!filter.isConstant());
@@ -150,10 +170,8 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
     } else {
       int threshold = Integer.parseInt(countPredicate);
       ImmutableRoaringBitmap matchingFlattenedDocIds = getMatchingFlattenedDocIds(filter);
-      for (int flattenedDocId : matchingFlattenedDocIds) {
-        int docId = provider.getDocId(flattenedDocId);
-        docMatchCountMap.merge(docId, 1, Integer::sum);
-      }
+
+      docMatchCountMap = setResultDocIdsWithCount(matchingFlattenedDocIds, provider);
       MutableRoaringBitmap matchingDocIds = new MutableRoaringBitmap();
       for (int docId : docMatchCountMap.keySet()) {
         int count = docMatchCountMap.get(docId);
@@ -165,14 +183,14 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
     }
   }
 
-  @Override
+  // @Override
   public MutableRoaringBitmap getMatchingDocIds(String filterString) {
     FilterContext filter;
     try {
       filter = RequestContextUtils.getFilter(CalciteSqlParser.compileToExpression(filterString));
       Preconditions.checkArgument(!filter.isConstant());
     } catch (Exception e) {
-      throw new BadQueryRequestException("Invalid json match filter: " + filterString);
+      throw new BadQueryRequestException("Invalid json match filter: " + filterString, e);
     }
     FlattenedDocIdToDocIdProvider provider = getFlattenedDocIdToDocIdProvider();
 
@@ -191,6 +209,7 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
       return resultDocIds;
     } else {
       ImmutableRoaringBitmap flattenedDocIds = getMatchingFlattenedDocIds(filter);
+
       MutableRoaringBitmap resultDocIds;
       if (provider instanceof V1V2FlattenedDocIdToDocIdProvider) {
         resultDocIds = new MutableRoaringBitmap();
@@ -198,8 +217,23 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
       } else {
         resultDocIds = setResultDocIds(flattenedDocIds, provider);
       }
+
       return resultDocIds;
     }
+  }
+
+  private Map<Integer, Integer> setResultDocIdsWithCount(ImmutableRoaringBitmap flattenedDocIds,
+      FlattenedDocIdToDocIdProvider provider) {
+    Map<Integer, Integer> docIdCountMap = new HashMap<>();
+    long flattenedDocId = flattenedDocIds.nextValue(0);
+    int docId = provider.getDocId((int) flattenedDocId);
+    while (flattenedDocId >= 0 && docId >= 0) {
+      int nextFlattenedDocId = (int) provider.getFlattenedDocId(docId + 1);
+      docIdCountMap.put(docId, (int) flattenedDocIds.rangeCardinality(flattenedDocId, nextFlattenedDocId));
+      flattenedDocId = flattenedDocIds.nextValue(nextFlattenedDocId);
+      docId = provider.getDocId((int) flattenedDocId);
+    }
+    return docIdCountMap;
   }
 
   private MutableRoaringBitmap setResultDocIds(ImmutableRoaringBitmap flattenedDocIds,
@@ -251,7 +285,7 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
   }
 
   // OR given bitmaps, optionally converting first one to mutable (if it's not already)
-  private static MutableRoaringBitmap or(ImmutableRoaringBitmap target, ImmutableRoaringBitmap other) {
+  private static MutableRoaringBitmap or1(ImmutableRoaringBitmap target, ImmutableRoaringBitmap other) {
     if (target instanceof MutableRoaringBitmap) {
       MutableRoaringBitmap mutableTarget = (MutableRoaringBitmap) target;
       mutableTarget.or(other);
@@ -304,17 +338,14 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
       }
       case OR: {
         List<FilterContext> filters = filter.getChildren();
-        ImmutableRoaringBitmap matchingDocIds = getMatchingFlattenedDocIds(filters.get(0));
-
-        for (int i = 1, numFilters = filters.size(); i < numFilters; i++) {
-          ImmutableRoaringBitmap filterDocIds = getMatchingFlattenedDocIds(filters.get(i));
-          // avoid having to convert matchingDocIds to mutable map
-          if (filterDocIds.isEmpty()) {
-            continue;
-          }
-          matchingDocIds = or(matchingDocIds, filterDocIds);
+        List<ImmutableRoaringBitmap> childMatchingDocIds = new ArrayList<>();
+        for (FilterContext filterContext : filters) {
+          ImmutableRoaringBitmap filterDocIds = getMatchingFlattenedDocIds(filterContext);
+          childMatchingDocIds.add(filterDocIds);
         }
-        return matchingDocIds;
+        ImmutableRoaringBitmap[] array = new ImmutableRoaringBitmap[childMatchingDocIds.size()];
+        childMatchingDocIds.toArray(array);
+        return BufferFastAggregation.horizontal_or(array);
       }
       case PREDICATE: {
         Predicate predicate = filter.getPredicate();
@@ -410,20 +441,24 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
       case IN: {
         List<String> values = ((InPredicate) predicate).getValues();
         ImmutableRoaringBitmap result = null;
+        List<ImmutableRoaringBitmap> childResults = new ArrayList<>();
+
         for (String value : values) {
           String keyValuePair = key + JsonIndexCreator.KEY_VALUE_SEPARATOR + value;
           int dictId = _dictionary.indexOf(keyValuePair);
           if (dictId >= 0) {
             ImmutableRoaringBitmap docIds = _invertedIndex.getDocIds(dictId);
-            if (result == null) {
-              result = docIds;
-            } else {
-              result = or(result, docIds);
-            }
+            childResults.add(docIds);
           }
         }
-
-        return filter(result, matchingDocIds);
+        if (!childResults.isEmpty()) {
+          ImmutableRoaringBitmap[] array = new ImmutableRoaringBitmap[childResults.size()];
+          childResults.toArray(array);
+//          result = BufferFastAggregation.or(array);
+          result = BufferFastAggregation.horizontal_or(array);
+        }
+        ImmutableRoaringBitmap filter = filter(result, matchingDocIds);
+        return filter;
       }
 
       case NOT_IN: {
@@ -469,17 +504,18 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
               }
             }
           }
-
+          List<ImmutableRoaringBitmap> childResults = new ArrayList<>();
           for (int dictId = dictIds[0]; dictId < dictIds[1]; dictId++) {
             if (notInDictIds.contains(dictId)) {
               continue;
             }
-
-            if (result == null) {
-              result = _invertedIndex.getDocIds(dictId);
-            } else {
-              result = or(result, _invertedIndex.getDocIds(dictId));
-            }
+            childResults.add(_invertedIndex.getDocIds(dictId));
+          }
+          if (!childResults.isEmpty()) {
+            ImmutableRoaringBitmap[] array = new ImmutableRoaringBitmap[childResults.size()];
+            childResults.toArray(array);
+//          result = BufferFastAggregation.or(array);
+            result = BufferFastAggregation.horizontal_or(array);
           }
         }
 
@@ -505,6 +541,7 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
         ImmutableRoaringBitmap result = null;
         byte[] dictBuffer = dictIds[0] < dictIds[1] ? _dictionary.getBuffer() : null;
         StringBuilder value = new StringBuilder();
+        List<ImmutableRoaringBitmap> childResults = new ArrayList<>();
 
         for (int dictId = dictIds[0]; dictId < dictIds[1]; dictId++) {
           String stringValue = _dictionary.getStringValue(dictId, dictBuffer);
@@ -512,12 +549,14 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
           value.append(stringValue, key.length() + 1, stringValue.length());
 
           if (matcher.reset(value).matches()) {
-            if (result == null) {
-              result = _invertedIndex.getDocIds(dictId);
-            } else {
-              result = or(result, _invertedIndex.getDocIds(dictId));
-            }
+            childResults.add(_invertedIndex.getDocIds(dictId));
           }
+        }
+        if (!childResults.isEmpty()) {
+          ImmutableRoaringBitmap[] array = new ImmutableRoaringBitmap[childResults.size()];
+          childResults.toArray(array);
+//          result = BufferFastAggregation.or(array);
+          result = BufferFastAggregation.horizontal_or(array);
         }
 
         return filter(result, matchingDocIds);
@@ -543,6 +582,7 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
         int[] dictIds = getDictIdRangeForKey(key);
         ImmutableRoaringBitmap result = null;
         byte[] dictBuffer = dictIds[0] < dictIds[1] ? _dictionary.getBuffer() : null;
+        List<ImmutableRoaringBitmap> childResults = new ArrayList<>();
 
         for (int dictId = dictIds[0]; dictId < dictIds[1]; dictId++) {
           String value = _dictionary.getStringValue(dictId, dictBuffer).substring(key.length() + 1);
@@ -555,17 +595,17 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
                   : rangeDataType.compare(valueObj, upperBound) < 0);
 
           if (lowerCompareResult && upperCompareResult) {
-            if (result == null) {
-              result = _invertedIndex.getDocIds(dictId);
-            } else {
-              result = or(result, _invertedIndex.getDocIds(dictId));
-            }
+            childResults.add(_invertedIndex.getDocIds(dictId));
           }
         }
-
+        if (!childResults.isEmpty()) {
+          ImmutableRoaringBitmap[] array = new ImmutableRoaringBitmap[childResults.size()];
+          childResults.toArray(array);
+//          result = BufferFastAggregation.or(array);
+          result = BufferFastAggregation.horizontal_or(array);
+        }
         return filter(result, matchingDocIds);
       }
-
       default:
         throw new IllegalStateException("Unsupported json_match predicate type: " + predicate);
     }

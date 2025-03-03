@@ -73,7 +73,8 @@ public class JsonMatchFilterOperator extends BaseFilterOperator {
 
   @Override
   public BitmapCollection getBitmaps() {
-    return new BitmapCollection(_numDocs, false, _jsonIndex.getMatchingDocIds(_predicate.getValue()));
+    return new BitmapCollection(_numDocs, false,
+        _jsonIndex.getMatchingDocIds(_predicate.getValue(), _predicate.getCountPredicate()));
   }
 
   @Override

@@ -32,6 +32,34 @@ import javax.annotation.Nullable;
  *              unlimited
  * - excludeArray: Whether to exclude array when flattening the object
  * - disableCrossArrayUnnest: Whether to not unnest multiple arrays (unique combination of all elements)
+ * - disablePositionalIndexing: Controls whether explicit positional indexing for JSON arrays is enabled.
+ *  <p>
+ *  By default, Apache Pinot supports querying JSON arrays using exact positional indexes,
+ *  allowing predicates such as:
+ *  <pre>
+ *    jsonColumn['$[0].key1'] = 'value1' AND jsonColumn['$[0].key2'] = 'value2'
+ *  </pre>
+ *  However, supporting positional queries adds indexing overhead, as it requires storing and
+ *  querying values based on their exact array index positions.
+ *  </p>
+ *
+ *  <p>
+ *  When this property is set to {@code true}, exact array index-based queries are disabled,
+ *  meaning queries that rely on specific positions like {@code $[0].key1} will not work.
+ *  Instead, only wildcard-based queries, such as:
+ *  <pre>
+ *    jsonColumn['$[*].key1'] = 'value1' AND jsonColumn['$[*].key2'] = 'value2'
+ *  </pre>
+ *  will be supported.
+ *  </p>
+ *
+ *  <p>
+ *  Recommended to set this to {@code true} when positional indexing is not required,
+ *  as it can reduce indexing overhead and improve query performance.
+ *  </p>
+ *
+ *  <p><b>Default value:</b> {@code false} (positional indexing is enabled by default)</p>
+ *
  * - includePaths: Only include the given paths, e.g. "$.a.b", "$.a.c[*]" (mutual exclusive with excludePaths). Paths
  *                 under the included paths will be included, e.g. "$.a.b.c" will be included when "$.a.b" is configured
  *                 to be included.
@@ -56,6 +84,7 @@ public class JsonIndexConfig extends IndexConfig {
   private int _maxLevels = -1;
   private boolean _excludeArray = false;
   private boolean _disableCrossArrayUnnest = false;
+  private boolean _disablePositionalIndexing = false;
   private Set<String> _includePaths;
   private Set<String> _excludePaths;
   private Set<String> _excludeFields;
@@ -75,6 +104,7 @@ public class JsonIndexConfig extends IndexConfig {
   public JsonIndexConfig(@JsonProperty("disabled") Boolean disabled, @JsonProperty("maxLevels") int maxLevels,
       @JsonProperty("excludeArray") boolean excludeArray,
       @JsonProperty("disableCrossArrayUnnest") boolean disableCrossArrayUnnest,
+      @JsonProperty("disablePositionalIndexing") boolean disablePositionalIndexing,
       @JsonProperty("includePaths") @Nullable Set<String> includePaths,
       @JsonProperty("excludePaths") @Nullable Set<String> excludePaths,
       @JsonProperty("excludeFields") @Nullable Set<String> excludeFields,
@@ -85,6 +115,7 @@ public class JsonIndexConfig extends IndexConfig {
     _maxLevels = maxLevels;
     _excludeArray = excludeArray;
     _disableCrossArrayUnnest = disableCrossArrayUnnest;
+    _disablePositionalIndexing = disablePositionalIndexing;
     _includePaths = includePaths;
     _excludePaths = excludePaths;
     _excludeFields = excludeFields;
@@ -115,6 +146,14 @@ public class JsonIndexConfig extends IndexConfig {
 
   public void setDisableCrossArrayUnnest(boolean disableCrossArrayUnnest) {
     _disableCrossArrayUnnest = disableCrossArrayUnnest;
+  }
+
+  public void setDisablePositionalIndexing(boolean disablePositionalIndexing) {
+    _disablePositionalIndexing = disablePositionalIndexing;
+  }
+
+  public boolean isDisablePositionalIndexing() {
+    return _disablePositionalIndexing;
   }
 
   @Nullable
@@ -187,7 +226,8 @@ public class JsonIndexConfig extends IndexConfig {
     }
     JsonIndexConfig config = (JsonIndexConfig) o;
     return _maxLevels == config._maxLevels && _excludeArray == config._excludeArray
-        && _disableCrossArrayUnnest == config._disableCrossArrayUnnest && Objects.equals(_includePaths,
+        && _disableCrossArrayUnnest == config._disableCrossArrayUnnest
+        && _disablePositionalIndexing == config._disablePositionalIndexing && Objects.equals(_includePaths,
         config._includePaths) && Objects.equals(_excludePaths, config._excludePaths) && Objects.equals(_excludeFields,
         config._excludeFields) && _maxValueLength == config._maxValueLength
         && _skipInvalidJson == config._skipInvalidJson;
@@ -195,7 +235,8 @@ public class JsonIndexConfig extends IndexConfig {
 
   @Override
   public int hashCode() {
-    return Objects.hash(super.hashCode(), _maxLevels, _excludeArray, _disableCrossArrayUnnest, _includePaths,
-        _excludePaths, _excludeFields, _maxValueLength, _skipInvalidJson);
+    return Objects.hash(super.hashCode(), _maxLevels, _excludeArray, _disableCrossArrayUnnest,
+        _disablePositionalIndexing, _includePaths, _excludePaths, _excludeFields, _maxValueLength,
+        _skipInvalidJson);
   }
 }

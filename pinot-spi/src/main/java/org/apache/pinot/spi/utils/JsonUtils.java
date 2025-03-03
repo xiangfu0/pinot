@@ -86,7 +86,6 @@ public class JsonUtils {
   // For querying
   public static final String WILDCARD = "*";
 
-
   // NOTE: Do not expose the ObjectMapper to prevent configuration change
   private static final ObjectMapper DEFAULT_MAPPER = new ObjectMapper();
   public static final ObjectReader DEFAULT_READER = DEFAULT_MAPPER.reader();
@@ -432,7 +431,9 @@ public class JsonUtils {
           for (Map.Entry<String, String> entry : childResult.entrySet()) {
             result.put(KEY_SEPARATOR + entry.getKey(), entry.getValue());
           }
-          result.put(ARRAY_INDEX_KEY, arrayIndexValue);
+          if (!jsonIndexConfig.isDisablePositionalIndexing()) {
+            result.put(ARRAY_INDEX_KEY, arrayIndexValue);
+          }
           results.add(result);
         }
       }
@@ -736,6 +737,7 @@ public class JsonUtils {
       throws IOException {
     JsonNode jsonNode;
     try {
+
       jsonNode = JsonUtils.stringToJsonNode(jsonString);
     } catch (JsonProcessingException e) {
       if (jsonIndexConfig.getSkipInvalidJson()) {
