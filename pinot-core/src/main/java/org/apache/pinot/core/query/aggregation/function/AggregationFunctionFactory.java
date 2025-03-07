@@ -54,11 +54,16 @@ public class AggregationFunctionFactory {
   private AggregationFunctionFactory() {
   }
 
+  public static AggregationFunction getAggregationFunction(FunctionContext function, boolean nullHandlingEnabled) {
+    return getAggregationFunction(function, nullHandlingEnabled, false);
+  }
+
   /**
    * Given the function information, returns a new instance of the corresponding aggregation function.
-   * <p>NOTE: Underscores in the function name are ignored in V1.
+   * <p>NOTE: Underscores in the function name are ignored.
    */
-  public static AggregationFunction getAggregationFunction(FunctionContext function, boolean nullHandlingEnabled) {
+  public static AggregationFunction getAggregationFunction(FunctionContext function, boolean nullHandlingEnabled,
+      boolean sharedAcrossOperators) {
     try {
       String upperCaseFunctionName =
           AggregationFunctionType.getNormalizedAggregationFunctionName(function.getFunctionName());
@@ -358,6 +363,11 @@ public class AggregationFunctionFactory {
             return new MinMaxRangeAggregationFunction(arguments, nullHandlingEnabled);
           case DISTINCTCOUNT:
             return new DistinctCountAggregationFunction(arguments, nullHandlingEnabled);
+          case DISTINCTCOUNTSEQUENTIALMERGE:
+            return new DistinctCountSequentialMergeAggregationFunction(arguments, nullHandlingEnabled);
+          case DISTINCTCOUNTPARALLELMERGE:
+            return new DistinctCountParallelMergeAggregationFunction(arguments, nullHandlingEnabled,
+                sharedAcrossOperators);
           case DISTINCTCOUNTBITMAP:
             return new DistinctCountBitmapAggregationFunction(arguments);
           case SEGMENTPARTITIONEDDISTINCTCOUNT:

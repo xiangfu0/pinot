@@ -40,6 +40,7 @@ import org.apache.pinot.core.query.aggregation.function.DistinctCountHLLAggregat
 import org.apache.pinot.core.query.aggregation.function.DistinctCountHLLPlusAggregationFunction;
 import org.apache.pinot.core.query.aggregation.function.DistinctCountRawHLLAggregationFunction;
 import org.apache.pinot.core.query.aggregation.function.DistinctCountRawHLLPlusAggregationFunction;
+import org.apache.pinot.core.query.aggregation.function.DistinctCountSequentialMergeAggregationFunction;
 import org.apache.pinot.core.query.aggregation.function.DistinctCountSmartHLLAggregationFunction;
 import org.apache.pinot.core.query.request.context.QueryContext;
 import org.apache.pinot.segment.local.customobject.MinMaxRangePair;
@@ -110,6 +111,11 @@ public class NonScanBasedAggregationOperator extends BaseOperator<AggregationRes
         case DISTINCTSUMMV:
         case DISTINCTAVGMV:
           result = getDistinctValueSet(Objects.requireNonNull(dataSource.getDictionary()));
+          break;
+        case DISTINCTCOUNTSEQUENTIALMERGE:
+        case DISTINCTCOUNTPARALLELMERGE:
+          result = ((DistinctCountSequentialMergeAggregationFunction) aggregationFunction).extractAggregationResult(
+              Objects.requireNonNull(dataSource.getDictionary()));
           break;
         case DISTINCTCOUNTHLL:
         case DISTINCTCOUNTHLLMV:
