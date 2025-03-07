@@ -21,6 +21,8 @@ package org.apache.pinot.spi.config.table;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import javax.annotation.Nullable;
@@ -89,6 +91,8 @@ public class JsonIndexConfig extends IndexConfig {
   private Set<String> _excludePaths;
   private Set<String> _excludeFields;
   private Set<String> _indexPaths;
+  private List<Map<String, String>> _rangeIndexConfigs;
+  private List<Map<String, String>> _textIndexConfigs;
   private int _maxValueLength = 0;
   private boolean _skipInvalidJson = false;
 
@@ -109,6 +113,8 @@ public class JsonIndexConfig extends IndexConfig {
       @JsonProperty("excludePaths") @Nullable Set<String> excludePaths,
       @JsonProperty("excludeFields") @Nullable Set<String> excludeFields,
       @JsonProperty("indexPaths") @Nullable Set<String> indexPaths,
+      @JsonProperty("rangeIndexConfigs") @Nullable List<Map<String, String>> rangeIndexConfigs,
+      @JsonProperty("textIndexConfigs") @Nullable List<Map<String, String>> textIndexConfigs,
       @JsonProperty("maxValueLength") int maxValueLength,
       @JsonProperty("skipInvalidJson") boolean skipInvalidJson) {
     super(disabled);
@@ -120,6 +126,8 @@ public class JsonIndexConfig extends IndexConfig {
     _excludePaths = excludePaths;
     _excludeFields = excludeFields;
     _indexPaths = indexPaths;
+    _rangeIndexConfigs = rangeIndexConfigs;
+    _textIndexConfigs = textIndexConfigs;
     _maxValueLength = maxValueLength;
     _skipInvalidJson = skipInvalidJson;
   }
@@ -195,6 +203,22 @@ public class JsonIndexConfig extends IndexConfig {
 
   public void setIndexPaths(@Nullable Set<String> indexPaths) {
     _indexPaths = indexPaths;
+  }
+
+  public void setRangeIndexConfigs(List<Map<String, String>> rangeIndexConfigs) {
+    _rangeIndexConfigs = rangeIndexConfigs;
+  }
+
+  public List<Map<String, String>> getRangeIndexConfigs() {
+    return _rangeIndexConfigs;
+  }
+
+  public void setTextIndexConfigs(List<Map<String, String>> textIndexConfigs) {
+    _textIndexConfigs = textIndexConfigs;
+  }
+
+  public List<Map<String, String>> getTextIndexConfigs() {
+    return _textIndexConfigs;
   }
 
   public int getMaxValueLength() {

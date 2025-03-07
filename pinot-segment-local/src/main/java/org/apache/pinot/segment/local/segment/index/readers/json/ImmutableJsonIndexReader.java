@@ -47,9 +47,14 @@ import org.apache.pinot.common.request.context.predicate.RegexpLikePredicate;
 import org.apache.pinot.common.utils.regex.Matcher;
 import org.apache.pinot.common.utils.regex.Pattern;
 import org.apache.pinot.segment.local.segment.creator.impl.inv.json.BaseJsonIndexCreator;
+import org.apache.pinot.segment.local.segment.index.GenericHeader;
+import org.apache.pinot.segment.local.segment.index.readers.BitSlicedRangeIndexReader;
 import org.apache.pinot.segment.local.segment.index.readers.BitmapInvertedIndexReader;
+import org.apache.pinot.segment.local.segment.index.readers.LongDictionary;
 import org.apache.pinot.segment.local.segment.index.readers.StringDictionary;
 import org.apache.pinot.segment.spi.index.creator.JsonIndexCreator;
+import org.apache.pinot.segment.spi.index.metadata.ColumnMetadataImpl;
+import org.apache.pinot.segment.spi.index.reader.Dictionary;
 import org.apache.pinot.segment.spi.index.reader.JsonIndexReader;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
 import org.apache.pinot.spi.data.FieldSpec;
@@ -76,6 +81,8 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
   private final BitmapInvertedIndexReader _invertedIndex;
   private final long _numFlattenedDocs;
   private final PinotDataBuffer _docIdMapping;
+  private final Map<String, BitSlicedRangeIndexReader> _rangeIndexReaderMap;
+  private final Map<String, Dictionary> _rangeDictionaryMap;
 
   // empty bitmap used to limit creation of new empty mutable bitmaps
   private static final ImmutableRoaringBitmap EMPTY_BITMAP;
@@ -102,12 +109,17 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
     Preconditions.checkState(_version <= BaseJsonIndexCreator.VERSION_3,
         "Unsupported json index version: %s", _version);
 
-    int maxValueLength = dataBuffer.getInt(4);
-    long dictionaryLength = dataBuffer.getLong(8);
-    long invertedIndexLength = dataBuffer.getLong(16);
-    long docIdMappingLength = dataBuffer.getLong(24);
+    int headerSize = dataBuffer.getInt(4);
+    int maxValueLength = dataBuffer.getInt(8);
+    long dictionaryLength = dataBuffer.getLong(12);
+    long invertedIndexLength = dataBuffer.getLong(20);
+    long docIdMappingLength = dataBuffer.getLong(28);
+    int rangeIndexHeaderBufferSize = dataBuffer.getInt(36);
+    byte[] rangeIndexHeaderBuffer = new byte[rangeIndexHeaderBufferSize];
+    dataBuffer.copyTo(40, rangeIndexHeaderBuffer);
+    GenericHeader rangeHeader = GenericHeader.fromBuffer(ByteBuffer.wrap(rangeIndexHeaderBuffer));
 
-    long dictionaryStartOffset = BaseJsonIndexCreator.HEADER_LENGTH;
+    long dictionaryStartOffset = headerSize;
     long dictionaryEndOffset = dictionaryStartOffset + dictionaryLength;
     _dictionary =
         new StringDictionary(dataBuffer.view(dictionaryStartOffset, dictionaryEndOffset, ByteOrder.BIG_ENDIAN), 0,
@@ -116,26 +128,42 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
     _invertedIndex = new BitmapInvertedIndexReader(
         dataBuffer.view(dictionaryEndOffset, invertedIndexEndOffset, ByteOrder.BIG_ENDIAN), _dictionary.length());
     long docIdMappingEndOffset = invertedIndexEndOffset + docIdMappingLength;
-    _docIdMapping = dataBuffer.view(invertedIndexEndOffset, docIdMappingEndOffset, ByteOrder.LITTLE_ENDIAN);
-//    int totalUncompressedSize= 0;
-//    int totalCompressedSize= 0;
-//    for (int i=0;i<_dictionary.length();i++) {
-//      ImmutableRoaringBitmap roaringBitmap = _invertedIndex.getDocIds(i);
-//      roaringBitmap.toMutableRoaringBitmap().runOptimize();
-//      int uncompressedSize = roaringBitmap.serializedSizeInBytes();
-//      byte[] buf = new byte[uncompressedSize];
-//      roaringBitmap.serialize(ByteBuffer.wrap(buf));
-//      byte[] compressed = Zstd.compress(buf);
-//      //System.out.println(uncompressedSize +" -> " + compressed.length);
-//      totalUncompressedSize += uncompressedSize;
-//      totalCompressedSize += compressed.length;
-//
-//      String stringValue = _dictionary.getStringValue(i);
-//      if(stringValue.indexOf("index") > -1)
-//      System.out.println("_dictionary.getStringValue(i) = " + stringValue);
-//    }
-//    System.out.println(totalUncompressedSize +" -> " + totalCompressedSize);
+    _docIdMapping = dataBuffer.view(invertedIndexEndOffset, docIdMappingEndOffset, ByteOrder.BIG_ENDIAN);
+    //load range inverted indexes
+    _rangeIndexReaderMap = new HashMap<>();
+    _rangeDictionaryMap = new HashMap<>();
 
+    List<GenericHeader.SubHeader> subHeaders = rangeHeader.getSubHeaders();
+    long currentOffset = docIdMappingEndOffset;
+    for (GenericHeader.SubHeader subHeader : subHeaders) {
+      FieldSpec.DataType dataType = FieldSpec.DataType.valueOf(subHeader.getString("dataType"));
+      String path = subHeader.getString("path");
+      String key = path.replace("$[*]", ".");
+      long dictionaryFileLength = subHeader.getLong("dictionaryFileLength");
+      long rangeIndexFileLength = subHeader.getLong("rangeIndexFileLength");
+      switch (dataType) {
+        case LONG:
+          long cardinality = subHeader.getLong("cardinality");
+          if (dictionaryFileLength != 0) {
+            PinotDataBuffer dictBuffer =
+                dataBuffer.view(currentOffset, currentOffset + dictionaryFileLength,
+                    ByteOrder.BIG_ENDIAN);
+            LongDictionary dictionary = new LongDictionary(dictBuffer, (int) cardinality);
+            _rangeDictionaryMap.put(key, dictionary);
+            currentOffset += dictionaryFileLength;
+          }
+          PinotDataBuffer rangeIndexBuffer =
+              dataBuffer.view(currentOffset, currentOffset + rangeIndexFileLength,
+                  ByteOrder.BIG_ENDIAN);
+          ColumnMetadataImpl columnMetadata =
+              ColumnMetadataImpl.builder().setCardinality((int) cardinality).setHasDictionary(true).build();
+          BitSlicedRangeIndexReader reader = new BitSlicedRangeIndexReader(rangeIndexBuffer, columnMetadata);
+          _rangeIndexReaderMap.put(key, reader);
+          break;
+        default:
+          throw new IllegalStateException("Unsupported datatype: " + dataType);
+      }
+    }
     if (_version <= BaseJsonIndexCreator.VERSION_2) {
       _numFlattenedDocs = (docIdMappingLength / Integer.BYTES);
     } else {
@@ -243,7 +271,8 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
     int docId = provider.getDocId((int) flattenedDocId);
     while (flattenedDocId >= 0 && docId >= 0) {
       resultDocIds.add(docId);
-      flattenedDocId = flattenedDocIds.nextValue((int) provider.getFlattenedDocId(docId + 1));
+      int nextDocStartFlattenedDocId = (int) provider.getFlattenedDocId(docId + 1);
+      flattenedDocId = flattenedDocIds.nextValue(nextDocStartFlattenedDocId);
       docId = provider.getDocId((int) flattenedDocId);
     }
     return resultDocIds;
@@ -579,6 +608,26 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
         Object lowerBound = lowerUnbounded ? null : rangeDataType.convert(rangePredicate.getLowerBound());
         Object upperBound = upperUnbounded ? null : rangeDataType.convert(rangePredicate.getUpperBound());
 
+        if (_rangeIndexReaderMap.containsKey(key)) {
+          Dictionary dictionary = _rangeDictionaryMap.get(key);
+          BitSlicedRangeIndexReader rangeIndexReader = _rangeIndexReaderMap.get(key);
+          int minDictId = 0;
+          int maxDictId = dictionary.length() - 1;
+          if (!lowerUnbounded) {
+            minDictId = dictionary.indexOf(Long.parseLong(rangePredicate.getLowerBound()));
+            if (!lowerInclusive) {
+              minDictId = minDictId + 1;
+            }
+          }
+          if (!upperUnbounded) {
+            maxDictId = dictionary.indexOf(Long.parseLong(rangePredicate.getUpperBound()));
+            if (upperInclusive) {
+              maxDictId = maxDictId - 1;
+            }
+          }
+          ImmutableRoaringBitmap result = rangeIndexReader.getMatchingDocIds(minDictId, maxDictId);
+          return filter(result, matchingDocIds);
+        }
         int[] dictIds = getDictIdRangeForKey(key);
         ImmutableRoaringBitmap result = null;
         byte[] dictBuffer = dictIds[0] < dictIds[1] ? _dictionary.getBuffer() : null;
@@ -601,7 +650,6 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
         if (!childResults.isEmpty()) {
           ImmutableRoaringBitmap[] array = new ImmutableRoaringBitmap[childResults.size()];
           childResults.toArray(array);
-//          result = BufferFastAggregation.or(array);
           result = BufferFastAggregation.horizontal_or(array);
         }
         return filter(result, matchingDocIds);

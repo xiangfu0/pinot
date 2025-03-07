@@ -168,6 +168,7 @@ public class DistinctCountSequentialMergeAggregationFunction
             hashSet.add(hashValues[i].getMostSignificantBits(), hashValues[i].getLeastSignificantBits());
           }
         });
+        break;
     }
   }
 

@@ -108,6 +108,7 @@ public class DistinctCountParallelMergeAggregationFunction extends DistinctCount
           valueSet.add(new OffHeap128BitDistinctSet.Value(HashCommon.mix(hashValue.getMostSignificantBits()),
               HashCommon.mix(hashValue.getLeastSignificantBits())));
         }
+        break;
     }
   }
 
