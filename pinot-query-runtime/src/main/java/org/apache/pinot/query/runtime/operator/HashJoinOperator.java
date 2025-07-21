@@ -39,6 +39,7 @@ import org.apache.pinot.query.runtime.operator.join.LongLookupTable;
 import org.apache.pinot.query.runtime.operator.join.LookupTable;
 import org.apache.pinot.query.runtime.operator.join.ObjectLookupTable;
 import org.apache.pinot.query.runtime.plan.OpChainExecutionContext;
+import org.apache.pinot.spi.trace.Tracing;
 
 
 /**
@@ -104,6 +105,7 @@ public class HashJoinOperator extends BaseJoinOperator {
   @Override
   protected void addRowsToRightTable(List<Object[]> rows) {
     assert _rightTable != null : "Right table should not be null when adding rows";
+    int rightTableSize = 0;
     for (Object[] row : rows) {
       Object key = _rightKeySelector.getKey(row);
       // Skip rows with null join keys - they should not participate in equi-joins per SQL standard
@@ -114,7 +116,9 @@ public class HashJoinOperator extends BaseJoinOperator {
         }
         continue;
       }
+      Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rightTableSize);
       _rightTable.addRow(key, row);
+      rightTableSize++;
     }
   }
 
@@ -137,8 +141,6 @@ public class HashJoinOperator extends BaseJoinOperator {
     // For single keys (non-composite), key == null is already checked above
     return false;
   }
-
-
 
   @Override
   protected void finishBuildingRightTable() {
@@ -203,6 +205,7 @@ public class HashJoinOperator extends BaseJoinOperator {
             break;
           }
           // defer copying of the content until row matches
+          Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
           rows.add(resultRowView.toArray());
           if (_matchedRightRows != null) {
             _matchedRightRows.put(key, BIT_SET_PLACEHOLDER);
@@ -222,6 +225,7 @@ public class HashJoinOperator extends BaseJoinOperator {
     List<Object[]> rows = new ArrayList<>(leftRows.size());
 
     for (Object[] leftRow : leftRows) {
+      Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
       Object key = _leftKeySelector.getKey(leftRow);
       // Skip rows with null join keys - they should not participate in equi-joins per SQL standard
       if (handleNullKey(key, leftRow, rows)) {
@@ -241,6 +245,7 @@ public class HashJoinOperator extends BaseJoinOperator {
               maxRowsLimitReached = true;
               break;
             }
+            Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
             rows.add(resultRowView.toArray());
             hasMatchForLeftRow = true;
             if (_matchedRightRows != null) {
@@ -265,6 +270,7 @@ public class HashJoinOperator extends BaseJoinOperator {
       if (isMaxRowsLimitReached(rows.size())) {
         return;
       }
+      Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
       rows.add(joinRow(leftRow, null));
     }
   }
@@ -277,6 +283,7 @@ public class HashJoinOperator extends BaseJoinOperator {
     for (Object[] leftRow : leftRows) {
       Object key = _leftKeySelector.getKey(leftRow);
       if (_rightTable.containsKey(key)) {
+        Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
         rows.add(leftRow);
       }
     }
@@ -292,6 +299,7 @@ public class HashJoinOperator extends BaseJoinOperator {
     for (Object[] leftRow : leftRows) {
       Object key = _leftKeySelector.getKey(leftRow);
       if (!_rightTable.containsKey(key)) {
+        Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
         rows.add(leftRow);
       }
     }
@@ -308,6 +316,7 @@ public class HashJoinOperator extends BaseJoinOperator {
       for (Map.Entry<Object, Object> entry : _rightTable.entrySet()) {
         Object[] rightRow = (Object[]) entry.getValue();
         if (!_matchedRightRows.containsKey(entry.getKey())) {
+          Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
           rows.add(joinRow(null, rightRow));
         }
       }
@@ -317,12 +326,14 @@ public class HashJoinOperator extends BaseJoinOperator {
         BitSet matchedIndices = _matchedRightRows.get(entry.getKey());
         if (matchedIndices == null) {
           for (Object[] rightRow : rightRows) {
+            Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
             rows.add(joinRow(null, rightRow));
           }
         } else {
           int numRightRows = rightRows.size();
           int unmatchedIndex = 0;
           while ((unmatchedIndex = matchedIndices.nextClearBit(unmatchedIndex)) < numRightRows) {
+            Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
             rows.add(joinRow(null, rightRows.get(unmatchedIndex++)));
           }
         }
@@ -331,6 +342,7 @@ public class HashJoinOperator extends BaseJoinOperator {
     // Add unmatched null key rows from right side for RIGHT and FULL JOIN
     if (_nullKeyRightRows != null) {
       for (Object[] nullKeyRow : _nullKeyRightRows) {
+        Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rows.size());
         rows.add(joinRow(null, nullKeyRow));
       }
     }
