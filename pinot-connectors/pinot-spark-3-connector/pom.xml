@@ -39,7 +39,6 @@
       <id>build-shaded-jar</id>
       <build>
         <plugins>
-
           <plugin>
             <artifactId>maven-shade-plugin</artifactId>
             <executions>

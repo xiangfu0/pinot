@@ -126,12 +126,59 @@ private[pinot] object HttpUtils extends Logging {
       case (Some(header), None) =>
         logWarning(s"Authentication header '$header' provided but no token specified")
       case (None, Some(token)) =>
+        // Default to Authorization Bearer if only token is provided.
+        // If token already starts with 'Bearer ', use as-is to avoid double prefixing.
+        val value = if (token.startsWith("Bearer ")) token else s"Bearer $token"
+        requestBuilder.addHeader("Authorization", value)
+      case (None, None) =>
+        // No authentication
+    }
+    
+    executeRequest(requestBuilder.build(), uri.getScheme.toLowerCase == "https")
+  }
+
+  /**
+   * Send GET request with proxy headers for forwarding to the actual Pinot service
+   * This method adds FORWARD_HOST and FORWARD_PORT headers as required by Pinot proxy
+   */
+  def sendGetRequestWithProxyHeaders(uri: URI, 
+                                    authHeader: Option[String], 
+                                    authToken: Option[String],
+                                    serviceType: String,
+                                    targetHost: String): String = {
+    val requestBuilder = ClassicRequestBuilder.get(uri)
+    
+    // Add authentication header if provided
+    (authHeader, authToken) match {
+      case (Some(header), Some(token)) =>
+        requestBuilder.addHeader(header, token)
+      case (Some(header), None) =>
+        logWarning(s"Authentication header '$header' provided but no token specified")
+      case (None, Some(token)) =>
         // Default to Authorization Bearer if only token is provided
         requestBuilder.addHeader("Authorization", s"Bearer $token")
       case (None, None) =>
         // No authentication
     }
     
+    // No need to forward controller requests
+    if (!serviceType.equalsIgnoreCase("controller")) {
+      // Add proxy forwarding headers as used by Pinot proxy
+      // Parse host and port from targetHost (format: host:port or just host)
+      val (host, effectivePort) = targetHost.split(":", 2) match {
+        case Array(h, p) if p.forall(_.isDigit) =>
+          (h, p)
+        case Array(h) =>
+          val defaultPort = if (uri.getScheme.equalsIgnoreCase("https")) "443" else "80"
+          (h, defaultPort)
+        case _ =>
+          throw new IllegalArgumentException(s"Invalid targetHost: $targetHost")
+      }
+      requestBuilder.addHeader("FORWARD_HOST", host)
+      requestBuilder.addHeader("FORWARD_PORT", effectivePort)
+      logDebug(s"Sending proxy request to $uri with forward headers: host=$host, port=$effectivePort")
+    }
+
     executeRequest(requestBuilder.build(), uri.getScheme.toLowerCase == "https")
   }
 
