@@ -219,8 +219,27 @@ public class QueryRunner {
 
     if (serverConf.getProperty(Server.CONFIG_OF_ENABLE_QUERY_SCHEDULER_THROTTLING_ON_HEAP_USAGE,
         Server.DEFAULT_ENABLE_QUERY_SCHEDULER_THROTTLING_ON_HEAP_USAGE)) {
-      LOGGER.info("Enable OOM Throttling on critical heap usage for multi-stage executor");
-      _executorService = new ThrottleOnCriticalHeapUsageExecutor(_executorService);
+      String modeStr = serverConf.getProperty(Server.CONFIG_OF_OOM_THROTTLE_MODE, Server.DEFAULT_OOM_THROTTLE_MODE);
+      ThrottleOnCriticalHeapUsageExecutor.Mode mode;
+      try {
+        mode = ThrottleOnCriticalHeapUsageExecutor.Mode.valueOf(modeStr.toUpperCase());
+      } catch (IllegalArgumentException e) {
+        LOGGER.warn("Invalid oomThrottle.mode: {}. Falling back to default: {}", modeStr,
+            Server.DEFAULT_OOM_THROTTLE_MODE);
+        mode = ThrottleOnCriticalHeapUsageExecutor.Mode.valueOf(Server.DEFAULT_OOM_THROTTLE_MODE.toUpperCase());
+      }
+      int maxSize = serverConf.getProperty(Server.CONFIG_OF_OOM_THROTTLE_QUEUE_MAX_SIZE,
+          Server.DEFAULT_OOM_THROTTLE_QUEUE_MAX_SIZE);
+      long timeoutMs = serverConf.getProperty(Server.CONFIG_OF_OOM_THROTTLE_QUEUE_TIMEOUT_MS,
+          Server.DEFAULT_OOM_THROTTLE_QUEUE_TIMEOUT_MS);
+      long monitorIntervalMs = serverConf.getProperty(Server.CONFIG_OF_OOM_THROTTLE_MONITOR_INTERVAL_MS,
+          Server.DEFAULT_OOM_THROTTLE_MONITOR_INTERVAL_MS);
+      LOGGER.info(
+          "Enable OOM Throttling on critical heap usage for multi-stage executor. mode={}, maxSize={}, timeoutMs={}, "
+              + "monitorIntervalMs={}",
+          mode, maxSize, timeoutMs, monitorIntervalMs);
+      _executorService =
+          new ThrottleOnCriticalHeapUsageExecutor(_executorService, maxSize, timeoutMs, monitorIntervalMs, mode);
     }
 
     _opChainScheduler = new OpChainSchedulerService(_executorService, serverConf);

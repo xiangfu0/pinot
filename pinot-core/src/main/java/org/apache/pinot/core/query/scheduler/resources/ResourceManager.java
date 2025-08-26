@@ -88,7 +88,23 @@ public abstract class ResourceManager {
     ExecutorService runnerService = Executors.newFixedThreadPool(_numQueryRunnerThreads, queryRunnerFactory);
     if (config.getProperty(CommonConstants.Server.CONFIG_OF_ENABLE_QUERY_SCHEDULER_THROTTLING_ON_HEAP_USAGE,
         CommonConstants.Server.DEFAULT_ENABLE_QUERY_SCHEDULER_THROTTLING_ON_HEAP_USAGE)) {
-      runnerService = new ThrottleOnCriticalHeapUsageExecutor(runnerService);
+      String modeStr = config.getProperty(CommonConstants.Server.CONFIG_OF_OOM_THROTTLE_MODE,
+          CommonConstants.Server.DEFAULT_OOM_THROTTLE_MODE);
+      ThrottleOnCriticalHeapUsageExecutor.Mode mode;
+      try {
+        mode = ThrottleOnCriticalHeapUsageExecutor.Mode.valueOf(modeStr.toUpperCase());
+      } catch (IllegalArgumentException e) {
+        mode = ThrottleOnCriticalHeapUsageExecutor.Mode.valueOf(
+            CommonConstants.Server.DEFAULT_OOM_THROTTLE_MODE.toUpperCase());
+      }
+      int maxSize = config.getProperty(CommonConstants.Server.CONFIG_OF_OOM_THROTTLE_QUEUE_MAX_SIZE,
+          CommonConstants.Server.DEFAULT_OOM_THROTTLE_QUEUE_MAX_SIZE);
+      long timeoutMs = config.getProperty(CommonConstants.Server.CONFIG_OF_OOM_THROTTLE_QUEUE_TIMEOUT_MS,
+          CommonConstants.Server.DEFAULT_OOM_THROTTLE_QUEUE_TIMEOUT_MS);
+      long monitorIntervalMs = config.getProperty(CommonConstants.Server.CONFIG_OF_OOM_THROTTLE_MONITOR_INTERVAL_MS,
+          CommonConstants.Server.DEFAULT_OOM_THROTTLE_MONITOR_INTERVAL_MS);
+      runnerService =
+          new ThrottleOnCriticalHeapUsageExecutor(runnerService, maxSize, timeoutMs, monitorIntervalMs, mode);
     }
     _queryRunners = MoreExecutors.listeningDecorator(runnerService);
 
@@ -98,7 +114,23 @@ public abstract class ResourceManager {
     ExecutorService workerService = Executors.newFixedThreadPool(_numQueryWorkerThreads, queryWorkersFactory);
     if (config.getProperty(CommonConstants.Server.CONFIG_OF_ENABLE_QUERY_SCHEDULER_THROTTLING_ON_HEAP_USAGE,
         CommonConstants.Server.DEFAULT_ENABLE_QUERY_SCHEDULER_THROTTLING_ON_HEAP_USAGE)) {
-      workerService = new ThrottleOnCriticalHeapUsageExecutor(workerService);
+      String modeStr = config.getProperty(CommonConstants.Server.CONFIG_OF_OOM_THROTTLE_MODE,
+          CommonConstants.Server.DEFAULT_OOM_THROTTLE_MODE);
+      ThrottleOnCriticalHeapUsageExecutor.Mode mode;
+      try {
+        mode = ThrottleOnCriticalHeapUsageExecutor.Mode.valueOf(modeStr.toUpperCase());
+      } catch (IllegalArgumentException e) {
+        mode = ThrottleOnCriticalHeapUsageExecutor.Mode.valueOf(
+            CommonConstants.Server.DEFAULT_OOM_THROTTLE_MODE.toUpperCase());
+      }
+      int maxSize = config.getProperty(CommonConstants.Server.CONFIG_OF_OOM_THROTTLE_QUEUE_MAX_SIZE,
+          CommonConstants.Server.DEFAULT_OOM_THROTTLE_QUEUE_MAX_SIZE);
+      long timeoutMs = config.getProperty(CommonConstants.Server.CONFIG_OF_OOM_THROTTLE_QUEUE_TIMEOUT_MS,
+          CommonConstants.Server.DEFAULT_OOM_THROTTLE_QUEUE_TIMEOUT_MS);
+      long monitorIntervalMs = config.getProperty(CommonConstants.Server.CONFIG_OF_OOM_THROTTLE_MONITOR_INTERVAL_MS,
+          CommonConstants.Server.DEFAULT_OOM_THROTTLE_MONITOR_INTERVAL_MS);
+      workerService =
+          new ThrottleOnCriticalHeapUsageExecutor(workerService, maxSize, timeoutMs, monitorIntervalMs, mode);
     }
     _queryWorkers = MoreExecutors.listeningDecorator(workerService);
   }

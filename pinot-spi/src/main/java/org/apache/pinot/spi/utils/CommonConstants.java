@@ -75,6 +75,7 @@ public class CommonConstants {
     public static final String CONFIG_OF_LUCENE_MAX_CLAUSE_COUNT = "pinot.lucene.max.clause.count";
     public static final int DEFAULT_LUCENE_MAX_CLAUSE_COUNT = 1024;
   }
+
   public static final String JFR = "pinot.jfr";
 
   public static final String RLS_FILTERS = "rlsFilters";
@@ -472,7 +473,7 @@ public class CommonConstants {
       public static final String CONFIG_OF_IGNORE_MISSING_SEGMENTS =
           "pinot.broker.query.ignore.missing.segments";
       public static final boolean DEFAULT_IGNORE_MISSING_SEGMENTS = false;
-    // Whether to infer partition hint by default or not.
+  // Whether to infer partition hint by default or not.
     // This value can always be overridden by INFER_PARTITION_HINT query option
     public static final String CONFIG_OF_INFER_PARTITION_HINT = "pinot.broker.multistage.infer.partition.hint";
     public static final boolean DEFAULT_INFER_PARTITION_HINT = false;
@@ -547,7 +548,7 @@ public class CommonConstants {
 
     /**
      * Default server stage limit for lite mode queries.
-     * This value can always be overridden by {@link Request.QueryOptionKey#LITE_MODE_LEAF_STAGE_LIMIT} query option
+      * This value can always be overridden by {@link Request.QueryOptionKey#LITE_MODE_LEAF_STAGE_LIMIT} query option
      */
     public static final String CONFIG_OF_LITE_MODE_LEAF_STAGE_LIMIT =
         "pinot.broker.multistage.lite.mode.leaf.stage.limit";
@@ -1101,6 +1102,20 @@ public class CommonConstants {
     public static final String CONFIG_OF_QUERY_EXECUTOR_MAX_EXECUTION_THREADS =
         QUERY_EXECUTOR_CONFIG_PREFIX + "." + MAX_EXECUTION_THREADS;
     public static final int DEFAULT_QUERY_EXECUTOR_MAX_EXECUTION_THREADS = -1;  // Use number of CPU cores
+
+    // OOM throttle configuration
+    public static final String CONFIG_OF_OOM_THROTTLE_MODE =
+        QUERY_EXECUTOR_CONFIG_PREFIX + ".oomThrottle.mode"; // values: queue | reject
+    public static final String DEFAULT_OOM_THROTTLE_MODE = "queue";
+    public static final String CONFIG_OF_OOM_THROTTLE_QUEUE_MAX_SIZE =
+        QUERY_EXECUTOR_CONFIG_PREFIX + ".oomThrottle.queue.maxSize";
+    public static final int DEFAULT_OOM_THROTTLE_QUEUE_MAX_SIZE = 1000;
+    public static final String CONFIG_OF_OOM_THROTTLE_QUEUE_TIMEOUT_MS =
+        QUERY_EXECUTOR_CONFIG_PREFIX + ".oomThrottle.queue.timeoutMs";
+    public static final long DEFAULT_OOM_THROTTLE_QUEUE_TIMEOUT_MS = 30_000L;
+    public static final String CONFIG_OF_OOM_THROTTLE_MONITOR_INTERVAL_MS =
+        QUERY_EXECUTOR_CONFIG_PREFIX + ".oomThrottle.monitorIntervalMs";
+    public static final long DEFAULT_OOM_THROTTLE_MONITOR_INTERVAL_MS = 1_000L;
 
     // Group-by query related configs
     public static final String NUM_GROUPS_LIMIT = "num.groups.limit";
