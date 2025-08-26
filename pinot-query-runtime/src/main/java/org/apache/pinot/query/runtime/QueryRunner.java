@@ -39,6 +39,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pinot.common.config.TlsConfig;
 import org.apache.pinot.common.datatable.StatMap;
+import org.apache.pinot.common.metrics.ServerGauge;
 import org.apache.pinot.common.metrics.ServerMeter;
 import org.apache.pinot.common.metrics.ServerMetrics;
 import org.apache.pinot.common.proto.Worker;
@@ -212,15 +213,27 @@ public class QueryRunner {
             Server.DEFAULT_MSE_MAX_EXECUTION_THREADS_EXCEED_STRATEGY);
         exceedStrategy = QueryThreadExceedStrategy.valueOf(Server.DEFAULT_MSE_MAX_EXECUTION_THREADS_EXCEED_STRATEGY);
       }
-
       LOGGER.info("Setting multi-stage executor hardLimit: {} exceedStrategy: {}", hardLimit, exceedStrategy);
       _executorService = new HardLimitExecutor(hardLimit, _executorService, exceedStrategy);
     }
 
     if (serverConf.getProperty(Server.CONFIG_OF_ENABLE_QUERY_SCHEDULER_THROTTLING_ON_HEAP_USAGE,
         Server.DEFAULT_ENABLE_QUERY_SCHEDULER_THROTTLING_ON_HEAP_USAGE)) {
-      LOGGER.info("Enable OOM Throttling on critical heap usage for multi-stage executor");
-      _executorService = new ThrottleOnCriticalHeapUsageExecutor(_executorService);
+      int maxSize = serverConf.getProperty(Server.CONFIG_OF_OOM_THROTTLE_QUEUE_MAX_SIZE,
+          Server.DEFAULT_OOM_THROTTLE_QUEUE_MAX_SIZE);
+      long timeoutMs = serverConf.getProperty(Server.CONFIG_OF_OOM_THROTTLE_QUEUE_TIMEOUT_MS,
+          Server.DEFAULT_OOM_THROTTLE_QUEUE_TIMEOUT_MS);
+      long monitorIntervalMs = serverConf.getProperty(Server.CONFIG_OF_OOM_THROTTLE_MONITOR_INTERVAL_MS,
+          Server.DEFAULT_OOM_THROTTLE_MONITOR_INTERVAL_MS);
+      LOGGER.info(
+          "Enable OOM Throttling on critical heap usage for multi-stage executor. maxSize={}, timeoutMs={}, "
+              + "monitorIntervalMs={} (maxSize=0 => reject)",
+          maxSize, timeoutMs, monitorIntervalMs);
+      ThrottleOnCriticalHeapUsageExecutor throttleExecutor =
+          new ThrottleOnCriticalHeapUsageExecutor(_executorService, maxSize, timeoutMs, monitorIntervalMs);
+      ThrottleOnCriticalHeapUsageExecutor.registerThrottleMetrics(throttleExecutor,
+          (name, supplier) -> serverMetrics.setOrUpdateGlobalGauge(ServerGauge.valueOf(name), supplier));
+      _executorService = throttleExecutor;
     }
 
     _opChainScheduler = new OpChainSchedulerService(_executorService, serverConf);

@@ -24,6 +24,8 @@ import com.google.common.util.concurrent.MoreExecutors;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
+import org.apache.pinot.common.metrics.ServerGauge;
+import org.apache.pinot.common.metrics.ServerMetrics;
 import org.apache.pinot.core.query.request.ServerQueryRequest;
 import org.apache.pinot.core.query.scheduler.SchedulerGroupAccountant;
 import org.apache.pinot.core.util.trace.TracedThreadFactory;
@@ -88,7 +90,17 @@ public abstract class ResourceManager {
     ExecutorService runnerService = Executors.newFixedThreadPool(_numQueryRunnerThreads, queryRunnerFactory);
     if (config.getProperty(CommonConstants.Server.CONFIG_OF_ENABLE_QUERY_SCHEDULER_THROTTLING_ON_HEAP_USAGE,
         CommonConstants.Server.DEFAULT_ENABLE_QUERY_SCHEDULER_THROTTLING_ON_HEAP_USAGE)) {
-      runnerService = new ThrottleOnCriticalHeapUsageExecutor(runnerService);
+      int maxSize = config.getProperty(CommonConstants.Server.CONFIG_OF_OOM_THROTTLE_QUEUE_MAX_SIZE,
+          CommonConstants.Server.DEFAULT_OOM_THROTTLE_QUEUE_MAX_SIZE);
+      long timeoutMs = config.getProperty(CommonConstants.Server.CONFIG_OF_OOM_THROTTLE_QUEUE_TIMEOUT_MS,
+          CommonConstants.Server.DEFAULT_OOM_THROTTLE_QUEUE_TIMEOUT_MS);
+      long monitorIntervalMs = config.getProperty(CommonConstants.Server.CONFIG_OF_OOM_THROTTLE_MONITOR_INTERVAL_MS,
+          CommonConstants.Server.DEFAULT_OOM_THROTTLE_MONITOR_INTERVAL_MS);
+      ThrottleOnCriticalHeapUsageExecutor runnerThrottleExecutorService =
+          new ThrottleOnCriticalHeapUsageExecutor(runnerService, maxSize, timeoutMs, monitorIntervalMs);
+      ThrottleOnCriticalHeapUsageExecutor.registerThrottleMetrics(runnerThrottleExecutorService,
+          (name, supplier) -> ServerMetrics.get().setOrUpdateGlobalGauge(ServerGauge.valueOf(name), supplier));
+      runnerService = runnerThrottleExecutorService;
     }
     _queryRunners = MoreExecutors.listeningDecorator(runnerService);
 
@@ -98,7 +110,17 @@ public abstract class ResourceManager {
     ExecutorService workerService = Executors.newFixedThreadPool(_numQueryWorkerThreads, queryWorkersFactory);
     if (config.getProperty(CommonConstants.Server.CONFIG_OF_ENABLE_QUERY_SCHEDULER_THROTTLING_ON_HEAP_USAGE,
         CommonConstants.Server.DEFAULT_ENABLE_QUERY_SCHEDULER_THROTTLING_ON_HEAP_USAGE)) {
-      workerService = new ThrottleOnCriticalHeapUsageExecutor(workerService);
+      int maxSize = config.getProperty(CommonConstants.Server.CONFIG_OF_OOM_THROTTLE_QUEUE_MAX_SIZE,
+          CommonConstants.Server.DEFAULT_OOM_THROTTLE_QUEUE_MAX_SIZE);
+      long timeoutMs = config.getProperty(CommonConstants.Server.CONFIG_OF_OOM_THROTTLE_QUEUE_TIMEOUT_MS,
+          CommonConstants.Server.DEFAULT_OOM_THROTTLE_QUEUE_TIMEOUT_MS);
+      long monitorIntervalMs = config.getProperty(CommonConstants.Server.CONFIG_OF_OOM_THROTTLE_MONITOR_INTERVAL_MS,
+          CommonConstants.Server.DEFAULT_OOM_THROTTLE_MONITOR_INTERVAL_MS);
+      ThrottleOnCriticalHeapUsageExecutor workerThrottleExecutorService =
+          new ThrottleOnCriticalHeapUsageExecutor(workerService, maxSize, timeoutMs, monitorIntervalMs);
+      ThrottleOnCriticalHeapUsageExecutor.registerThrottleMetrics(workerThrottleExecutorService,
+          (name, supplier) -> ServerMetrics.get().setOrUpdateGlobalGauge(ServerGauge.valueOf(name), supplier));
+      workerService = workerThrottleExecutorService;
     }
     _queryWorkers = MoreExecutors.listeningDecorator(workerService);
   }
