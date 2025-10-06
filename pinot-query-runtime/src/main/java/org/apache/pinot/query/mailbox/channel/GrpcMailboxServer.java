@@ -23,6 +23,7 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.buffer.PooledByteBufAllocator;
 import io.grpc.netty.shaded.io.netty.buffer.PooledByteBufAllocatorMetric;
 import io.grpc.netty.shaded.io.netty.channel.ChannelOption;
+import io.grpc.netty.shaded.io.netty.util.internal.PlatformDependent;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
@@ -77,6 +78,17 @@ public class GrpcMailboxServer extends PinotMailboxGrpc.PinotMailboxImplBase {
       serverMetrics.setOrUpdateGlobalGauge(ServerGauge.MAILBOX_SERVER_CACHE_SIZE_NORMAL, metric::normalCacheSize);
       serverMetrics.setOrUpdateGlobalGauge(ServerGauge.MAILBOX_SERVER_THREADLOCALCACHE, metric::numThreadLocalCaches);
       serverMetrics.setOrUpdateGlobalGauge(ServerGauge.MAILBOX_SERVER_CHUNK_SIZE, metric::chunkSize);
+
+      // Notice here we are using io.grpc.netty.shaded.io.netty.util.internal.PlatformDependent instead of
+      // io.netty.util.internal.PlatformDependent because gRPC shades Netty to avoid version conflicts.
+      // This also means it uses a different pool of direct memory and a different setting of max direct memory.
+      //
+      // Also notice these two metrics are also set by GrpcQueryService. Both are set to the same value, so it
+      // doesn't matter which one _wins_ in the metrics system.
+      serverMetrics.setOrUpdateGlobalGauge(ServerGauge.GRPC_TOTAL_MAX_DIRECT_MEMORY,
+          PlatformDependent::maxDirectMemory);
+      serverMetrics.setOrUpdateGlobalGauge(ServerGauge.GRPC_TOTAL_USED_DIRECT_MEMORY,
+          PlatformDependent::usedDirectMemory);
     } else if (brokerMetrics != null) {
       brokerMetrics.setOrUpdateGlobalGauge(BrokerGauge.MAILBOX_SERVER_USED_DIRECT_MEMORY, metric::usedDirectMemory);
       brokerMetrics.setOrUpdateGlobalGauge(BrokerGauge.MAILBOX_SERVER_USED_HEAP_MEMORY, metric::usedHeapMemory);
@@ -86,6 +98,17 @@ public class GrpcMailboxServer extends PinotMailboxGrpc.PinotMailboxImplBase {
       brokerMetrics.setOrUpdateGlobalGauge(BrokerGauge.MAILBOX_SERVER_CACHE_SIZE_NORMAL, metric::normalCacheSize);
       brokerMetrics.setOrUpdateGlobalGauge(BrokerGauge.MAILBOX_SERVER_THREADLOCALCACHE, metric::numThreadLocalCaches);
       brokerMetrics.setOrUpdateGlobalGauge(BrokerGauge.MAILBOX_SERVER_CHUNK_SIZE, metric::chunkSize);
+
+      // Notice here we are using io.grpc.netty.shaded.io.netty.util.internal.PlatformDependent instead of
+      // io.netty.util.internal.PlatformDependent because gRPC shades Netty to avoid version conflicts.
+      // This also means it uses a different pool of direct memory and a different setting of max direct memory.
+      //
+      // Also notice these two metrics are also set by GrpcQueryService. Both are set to the same value, so it
+      // doesn't matter which one _wins_ in the metrics system.
+      brokerMetrics.setOrUpdateGlobalGauge(BrokerGauge.GRPC_TOTAL_MAX_DIRECT_MEMORY,
+          PlatformDependent::maxDirectMemory);
+      brokerMetrics.setOrUpdateGlobalGauge(BrokerGauge.GRPC_TOTAL_USED_DIRECT_MEMORY,
+          PlatformDependent::usedDirectMemory);
     }
 
     NettyServerBuilder builder = NettyServerBuilder
