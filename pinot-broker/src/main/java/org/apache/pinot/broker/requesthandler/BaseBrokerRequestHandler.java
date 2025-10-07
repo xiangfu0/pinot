@@ -91,6 +91,8 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
   @Nullable
   protected final String _enableNullHandling;
   protected final ThreadResourceUsageAccountant _resourceUsageAccountant;
+  @Nullable
+  protected final String _regexDictSizeThreshold;
 
   /**
    * Maps broker-generated query id to the query string.
@@ -120,7 +122,6 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
         Broker.DEFAULT_BROKER_ENABLE_ROW_COLUMN_LEVEL_AUTH);
     _queryLogger = new QueryLogger(config);
     _enableNullHandling = config.getProperty(Broker.CONFIG_OF_BROKER_QUERY_ENABLE_NULL_HANDLING);
-
     boolean enableQueryCancellation =
         Boolean.parseBoolean(config.getProperty(CommonConstants.Broker.CONFIG_OF_BROKER_ENABLE_QUERY_CANCELLATION));
     if (enableQueryCancellation) {
@@ -209,6 +210,10 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
       if (_enableNullHandling != null) {
         sqlNodeAndOptions.getOptions()
             .putIfAbsent(Broker.Request.QueryOptionKey.ENABLE_NULL_HANDLING, _enableNullHandling);
+      }
+
+      if (_regexDictSizeThreshold != null) {
+        sqlNodeAndOptions.getOptions().putIfAbsent(QueryOptionKey.REGEX_DICT_SIZE_THRESHOLD, _regexDictSizeThreshold);
       }
 
       BrokerResponse brokerResponse =
