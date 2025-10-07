@@ -122,6 +122,7 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
         Broker.DEFAULT_BROKER_ENABLE_ROW_COLUMN_LEVEL_AUTH);
     _queryLogger = new QueryLogger(config);
     _enableNullHandling = config.getProperty(Broker.CONFIG_OF_BROKER_QUERY_ENABLE_NULL_HANDLING);
+    _regexDictSizeThreshold = config.getProperty(Broker.CONFIG_OF_BROKER_QUERY_REGEX_DICT_SIZE_THRESHOLD);
     boolean enableQueryCancellation =
         Boolean.parseBoolean(config.getProperty(CommonConstants.Broker.CONFIG_OF_BROKER_ENABLE_QUERY_CANCELLATION));
     if (enableQueryCancellation) {
@@ -213,7 +214,8 @@ public abstract class BaseBrokerRequestHandler implements BrokerRequestHandler {
       }
 
       if (_regexDictSizeThreshold != null) {
-        sqlNodeAndOptions.getOptions().putIfAbsent(QueryOptionKey.REGEX_DICT_SIZE_THRESHOLD, _regexDictSizeThreshold);
+        sqlNodeAndOptions.getOptions()
+            .putIfAbsent(Broker.Request.QueryOptionKey.REGEX_DICT_SIZE_THRESHOLD, _regexDictSizeThreshold);
       }
 
       BrokerResponse brokerResponse =

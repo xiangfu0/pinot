@@ -572,33 +572,6 @@ public class QueryOptionsUtils {
     return queryOptions.getOrDefault(QueryOptionKey.WORKLOAD_NAME, CommonConstants.Accounting.DEFAULT_WORKLOAD_NAME);
   }
 
-  /**
-   * Get the REGEXP_LIKE adaptive threshold from query options.
-   * This threshold controls when to switch between dictionary-based and scan-based evaluation.
-   * When (dictionary_size / num_docs) < threshold, use dictionary-based evaluation.
-   * When (dictionary_size / num_docs) >= threshold, use scan-based evaluation.
-   *
-   * @param queryOptions Query options map
-   * @param defaultThreshold Default threshold to use if not specified in query options
-   * @return The adaptive threshold value (between 0.0 and 1.0)
-   */
-  public static double getRegexpLikeAdaptiveThreshold(Map<String, String> queryOptions, double defaultThreshold) {
-    String thresholdStr = queryOptions.get(QueryOptionKey.REGEXP_LIKE_ADAPTIVE_THRESHOLD);
-    if (thresholdStr != null) {
-      try {
-        double threshold = Double.parseDouble(thresholdStr);
-        if (threshold >= 0.0 && threshold <= 1.0) {
-          return threshold;
-        } else {
-          throw new IllegalArgumentException(
-              "REGEXP_LIKE adaptive threshold must be between 0.0 and 1.0, got: " + threshold);
-        }
-      } catch (NumberFormatException e) {
-        throw new IllegalArgumentException("Invalid REGEXP_LIKE adaptive threshold value: " + thresholdStr, e);
-      }
-    }
-    return defaultThreshold;
-  }
 
   /// When evaluating REGEXP_LIKE predicate on a dictionary encoded column:
   /// - If dictionary size is smaller than this threshold, scan the dictionary to get the matching dictionary ids
