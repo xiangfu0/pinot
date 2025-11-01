@@ -133,35 +133,30 @@ public class MapColumnPreIndexStatsCollector extends AbstractColumnStatisticsCol
             throw new RuntimeException("Failed to serialize value for key '" + key + "': " + value, e);
           }
         }
-        if (keyStats instanceof IntColumnPreIndexStatsCollector) {
-          Number valueNumber = parseFlexibleNumber(value);
+        // Parse the value once for all numeric collector types
+        Number valueNumber = null;
+        if (keyStats instanceof IntColumnPreIndexStatsCollector
+            || keyStats instanceof LongColumnPreIndexStatsCollector
+            || keyStats instanceof FloatColumnPreIndexStatsCollector
+            || keyStats instanceof DoubleColumnPreIndexStatsCollector) {
+          valueNumber = parseFlexibleNumber(value);
           if (valueNumber == null) {
             continue;
           }
+        }
+        if (keyStats instanceof IntColumnPreIndexStatsCollector) {
           keyStats.collect(valueNumber.intValue());
           continue;
         }
         if (keyStats instanceof LongColumnPreIndexStatsCollector) {
-          Number valueNumber = parseFlexibleNumber(value);
-          if (valueNumber == null) {
-            continue;
-          }
           keyStats.collect(valueNumber.longValue());
           continue;
         }
         if (keyStats instanceof FloatColumnPreIndexStatsCollector) {
-          Number valueNumber = parseFlexibleNumber(value);
-          if (valueNumber == null) {
-            continue;
-          }
           keyStats.collect(valueNumber.floatValue());
           continue;
         }
         if (keyStats instanceof DoubleColumnPreIndexStatsCollector) {
-          Number valueNumber = parseFlexibleNumber(value);
-          if (valueNumber == null) {
-            continue;
-          }
           keyStats.collect(valueNumber.doubleValue());
           continue;
         }
