@@ -867,7 +867,8 @@ public class CommonConstants {
         PlannerRuleNames.SORT_JOIN_TRANSPOSE,
         PlannerRuleNames.SORT_JOIN_COPY,
         PlannerRuleNames.AGGREGATE_UNION_AGGREGATE,
-        PlannerRuleNames.JOIN_TO_ENRICHED_JOIN
+        PlannerRuleNames.JOIN_TO_ENRICHED_JOIN,
+        PlannerRuleNames.JOIN_PUSH_TRANSITIVE_PREDICATES
     );
 
     public static class FailureDetector {
