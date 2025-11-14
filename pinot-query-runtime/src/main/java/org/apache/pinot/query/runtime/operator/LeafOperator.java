@@ -406,6 +406,7 @@ public class LeafOperator extends MultiStageOperator {
       try {
         execute(parentContext);
       } catch (Exception e) {
+        LOGGER.error("Caught exception while executing leaf stage", e);
         setErrorBlock(
             ErrorMseBlock.fromError(QueryErrorCode.INTERNAL, "Caught exception while executing leaf stage: " + e));
       } finally {
