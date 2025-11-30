@@ -56,6 +56,13 @@ public class DistinctExecutorFactory {
       QueryContext queryContext) {
     List<ExpressionContext> expressions = queryContext.getSelectExpressions();
     int limit = queryContext.getLimit();
+    if (queryContext.getQueryOptions() != null) {
+      Integer maxRowsInDistinct =
+          org.apache.pinot.common.utils.config.QueryOptionsUtils.getMaxRowsInDistinct(queryContext.getQueryOptions());
+      if (maxRowsInDistinct != null) {
+        limit = Math.min(limit, maxRowsInDistinct);
+      }
+    }
     boolean nullHandlingEnabled = queryContext.isNullHandlingEnabled();
     List<OrderByExpressionContext> orderByExpressions = queryContext.getOrderByExpressions();
     int numExpressions = expressions.size();
