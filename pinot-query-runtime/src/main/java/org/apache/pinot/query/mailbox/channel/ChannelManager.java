@@ -21,13 +21,12 @@ package org.apache.pinot.query.mailbox.channel;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslContext;
 import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import javax.annotation.Nullable;
 import org.apache.commons.lang3.tuple.Pair;
-import org.apache.pinot.common.config.TlsConfig;
-import org.apache.pinot.common.utils.grpc.ServerGrpcQueryClient;
 
 
 /**
@@ -41,7 +40,6 @@ public class ChannelManager {
    * Map from (hostname, port) to the ManagedChannel with all known channels
    */
   private final ConcurrentHashMap<Pair<String, Integer>, ManagedChannel> _channelMap = new ConcurrentHashMap<>();
-  private final TlsConfig _tlsConfig;
   /**
    * The idle timeout for the channel, which cannot be disabled in gRPC.
    *
@@ -51,23 +49,33 @@ public class ChannelManager {
    */
   private final Duration _idleTimeout;
   private final int _maxInboundMessageSize;
+  @Nullable
+  private final SslContext _clientSslContext;
 
-  public ChannelManager(@Nullable TlsConfig tlsConfig, int maxInboundMessageSize, Duration idleTimeout) {
-    _tlsConfig = tlsConfig;
+  /**
+   * Constructs a {@code ChannelManager}.
+   *
+   * @param clientSslContext optional cached client {@link SslContext} to reuse across channels instead of building a
+   *                         new one for each connection
+   * @param maxInboundMessageSize maximum inbound message size for gRPC channels
+   * @param idleTimeout idle timeout for gRPC channels; channels close after this period of inactivity
+   */
+  public ChannelManager(@Nullable SslContext clientSslContext, int maxInboundMessageSize, Duration idleTimeout) {
     _maxInboundMessageSize = maxInboundMessageSize;
     _idleTimeout = idleTimeout;
+    _clientSslContext = clientSslContext;
   }
 
   public ManagedChannel getChannel(String hostname, int port) {
     // TODO: Revisit parameters
-    if (_tlsConfig != null) {
+    if (_clientSslContext != null) {
       return _channelMap.computeIfAbsent(Pair.of(hostname, port),
           (k) -> {
             NettyChannelBuilder channelBuilder = NettyChannelBuilder
                 .forAddress(k.getLeft(), k.getRight())
                 .maxInboundMessageSize(
                     _maxInboundMessageSize)
-                .sslContext(ServerGrpcQueryClient.buildSslContext(_tlsConfig));
+                .sslContext(_clientSslContext);
             return decorate(channelBuilder).build();
           }
       );
