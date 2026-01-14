@@ -24,6 +24,8 @@ import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.apache.pinot.common.utils.request.RequestUtils;
+import org.apache.pinot.query.planner.logical.RexExpression;
 import org.apache.pinot.query.planner.plannode.AggregateNode;
 import org.apache.pinot.query.planner.plannode.EnrichedJoinNode;
 import org.apache.pinot.query.planner.plannode.ExchangeNode;
@@ -43,6 +45,7 @@ import org.apache.pinot.query.planner.plannode.ValueNode;
 import org.apache.pinot.query.planner.plannode.WindowNode;
 import org.apache.pinot.query.runtime.operator.ErrorOperator;
 import org.apache.pinot.query.runtime.operator.FilterOperator;
+import org.apache.pinot.query.runtime.operator.GapfillOperator;
 import org.apache.pinot.query.runtime.operator.LeafOperator;
 import org.apache.pinot.query.runtime.operator.LiteralValueOperator;
 import org.apache.pinot.query.runtime.operator.MailboxReceiveOperator;
@@ -259,7 +262,23 @@ public class PlanNodeToOpChain {
       try {
         PlanNode input = node.getInputs().get(0);
         child = visit(input, context);
-        return new TransformOperator(context, child, input.getDataSchema(), node);
+        if (!containsGapfill(node.getProjects())) {
+          return new TransformOperator(context, child, input.getDataSchema(), node);
+        }
+
+        // Keep TransformOperator generic: strip GAPFILL wrapper from the project list, then apply gapfill as a
+        // dedicated operator on the projected output.
+        List<RexExpression> strippedProjects =
+            node.getProjects().stream().map(MyVisitor::stripGapfill).collect(Collectors.toList());
+        ProjectNode strippedProjectNode =
+            new ProjectNode(node.getStageId(), node.getDataSchema(), node.getNodeHint(), node.getInputs(),
+                strippedProjects);
+        MultiStageOperator transform =
+            new TransformOperator(context, child, input.getDataSchema(), strippedProjectNode);
+        if (!GapfillOperator.isApplicable(context, node.getDataSchema())) {
+          return transform;
+        }
+        return new GapfillOperator(context, transform, node.getDataSchema());
       } catch (Exception e) {
         return new ErrorOperator(context, QueryErrorCode.QUERY_EXECUTION, e.getMessage(), child);
       }
@@ -307,6 +326,52 @@ public class PlanNodeToOpChain {
       } catch (Exception e) {
         return new ErrorOperator(context, QueryErrorCode.QUERY_EXECUTION, e.getMessage(), child);
       }
+    }
+
+    private static boolean containsGapfill(List<RexExpression> expressions) {
+      if (expressions == null) {
+        return false;
+      }
+      for (RexExpression expression : expressions) {
+        if (containsGapfill(expression)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    private static boolean containsGapfill(RexExpression expression) {
+      if (expression instanceof RexExpression.FunctionCall) {
+        RexExpression.FunctionCall functionCall = (RexExpression.FunctionCall) expression;
+        String canonicalName =
+            RequestUtils.canonicalizeFunctionNamePreservingSpecialKey(functionCall.getFunctionName());
+        if ("gapfill".equals(canonicalName)) {
+          return true;
+        }
+        for (RexExpression operand : functionCall.getFunctionOperands()) {
+          if (containsGapfill(operand)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    private static RexExpression stripGapfill(RexExpression expression) {
+      if (expression instanceof RexExpression.FunctionCall) {
+        RexExpression.FunctionCall functionCall = (RexExpression.FunctionCall) expression;
+        String canonicalName =
+            RequestUtils.canonicalizeFunctionNamePreservingSpecialKey(functionCall.getFunctionName());
+        List<RexExpression> operands = functionCall.getFunctionOperands();
+        if ("gapfill".equals(canonicalName) && !operands.isEmpty()) {
+          return stripGapfill(operands.get(0));
+        }
+        List<RexExpression> strippedOperands =
+            operands.stream().map(MyVisitor::stripGapfill).collect(Collectors.toList());
+        return new RexExpression.FunctionCall(functionCall.getDataType(), functionCall.getFunctionName(),
+            strippedOperands, functionCall.isDistinct(), functionCall.isIgnoreNulls());
+      }
+      return expression;
     }
   }
 }
