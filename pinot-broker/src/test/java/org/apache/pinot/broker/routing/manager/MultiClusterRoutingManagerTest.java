@@ -222,6 +222,27 @@ public class MultiClusterRoutingManagerTest {
   }
 
   @Test
+  public void testGetSegmentsWithSamplerName() {
+    BrokerRequest brokerRequest = createMockBrokerRequest(TEST_TABLE);
+    List<String> localSegments = Arrays.asList("localSeg");
+    List<String> remoteSegments = Arrays.asList("remoteSeg");
+
+    when(_localClusterRoutingManager.getSegments(brokerRequest, "firstOnly")).thenReturn(localSegments);
+    when(_remoteClusterRoutingManager1.getSegments(brokerRequest, "firstOnly")).thenReturn(remoteSegments);
+    when(_remoteClusterRoutingManager2.getSegments(brokerRequest, "firstOnly")).thenReturn(null);
+
+    List<String> result = _multiClusterRoutingManager.getSegments(brokerRequest, "firstOnly");
+
+    assertNotNull(result);
+    assertEquals(result.size(), 2);
+    assertTrue(result.contains("localSeg"));
+    assertTrue(result.contains("remoteSeg"));
+    verify(_localClusterRoutingManager, never()).getSegments(brokerRequest);
+    verify(_remoteClusterRoutingManager1, never()).getSegments(brokerRequest);
+    verify(_remoteClusterRoutingManager2, never()).getSegments(brokerRequest);
+  }
+
+  @Test
   public void testGetEnabledServerInstanceMapCombinesAll() {
     ServerInstance server1 = createMockServerInstance("server1");
     ServerInstance server2 = createMockServerInstance("server2");

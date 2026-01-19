@@ -206,6 +206,26 @@ public class MultiClusterRoutingManager implements RoutingManager {
   }
 
   @Override
+  public List<String> getSegments(BrokerRequest brokerRequest, @Nullable String samplerName) {
+    List<String> combined = new ArrayList<>();
+    List<String> localSegments = _localClusterRoutingManager.getSegments(brokerRequest, samplerName);
+    if (localSegments != null) {
+      combined.addAll(localSegments);
+    }
+    for (BaseBrokerRoutingManager remoteCluster : _remoteClusterRoutingManagers) {
+      try {
+        List<String> remoteSegments = remoteCluster.getSegments(brokerRequest, samplerName);
+        if (remoteSegments != null) {
+          combined.addAll(remoteSegments);
+        }
+      } catch (Exception e) {
+        LOGGER.error("Error getting segments from remote cluster routing manager", e);
+      }
+    }
+    return combined.isEmpty() ? null : combined;
+  }
+
+  @Override
   public TablePartitionReplicatedServersInfo getTablePartitionReplicatedServersInfo(String tableNameWithType) {
     return findFirst(mgr -> mgr.getTablePartitionReplicatedServersInfo(tableNameWithType), tableNameWithType);
   }
