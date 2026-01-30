@@ -22,8 +22,11 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.FilenameFilter;
 import java.io.IOException;
-import java.util.HashMap;
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.tools.Command;
 import org.slf4j.Logger;
@@ -40,6 +43,7 @@ import picocli.CommandLine;
 @CommandLine.Command(name = "StopProcess", mixinStandardHelpOptions = true)
 public class StopProcessCommand extends AbstractBaseAdminCommand implements Command {
   private static final Logger LOGGER = LoggerFactory.getLogger(StopProcessCommand.class);
+  private static final String QUICKSTART_KAFKA_CONTAINER_PREFIX = "pinot-qs-kafka-";
 
   @CommandLine.Option(names = {"-controller"}, required = false, description = "Stop the PinotController process.")
   private boolean _controller = false;
@@ -88,14 +92,27 @@ public class StopProcessCommand extends AbstractBaseAdminCommand implements Comm
     return this;
   }
 
+  public StopProcessCommand stopKafka() {
+    _kafka = true;
+    return this;
+  }
+
   @Override
   public boolean execute()
       throws Exception {
     LOGGER.info("Executing command: {}", toString());
 
-    Map<String, String> processes = new HashMap<String, String>();
+    Map<String, String> processes = new LinkedHashMap<>();
     String prefix = System.getProperty("java.io.tmpdir") + File.separator;
     File tempDir = new File(System.getProperty("java.io.tmpdir"));
+
+    if (_kafka) {
+      stopManagedQuickstartKafkaContainers();
+      String kafkaPidFile = prefix + ".kafka.pid";
+      if (new File(kafkaPidFile).exists()) {
+        processes.put("Kafka", kafkaPidFile);
+      }
+    }
 
     if (_server) {
       File[] serverFiles = tempDir.listFiles(new FilenameFilter() {
@@ -150,10 +167,6 @@ public class StopProcessCommand extends AbstractBaseAdminCommand implements Comm
 
     if (_zooKeeper) {
       processes.put("Zookeeper", prefix + ".zooKeeper.pid");
-    }
-
-    if (_kafka) {
-      processes.put("Kafka", prefix + ".kafka.pid");
     }
 
     boolean ret = true;
@@ -215,5 +228,33 @@ public class StopProcessCommand extends AbstractBaseAdminCommand implements Comm
 
     file.delete();
     return true;
+  }
+
+  private void stopManagedQuickstartKafkaContainers() {
+    try {
+      List<String> containers = runProcess(List.of("docker", "ps", "-a",
+          "--filter", "name=" + QUICKSTART_KAFKA_CONTAINER_PREFIX,
+          "--format", "{{.Names}}"));
+      for (String container : containers) {
+        if (!container.isBlank()) {
+          LOGGER.info("Stopping managed quickstart Kafka container: {}", container);
+          runProcess(List.of("docker", "rm", "-f", container));
+        }
+      }
+    } catch (Exception e) {
+      LOGGER.warn("Failed to stop managed quickstart Kafka containers", e);
+    }
+  }
+
+  private static List<String> runProcess(List<String> command)
+      throws Exception {
+    Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+    String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    int code = process.waitFor();
+    if (code != 0) {
+      throw new IllegalStateException("Command failed (" + code + "): " + String.join(" ", command)
+          + (output.isBlank() ? "" : "\n" + output.trim()));
+    }
+    return output.lines().collect(Collectors.toList());
   }
 }

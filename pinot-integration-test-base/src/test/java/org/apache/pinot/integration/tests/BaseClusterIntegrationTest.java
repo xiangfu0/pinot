@@ -35,11 +35,19 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import javax.annotation.Nullable;
 import org.apache.commons.io.FileUtils;
 import org.apache.helix.task.TaskPartitionState;
 import org.apache.helix.task.TaskState;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.pinot.client.ConnectionFactory;
 import org.apache.pinot.client.JsonAsyncHttpPinotClientTransportFactory;
 import org.apache.pinot.client.PinotClientTransportFactory;
@@ -48,6 +56,7 @@ import org.apache.pinot.common.restlet.resources.ValidDocIdsMetadataInfo;
 import org.apache.pinot.common.restlet.resources.ValidDocIdsType;
 import org.apache.pinot.common.utils.TarCompressionUtils;
 import org.apache.pinot.common.utils.config.TagNameUtils;
+import org.apache.pinot.integration.tests.utils.MiniKafkaCluster;
 import org.apache.pinot.plugin.inputformat.csv.CSVMessageDecoder;
 import org.apache.pinot.plugin.stream.kafka.KafkaStreamConfigProperties;
 import org.apache.pinot.server.starter.helix.BaseServerStarter;
@@ -66,7 +75,6 @@ import org.apache.pinot.spi.config.table.ingestion.IngestionConfig;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.readers.FileFormat;
 import org.apache.pinot.spi.stream.StreamConfigProperties;
-import org.apache.pinot.spi.stream.StreamDataServerStartable;
 import org.apache.pinot.spi.utils.Enablement;
 import org.apache.pinot.spi.utils.JsonUtils;
 import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
@@ -74,13 +82,18 @@ import org.apache.pinot.spi.utils.builder.TableNameBuilder;
 import org.apache.pinot.tools.utils.KafkaStarterUtils;
 import org.apache.pinot.util.TestUtils;
 import org.intellij.lang.annotations.Language;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.testcontainers.DockerClientFactory;
 import org.testng.Assert;
+import org.testng.SkipException;
 
 
 /**
  * Shared implementation details of the cluster integration tests.
  */
 public abstract class BaseClusterIntegrationTest extends ClusterTest {
+  private static final Logger LOGGER = LoggerFactory.getLogger(BaseClusterIntegrationTest.class);
 
   // Default settings
   protected static final String DEFAULT_TABLE_NAME = "mytable";
@@ -108,7 +121,7 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
   protected final File _tempDir = new File(FileUtils.getTempDirectory(), getClass().getSimpleName());
   protected final File _segmentDir = new File(_tempDir, "segmentDir");
   protected final File _tarDir = new File(_tempDir, "tarDir");
-  protected List<StreamDataServerStartable> _kafkaStarters;
+  protected List<MiniKafkaCluster> _kafkaStarters;
 
   protected org.apache.pinot.client.Connection _pinotConnection;
   protected org.apache.pinot.client.Connection _pinotConnectionV2;
@@ -159,10 +172,6 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
   protected int getKafkaPort() {
     int idx = RANDOM.nextInt(_kafkaStarters.size());
     return _kafkaStarters.get(idx).getPort();
-  }
-
-  protected String getKafkaZKAddress() {
-    return getZkUrl() + "/kafka";
   }
 
   protected int getNumKafkaPartitions() {
@@ -368,11 +377,14 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
     streamConfigMap.put(StreamConfigProperties.STREAM_TYPE, streamType);
     streamConfigMap.put(KafkaStreamConfigProperties.constructStreamProperty(
             KafkaStreamConfigProperties.LowLevelConsumer.KAFKA_BROKER_LIST),
-        "localhost:" + _kafkaStarters.get(0).getPort());
+        getKafkaBrokerList());
     if (useKafkaTransaction()) {
       streamConfigMap.put(KafkaStreamConfigProperties.constructStreamProperty(
               KafkaStreamConfigProperties.LowLevelConsumer.KAFKA_ISOLATION_LEVEL),
           KafkaStreamConfigProperties.LowLevelConsumer.KAFKA_ISOLATION_LEVEL_READ_COMMITTED);
+      // Ensure the consumer can fetch complete transactional batches plus commit markers.
+      streamConfigMap.put(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG,
+          Integer.toString(10 * 1024 * 1024));
     }
     streamConfigMap.put(StreamConfigProperties.constructStreamProperty(streamType,
         StreamConfigProperties.STREAM_CONSUMER_FACTORY_CLASS), getStreamConsumerFactoryClassName());
@@ -387,6 +399,17 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
     streamConfigMap.put(StreamConfigProperties.constructStreamProperty(streamType,
         StreamConfigProperties.STREAM_CONSUMER_OFFSET_CRITERIA), "smallest");
     return streamConfigMap;
+  }
+
+  protected String getKafkaBrokerList() {
+    StringBuilder builder = new StringBuilder();
+    for (int i = 0; i < _kafkaStarters.size(); i++) {
+      if (i > 0) {
+        builder.append(',');
+      }
+      builder.append("localhost:").append(_kafkaStarters.get(i).getPort());
+    }
+    return builder.toString();
   }
 
   /**
@@ -733,12 +756,56 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
   }
 
   protected void startKafkaWithoutTopic() {
-    startKafkaWithoutTopic(KafkaStarterUtils.DEFAULT_KAFKA_PORT);
+    if (!DockerClientFactory.instance().isDockerAvailable()) {
+      throw new SkipException("Docker is required for Kafka testcontainers");
+    }
+    int requestedBrokers = getNumKafkaBrokers();
+    if (requestedBrokers != 1) {
+      LOGGER.warn("Kafka testcontainers supports a single broker; requested {}. Using 1 broker.", requestedBrokers);
+    }
+    MiniKafkaCluster cluster = new MiniKafkaCluster();
+    cluster.start();
+    _kafkaStarters = Collections.singletonList(cluster);
+    waitForKafkaClusterReady(getKafkaBrokerList(), _kafkaStarters.size(), useKafkaTransaction());
   }
 
-  protected void startKafkaWithoutTopic(int port) {
-    _kafkaStarters = KafkaStarterUtils.startServers(getNumKafkaBrokers(), port, getKafkaZKAddress(),
-        KafkaStarterUtils.getDefaultKafkaConfiguration());
+  private void waitForKafkaClusterReady(String brokerList, int brokerCount, boolean requireTransactions) {
+    TestUtils.waitForCondition(aVoid -> isKafkaClusterReady(brokerList, brokerCount), 200L, 60_000L,
+        "Kafka brokers are not ready");
+    if (requireTransactions) {
+      TestUtils.waitForCondition(aVoid -> canInitTransactions(brokerList), 500L, 60_000L,
+          "Kafka transaction coordinator is not ready");
+    }
+  }
+
+  private boolean isKafkaClusterReady(String brokerList, int brokerCount) {
+    Properties adminProps = new Properties();
+    adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, brokerList);
+    adminProps.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "5000");
+    adminProps.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "5000");
+    try (AdminClient adminClient = AdminClient.create(adminProps)) {
+      return adminClient.describeCluster().nodes().get(5, TimeUnit.SECONDS).size() == brokerCount;
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  private boolean canInitTransactions(String brokerList) {
+    Properties producerProps = new Properties();
+    producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, brokerList);
+    producerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+    producerProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+    producerProps.put(ProducerConfig.ACKS_CONFIG, "all");
+    producerProps.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, "true");
+    producerProps.put(ProducerConfig.TRANSACTIONAL_ID_CONFIG, "pinot-txn-ready-" + UUID.randomUUID());
+    producerProps.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, "10000");
+    producerProps.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, "5000");
+    try (KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(producerProps)) {
+      producer.initTransactions();
+      return true;
+    } catch (Exception e) {
+      return false;
+    }
   }
 
   protected void createKafkaTopic(String topic) {
@@ -746,7 +813,10 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
   }
 
   protected void stopKafka() {
-    for (StreamDataServerStartable kafkaStarter : _kafkaStarters) {
+    if (_kafkaStarters == null) {
+      return;
+    }
+    for (MiniKafkaCluster kafkaStarter : _kafkaStarters) {
       kafkaStarter.stop();
     }
   }
