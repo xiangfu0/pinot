@@ -48,6 +48,8 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.helix.model.HelixConfigScope;
 import org.apache.helix.model.builder.HelixConfigScopeBuilder;
+import org.apache.pinot.client.ResultSet;
+import org.apache.pinot.client.ResultSetGroup;
 import org.apache.pinot.controller.api.resources.PinotQueryResource.MultiStageQueryValidationRequest;
 import org.apache.pinot.spi.config.table.HashFunction;
 import org.apache.pinot.spi.config.table.RoutingConfig;
@@ -55,6 +57,8 @@ import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.config.table.TenantConfig;
 import org.apache.pinot.spi.config.table.UpsertConfig;
+import org.apache.pinot.spi.config.table.DimensionTableConfig;
+import org.apache.pinot.spi.config.table.ingestion.BatchIngestionConfig;
 import org.apache.pinot.spi.config.table.ingestion.IngestionConfig;
 import org.apache.pinot.spi.config.table.ingestion.TransformConfig;
 import org.apache.pinot.spi.data.FieldSpec;
@@ -95,6 +99,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
   private static final String DIM_TABLE_TABLE_CONFIG_PATH = "dimDayOfWeek_config.json";
   private static final Integer DIM_NUMBER_OF_RECORDS = 7;
   private static final String DIM_TABLE = "daysOfWeek";
+  private static final String DIM_UPSERT_TABLE = "dimUpsert";
 
   @Override
   protected String getSchemaFileName() {
@@ -146,6 +151,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
 
     setupTableWithNonDefaultDatabase(avroFiles);
     setupDimensionTable();
+    setupDimensionUpsertTable();
   }
 
   @Override
@@ -2132,6 +2138,66 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
         DIM_NUMBER_OF_RECORDS, 60_000);
   }
 
+  private void setupDimensionUpsertTable() throws Exception {
+    Schema schema = new Schema.SchemaBuilder()
+        .setSchemaName(DIM_UPSERT_TABLE)
+        .addSingleValueDimension("id", FieldSpec.DataType.INT)
+        .addSingleValueDimension("name", FieldSpec.DataType.STRING)
+        .setPrimaryKeyColumns(Collections.singletonList("id"))
+        .build();
+    addSchema(schema);
+
+    IngestionConfig ingestionConfig = new IngestionConfig();
+    ingestionConfig.setBatchIngestionConfig(new BatchIngestionConfig(null, "REFRESH", "DAILY", true));
+
+    UpsertConfig upsertConfig = new UpsertConfig(UpsertConfig.Mode.FULL);
+
+    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE)
+        .setTableName(DIM_UPSERT_TABLE)
+        .setIsDimTable(true)
+        .setDimensionTableConfig(new DimensionTableConfig(false, false, true))
+        .setIngestionConfig(ingestionConfig)
+        .setUpsertConfig(upsertConfig)
+        .build();
+    TenantConfig tenantConfig = new TenantConfig(getBrokerTenant(), getServerTenant(), null);
+    tableConfig.setTenantConfig(tenantConfig);
+    addTableConfig(tableConfig);
+
+    File firstSegment = new File(_tempDir, "dimUpsert_segment_1.csv");
+    List<String> firstSegmentRows = List.of(
+        "id,name",
+        "1,old",
+        "2,keep");
+    FileUtils.writeLines(firstSegment, firstSegmentRows);
+    createAndUploadSegmentFromFile(tableConfig, schema, firstSegment, FileFormat.CSV, 2, 60_000);
+
+    File secondSegment = new File(_tempDir, "dimUpsert_segment_2.csv");
+    List<String> secondSegmentRows = List.of(
+        "id,name",
+        "1,new",
+        "3,more");
+    FileUtils.writeLines(secondSegment, secondSegmentRows);
+    createAndUploadSegmentFromFile(tableConfig, schema, secondSegment, FileFormat.CSV, 3, 60_000);
+  }
+
+  @Test
+  public void testDimensionTableUpsertSelection() {
+    ResultSetGroup resultSetGroup =
+        getPinotConnection().execute("SELECT id, name FROM " + DIM_UPSERT_TABLE + " ORDER BY id");
+    ResultSet resultSet = resultSetGroup.getResultSet(0);
+    assertEquals(resultSet.getRowCount(), 3);
+    assertEquals(resultSet.getInt(0, 0), 1);
+    assertEquals(resultSet.getString(0, 1), "new");
+    assertEquals(resultSet.getInt(1, 0), 2);
+    assertEquals(resultSet.getString(1, 1), "keep");
+    assertEquals(resultSet.getInt(2, 0), 3);
+    assertEquals(resultSet.getString(2, 1), "more");
+
+    long count =
+        getPinotConnection().execute("SELECT COUNT(*) FROM " + DIM_UPSERT_TABLE).getResultSet(0).getLong(0);
+    assertEquals(count, 3);
+  }
+
   @Test
   public void testNaturalJoinWithVirtualColumns()
       throws Exception {
@@ -2155,6 +2221,7 @@ public class MultiStageEngineIntegrationTest extends BaseClusterIntegrationTestS
     dropOfflineTable(DEFAULT_TABLE_NAME);
     dropOfflineTable(TABLE_NAME_WITH_DATABASE);
     dropOfflineTable(DIM_TABLE);
+    dropOfflineTable(DIM_UPSERT_TABLE);
 
     stopServer();
     stopBroker();

@@ -40,15 +40,19 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pinot.common.metadata.segment.SegmentZKMetadata;
 import org.apache.pinot.core.data.manager.provider.TableDataManagerProvider;
 import org.apache.pinot.segment.local.data.manager.SegmentDataManager;
+import org.apache.pinot.segment.local.indexsegment.immutable.ImmutableSegmentImpl;
 import org.apache.pinot.segment.local.segment.readers.PinotSegmentRecordReader;
 import org.apache.pinot.segment.spi.ImmutableSegment;
 import org.apache.pinot.segment.spi.IndexSegment;
+import org.apache.pinot.segment.spi.index.mutable.ThreadSafeMutableRoaringBitmap;
 import org.apache.pinot.spi.config.table.DimensionTableConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.readers.GenericRow;
 import org.apache.pinot.spi.data.readers.PrimaryKey;
+import org.roaringbitmap.IntIterator;
+import org.roaringbitmap.buffer.MutableRoaringBitmap;
 
 
 /**
@@ -76,6 +80,16 @@ public class DimensionTableDataManager extends OfflineTableDataManager {
       return Arrays.equals(a, b);
     }
   };
+
+  private static final class RecordLocation {
+    private final int _segmentIndex;
+    private final int _docId;
+
+    private RecordLocation(int segmentIndex, int docId) {
+      _segmentIndex = segmentIndex;
+      _docId = docId;
+    }
+  }
 
   private DimensionTableDataManager() {
   }
@@ -106,6 +120,7 @@ public class DimensionTableDataManager extends OfflineTableDataManager {
 
   private boolean _disablePreload;
   private boolean _errorOnDuplicatePrimaryKey = false;
+  private boolean _enableUpsert = false;
 
   @Override
   protected void doInit() {
@@ -124,6 +139,7 @@ public class DimensionTableDataManager extends OfflineTableDataManager {
     if (dimensionTableConfig != null) {
       _disablePreload = dimensionTableConfig.isDisablePreload();
       _errorOnDuplicatePrimaryKey = dimensionTableConfig.isErrorOnDuplicatePrimaryKey();
+      _enableUpsert = dimensionTableConfig.isUpsertEnabled();
     }
 
     if (_disablePreload) {
@@ -222,38 +238,69 @@ public class DimensionTableDataManager extends OfflineTableDataManager {
       int totalDocs = 0;
       for (SegmentDataManager segmentManager : segmentDataManagers) {
         IndexSegment indexSegment = segmentManager.getSegment();
-        totalDocs += indexSegment.getSegmentMetadata().getTotalDocs();
+        MutableRoaringBitmap queryableDocIds = getQueryableDocIdsSnapshot(indexSegment);
+        if (queryableDocIds != null) {
+          totalDocs += queryableDocIds.getCardinality();
+        } else {
+          totalDocs += indexSegment.getSegmentMetadata().getTotalDocs();
+        }
       }
 
       Object2ObjectOpenCustomHashMap<Object[], Object[]> lookupTable =
           new Object2ObjectOpenCustomHashMap<>(totalDocs, HASH_STRATEGY);
+      Object2ObjectOpenCustomHashMap<Object[], RecordLocation> recordLocationMap =
+          new Object2ObjectOpenCustomHashMap<>(totalDocs, HASH_STRATEGY);
 
       List<String> valueColumns = getValueColumns(schema.getColumnNames(), primaryKeyColumns);
 
-      for (SegmentDataManager segmentManager : segmentDataManagers) {
+      for (int segmentIndex = 0; segmentIndex < segmentDataManagers.size(); segmentIndex++) {
+        SegmentDataManager segmentManager = segmentDataManagers.get(segmentIndex);
         IndexSegment indexSegment = segmentManager.getSegment();
+        MutableRoaringBitmap queryableDocIds = getQueryableDocIdsSnapshot(indexSegment);
         int numTotalDocs = indexSegment.getSegmentMetadata().getTotalDocs();
-        if (numTotalDocs > 0) {
+        if (numTotalDocs > 0 && (queryableDocIds == null || !queryableDocIds.isEmpty())) {
           try (PinotSegmentRecordReader recordReader = new PinotSegmentRecordReader()) {
             recordReader.init(indexSegment);
 
             int[] pkIndexes = recordReader.getIndexesForColumns(primaryKeyColumns);
             int[] valIndexes = recordReader.getIndexesForColumns(valueColumns);
+            if (queryableDocIds == null) {
+              for (int i = 0; i < numTotalDocs; i++) {
+                if (_loadToken.get() != token) {
+                  // Token changed during the loading, abort the loading
+                  return null;
+                }
 
-            for (int i = 0; i < numTotalDocs; i++) {
-              if (_loadToken.get() != token) {
-                // Token changed during the loading, abort the loading
-                return null;
+                Object[] primaryKey = recordReader.getRecordValues(i, pkIndexes);
+                Object[] values = recordReader.getRecordValues(i, valIndexes);
+
+                Object[] previousValue = lookupTable.put(primaryKey, values);
+                recordLocationMap.put(primaryKey, new RecordLocation(segmentIndex, i));
+                if (_errorOnDuplicatePrimaryKey && previousValue != null) {
+                  throw new IllegalStateException(
+                      "Caught exception while reading records from segment: " + indexSegment.getSegmentName()
+                          + " primary key already exists for: " + Arrays.toString(primaryKey));
+                }
               }
+            } else {
+              IntIterator iterator = queryableDocIds.getIntIterator();
+              while (iterator.hasNext()) {
+                if (_loadToken.get() != token) {
+                  // Token changed during the loading, abort the loading
+                  return null;
+                }
 
-              Object[] primaryKey = recordReader.getRecordValues(i, pkIndexes);
-              Object[] values = recordReader.getRecordValues(i, valIndexes);
+                int docId = iterator.next();
+                Object[] primaryKey = recordReader.getRecordValues(docId, pkIndexes);
+                Object[] values = recordReader.getRecordValues(docId, valIndexes);
 
-              Object[] previousValue = lookupTable.put(primaryKey, values);
-              if (_errorOnDuplicatePrimaryKey && previousValue != null) {
-                throw new IllegalStateException(
-                    "Caught exception while reading records from segment: " + indexSegment.getSegmentName()
-                        + " primary key already exists for: " + Arrays.toString(primaryKey));
+                Object[] previousValue = lookupTable.put(primaryKey, values);
+                recordLocationMap.put(primaryKey, new RecordLocation(segmentIndex, docId));
+                if (_errorOnDuplicatePrimaryKey && previousValue != null) {
+                  throw new IllegalStateException(
+                      "Caught exception while reading records from segment: " + indexSegment.getSegmentName()
+                          + " primary key already exists for: " + Arrays.toString(primaryKey));
+                }
               }
             }
           } catch (Exception e) {
@@ -262,6 +309,7 @@ public class DimensionTableDataManager extends OfflineTableDataManager {
           }
         }
       }
+      applyQueryableDocIdsForRecordLocations(segmentDataManagers, recordLocationMap);
       return new FastLookupDimensionTable(schema, primaryKeyColumns, valueColumns, lookupTable);
     } finally {
       for (SegmentDataManager segmentManager : segmentDataManagers) {
@@ -300,38 +348,66 @@ public class DimensionTableDataManager extends OfflineTableDataManager {
     int totalDocs = 0;
     for (SegmentDataManager segmentManager : segmentDataManagers) {
       IndexSegment indexSegment = segmentManager.getSegment();
-      totalDocs += indexSegment.getSegmentMetadata().getTotalDocs();
+      MutableRoaringBitmap queryableDocIds = getQueryableDocIdsSnapshot(indexSegment);
+      if (queryableDocIds != null) {
+        totalDocs += queryableDocIds.getCardinality();
+      } else {
+        totalDocs += indexSegment.getSegmentMetadata().getTotalDocs();
+      }
     }
 
     Object2LongOpenCustomHashMap<Object[]> lookupTable = new Object2LongOpenCustomHashMap<>(totalDocs, HASH_STRATEGY);
     lookupTable.defaultReturnValue(Long.MIN_VALUE);
 
-    for (SegmentDataManager segmentManager : segmentDataManagers) {
+    for (int segmentIndex = 0; segmentIndex < segmentDataManagers.size(); segmentIndex++) {
+      SegmentDataManager segmentManager = segmentDataManagers.get(segmentIndex);
       IndexSegment indexSegment = segmentManager.getSegment();
       int numTotalDocs = indexSegment.getSegmentMetadata().getTotalDocs();
-      if (numTotalDocs > 0) {
+      MutableRoaringBitmap queryableDocIds = getQueryableDocIdsSnapshot(indexSegment);
+      if (numTotalDocs > 0 && (queryableDocIds == null || !queryableDocIds.isEmpty())) {
         try {
           int readerIdx = recordReaders.size();
           PinotSegmentRecordReader recordReader = new PinotSegmentRecordReader();
           recordReader.init(indexSegment);
           recordReaders.add(recordReader);
           int[] pkIndexes = recordReader.getIndexesForColumns(primaryKeyColumns);
+          if (queryableDocIds == null) {
+            for (int i = 0; i < numTotalDocs; i++) {
+              if (_loadToken.get() != token) {
+                // Token changed during the loading, abort the loading
+                releaseResources(recordReaders, segmentDataManagers);
+                return null;
+              }
 
-          for (int i = 0; i < numTotalDocs; i++) {
-            if (_loadToken.get() != token) {
-              // Token changed during the loading, abort the loading
-              releaseResources(recordReaders, segmentDataManagers);
-              return null;
+              Object[] primaryKey = recordReader.getRecordValues(i, pkIndexes);
+
+              long readerIdxAndDocId = (((long) readerIdx) << 32) | (i & 0xffffffffL);
+              long previousValue = lookupTable.put(primaryKey, readerIdxAndDocId);
+              if (_errorOnDuplicatePrimaryKey && previousValue != Long.MIN_VALUE) {
+                throw new IllegalStateException(
+                    "Caught exception while reading records from segment: " + indexSegment.getSegmentName()
+                        + " primary key already exists for: " + Arrays.toString(primaryKey));
+              }
             }
+          } else {
+            IntIterator iterator = queryableDocIds.getIntIterator();
+            while (iterator.hasNext()) {
+              if (_loadToken.get() != token) {
+                // Token changed during the loading, abort the loading
+                releaseResources(recordReaders, segmentDataManagers);
+                return null;
+              }
 
-            Object[] primaryKey = recordReader.getRecordValues(i, pkIndexes);
+              int docId = iterator.next();
+              Object[] primaryKey = recordReader.getRecordValues(docId, pkIndexes);
 
-            long readerIdxAndDocId = (((long) readerIdx) << 32) | (i & 0xffffffffL);
-            long previousValue = lookupTable.put(primaryKey, readerIdxAndDocId);
-            if (_errorOnDuplicatePrimaryKey && previousValue != Long.MIN_VALUE) {
-              throw new IllegalStateException(
-                  "Caught exception while reading records from segment: " + indexSegment.getSegmentName()
-                      + " primary key already exists for: " + Arrays.toString(primaryKey));
+              long readerIdxAndDocId = (((long) readerIdx) << 32) | (docId & 0xffffffffL);
+              long previousValue = lookupTable.put(primaryKey, readerIdxAndDocId);
+              if (_errorOnDuplicatePrimaryKey && previousValue != Long.MIN_VALUE) {
+                throw new IllegalStateException(
+                    "Caught exception while reading records from segment: " + indexSegment.getSegmentName()
+                        + " primary key already exists for: " + Arrays.toString(primaryKey));
+              }
             }
           }
         } catch (Exception e) {
@@ -340,6 +416,7 @@ public class DimensionTableDataManager extends OfflineTableDataManager {
         }
       }
     }
+    applyQueryableDocIdsForLookupTable(segmentDataManagers, lookupTable);
     return new MemoryOptimizedDimensionTable(schema, primaryKeyColumns, lookupTable, segmentDataManagers, recordReaders,
         this);
   }
@@ -396,5 +473,75 @@ public class DimensionTableDataManager extends OfflineTableDataManager {
 
   public List<String> getPrimaryKeyColumns() {
     return _dimensionTable.get().getPrimaryKeyColumns();
+  }
+
+  private void applyQueryableDocIdsForRecordLocations(List<SegmentDataManager> segmentDataManagers,
+      Object2ObjectOpenCustomHashMap<Object[], RecordLocation> recordLocationMap) {
+    if (!_enableUpsert) {
+      return;
+    }
+    if (recordLocationMap.isEmpty() || segmentDataManagers.isEmpty()) {
+      return;
+    }
+    List<MutableRoaringBitmap> queryableDocIdsBySegment = new ArrayList<>(segmentDataManagers.size());
+    for (int i = 0; i < segmentDataManagers.size(); i++) {
+      queryableDocIdsBySegment.add(new MutableRoaringBitmap());
+    }
+    for (RecordLocation recordLocation : recordLocationMap.values()) {
+      queryableDocIdsBySegment.get(recordLocation._segmentIndex).add(recordLocation._docId);
+    }
+    applyQueryableDocIdsToSegments(segmentDataManagers, queryableDocIdsBySegment);
+  }
+
+  private void applyQueryableDocIdsForLookupTable(List<SegmentDataManager> segmentDataManagers,
+      Object2LongOpenCustomHashMap<Object[]> lookupTable) {
+    if (!_enableUpsert) {
+      return;
+    }
+    if (lookupTable.isEmpty() || segmentDataManagers.isEmpty()) {
+      return;
+    }
+    List<MutableRoaringBitmap> queryableDocIdsBySegment = new ArrayList<>(segmentDataManagers.size());
+    for (int i = 0; i < segmentDataManagers.size(); i++) {
+      queryableDocIdsBySegment.add(new MutableRoaringBitmap());
+    }
+    for (Object2LongOpenCustomHashMap.Entry<Object[]> entry : lookupTable.object2LongEntrySet()) {
+      long readerIdxAndDocId = entry.getLongValue();
+      int readerIdx = (int) (readerIdxAndDocId >>> 32);
+      int docId = (int) readerIdxAndDocId;
+      queryableDocIdsBySegment.get(readerIdx).add(docId);
+    }
+    applyQueryableDocIdsToSegments(segmentDataManagers, queryableDocIdsBySegment);
+  }
+
+  private void applyQueryableDocIdsToSegments(List<SegmentDataManager> segmentDataManagers,
+      List<MutableRoaringBitmap> queryableDocIdsBySegment) {
+    for (int i = 0; i < segmentDataManagers.size(); i++) {
+      IndexSegment segment = segmentDataManagers.get(i).getSegment();
+      if (!(segment instanceof ImmutableSegmentImpl)) {
+        continue;
+      }
+      MutableRoaringBitmap queryableDocIds = queryableDocIdsBySegment.get(i);
+      ThreadSafeMutableRoaringBitmap existingQueryableDocIds = segment.getQueryableDocIds();
+      if (existingQueryableDocIds != null) {
+        MutableRoaringBitmap existingSnapshot = existingQueryableDocIds.getMutableRoaringBitmap();
+        existingSnapshot.and(queryableDocIds);
+        queryableDocIds = existingSnapshot;
+      }
+      ThreadSafeMutableRoaringBitmap validDocIds =
+          new ThreadSafeMutableRoaringBitmap(queryableDocIds.clone());
+      ThreadSafeMutableRoaringBitmap queryableDocIdsSnapshot =
+          new ThreadSafeMutableRoaringBitmap(queryableDocIds.clone());
+      ((ImmutableSegmentImpl) segment).enableUpsert(null, validDocIds, queryableDocIdsSnapshot);
+    }
+  }
+
+  @Nullable
+  private MutableRoaringBitmap getQueryableDocIdsSnapshot(IndexSegment segment) {
+    if (!_enableUpsert) {
+      return null;
+    }
+    ThreadSafeMutableRoaringBitmap queryableDocIds = segment.getQueryableDocIds();
+    return queryableDocIds != null ? queryableDocIds.getMutableRoaringBitmap() : null;
   }
 }
