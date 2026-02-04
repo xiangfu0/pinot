@@ -63,6 +63,7 @@ import static org.apache.pinot.spi.utils.CommonConstants.SWAGGER_AUTHORIZATION_K
  *     <ul>
  *       <li>"/segments/{tableName}/{segmentName}/reload": reload a specific segment</li>
  *       <li>"/segments/{tableName}/reload": reload all segments in a table</li>
+ *       <li>"/segments/{tableName}/reloadBetween": reload segments in a table between start/end timestamps</li>
  *     </ul>
  *   </li>
  *   <li>
@@ -147,6 +148,38 @@ public class PinotTableReloadResource {
       throws IOException {
     return _service.reloadAllSegments(tableName, tableTypeStr, forceDownload, targetInstance,
         instanceToSegmentsMapInJson, headers);
+  }
+
+  @POST
+  @Path("segments/{tableName}/reloadBetween")
+  @Authorize(targetType = TargetType.TABLE, paramName = "tableName", action = Actions.Table.RELOAD_SEGMENT)
+  @Authenticate(AccessType.UPDATE)
+  @Produces(MediaType.APPLICATION_JSON)
+  @ApiOperation(value = "Reload segments in a time range",
+      notes = "Reloads segments for the specified table in the provided time range. "
+          + "Timestamps are in milliseconds. Range is [startTimestamp, endTimestamp).")
+  @ApiResponses(value = {
+      @ApiResponse(code = 200, message = "Reload jobs submitted successfully"),
+      @ApiResponse(code = 400, message = "Invalid time range"),
+      @ApiResponse(code = 404, message = "No segments found")
+  })
+  public SuccessResponse reloadSegmentsBetween(
+      @ApiParam(value = "Table name with or without type suffix", required = true, example = "myTable")
+      @PathParam("tableName") String tableName,
+      @ApiParam(value = "Table type filter", allowableValues = "OFFLINE,REALTIME") @QueryParam("type")
+      String tableTypeStr,
+      @ApiParam(value = "Start timestamp (inclusive) in milliseconds", required = true)
+      @QueryParam("startTimestamp") String startTimestampStr,
+      @ApiParam(value = "End timestamp (exclusive) in milliseconds", required = true)
+      @QueryParam("endTimestamp") String endTimestampStr,
+      @ApiParam(value = "Whether to exclude segments overlapping the time range", defaultValue = "false")
+      @QueryParam("excludeOverlapping") @DefaultValue("false") boolean excludeOverlapping,
+      @ApiParam(value = "Force server to re-download segments from deep store", defaultValue = "false")
+      @QueryParam("forceDownload") @DefaultValue("false") boolean forceDownload,
+      @ApiParam(value = "Target specific server instance") @QueryParam("targetInstance") @Nullable
+      String targetInstance, @Context HttpHeaders headers) {
+    return _service.reloadSegmentsInTimeRange(tableName, tableTypeStr, startTimestampStr, endTimestampStr,
+        excludeOverlapping, forceDownload, targetInstance, headers);
   }
 
   @GET
