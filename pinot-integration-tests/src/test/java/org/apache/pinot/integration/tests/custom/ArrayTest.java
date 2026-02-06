@@ -728,6 +728,34 @@ public class ArrayTest extends CustomDataQueryClusterIntegrationTest {
   }
 
   @Test(dataProvider = "useBothQueryEngines")
+  public void testEvalMvLongArrayFilterValues(boolean useMultiStageQueryEngine)
+      throws Exception {
+    setUseMultiStageQueryEngine(useMultiStageQueryEngine);
+    String query = String.format("SELECT evalMv(%s, '%s > 1') FROM %s LIMIT 1", LONG_ARRAY_COLUMN, LONG_ARRAY_COLUMN,
+        getTableName());
+    JsonNode result = postQuery(query).get("resultTable");
+    assertEquals(result.get("dataSchema").get("columnDataTypes").get(0).textValue(), "LONG_ARRAY");
+    JsonNode rows = result.get("rows");
+    assertEquals(rows.size(), 1);
+    JsonNode row = rows.get(0);
+    assertEquals(row.size(), 1);
+    JsonNode values = row.get(0);
+    assertEquals(values.size(), 2);
+    assertEquals(values.get(0).longValue(), 2L);
+    assertEquals(values.get(1).longValue(), 3L);
+  }
+
+  @Test(dataProvider = "useBothQueryEngines")
+  public void testEvalMvLongArrayFilterPredicate(boolean useMultiStageQueryEngine)
+      throws Exception {
+    setUseMultiStageQueryEngine(useMultiStageQueryEngine);
+    String query = String.format("SELECT COUNT(*) FROM %s WHERE arrayLength(evalMv(%s, '%s > 1')) = 2",
+        getTableName(), LONG_ARRAY_COLUMN, LONG_ARRAY_COLUMN);
+    JsonNode jsonNode = postQuery(query);
+    assertEquals(jsonNode.get("resultTable").get("rows").get(0).get(0).asLong(), getCountStarResult());
+  }
+
+  @Test(dataProvider = "useBothQueryEngines")
   public void testStringArrayLiteral(boolean useMultiStageQueryEngine)
       throws Exception {
     setUseMultiStageQueryEngine(useMultiStageQueryEngine);
