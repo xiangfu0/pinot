@@ -24,6 +24,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.ServerSocket;
 import java.net.URL;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -38,6 +39,7 @@ import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import org.apache.commons.io.FileUtils;
 import org.apache.helix.task.TaskPartitionState;
@@ -45,8 +47,11 @@ import org.apache.helix.task.TaskState;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.pinot.client.ConnectionFactory;
 import org.apache.pinot.client.JsonAsyncHttpPinotClientTransportFactory;
@@ -56,9 +61,9 @@ import org.apache.pinot.common.restlet.resources.ValidDocIdsMetadataInfo;
 import org.apache.pinot.common.restlet.resources.ValidDocIdsType;
 import org.apache.pinot.common.utils.TarCompressionUtils;
 import org.apache.pinot.common.utils.config.TagNameUtils;
-import org.apache.pinot.integration.tests.utils.MiniKafkaCluster;
 import org.apache.pinot.plugin.inputformat.csv.CSVMessageDecoder;
 import org.apache.pinot.plugin.stream.kafka.KafkaStreamConfigProperties;
+import org.apache.pinot.plugin.stream.kafka30.server.KafkaServerStartable;
 import org.apache.pinot.server.starter.helix.BaseServerStarter;
 import org.apache.pinot.spi.config.table.ColumnPartitionConfig;
 import org.apache.pinot.spi.config.table.DedupConfig;
@@ -75,6 +80,7 @@ import org.apache.pinot.spi.config.table.ingestion.IngestionConfig;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.readers.FileFormat;
 import org.apache.pinot.spi.stream.StreamConfigProperties;
+import org.apache.pinot.spi.stream.StreamDataServerStartable;
 import org.apache.pinot.spi.utils.Enablement;
 import org.apache.pinot.spi.utils.JsonUtils;
 import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
@@ -84,9 +90,7 @@ import org.apache.pinot.util.TestUtils;
 import org.intellij.lang.annotations.Language;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.testcontainers.DockerClientFactory;
 import org.testng.Assert;
-import org.testng.SkipException;
 
 
 /**
@@ -121,7 +125,8 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
   protected final File _tempDir = new File(FileUtils.getTempDirectory(), getClass().getSimpleName());
   protected final File _segmentDir = new File(_tempDir, "segmentDir");
   protected final File _tarDir = new File(_tempDir, "tarDir");
-  protected List<MiniKafkaCluster> _kafkaStarters;
+  protected List<StreamDataServerStartable> _kafkaStarters;
+  private List<KafkaBrokerConfig> _kafkaBrokerConfigs;
 
   protected org.apache.pinot.client.Connection _pinotConnection;
   protected org.apache.pinot.client.Connection _pinotConnectionV2;
@@ -756,17 +761,76 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
   }
 
   protected void startKafkaWithoutTopic() {
-    if (!DockerClientFactory.instance().isDockerAvailable()) {
-      throw new SkipException("Docker is required for Kafka testcontainers");
-    }
     int requestedBrokers = getNumKafkaBrokers();
-    if (requestedBrokers != 1) {
-      LOGGER.warn("Kafka testcontainers supports a single broker; requested {}. Using 1 broker.", requestedBrokers);
+    String clusterId = UUID.randomUUID().toString().replace("-", "");
+    String networkName = "pinot-it-kafka-" + UUID.randomUUID().toString().replace("-", "");
+    List<KafkaBrokerConfig> brokerConfigs = getOrCreateKafkaBrokerConfigs(requestedBrokers);
+    String quorumVoters = brokerConfigs.stream()
+        .map(config -> config._brokerId + "@" + config._containerName + ":9093")
+        .collect(Collectors.joining(","));
+
+    List<StreamDataServerStartable> kafkaStarters = new ArrayList<>(requestedBrokers);
+    try {
+      for (KafkaBrokerConfig brokerConfig : brokerConfigs) {
+        StreamDataServerStartable kafkaStarter =
+            createKafkaServerStarter(brokerConfig, clusterId, networkName, quorumVoters, requestedBrokers);
+        kafkaStarter.start();
+        kafkaStarters.add(kafkaStarter);
+      }
+      _kafkaStarters = kafkaStarters;
+      waitForKafkaClusterReady(getKafkaBrokerList(), requestedBrokers, useKafkaTransaction());
+    } catch (Exception e) {
+      _kafkaStarters = kafkaStarters;
+      stopKafka();
+      throw e;
     }
-    MiniKafkaCluster cluster = new MiniKafkaCluster();
-    cluster.start();
-    _kafkaStarters = Collections.singletonList(cluster);
-    waitForKafkaClusterReady(getKafkaBrokerList(), _kafkaStarters.size(), useKafkaTransaction());
+  }
+
+  private StreamDataServerStartable createKafkaServerStarter(KafkaBrokerConfig brokerConfig, String clusterId,
+      String networkName, String quorumVoters, int clusterSize) {
+    Properties serverProperties = new Properties();
+    serverProperties.put("kafka.server.owner.name", getClass().getSimpleName());
+    serverProperties.put("kafka.server.bootstrap.servers", "localhost:" + brokerConfig._port);
+    serverProperties.put("kafka.server.port", Integer.toString(brokerConfig._port));
+    serverProperties.put("kafka.server.broker.id", Integer.toString(brokerConfig._brokerId));
+    serverProperties.put("kafka.server.allow.managed.for.configured.broker", "true");
+    serverProperties.put("kafka.server.container.name", brokerConfig._containerName);
+    serverProperties.put("kafka.server.network.name", networkName);
+    serverProperties.put("kafka.server.cluster.id", clusterId);
+    serverProperties.put("kafka.server.cluster.size", Integer.toString(clusterSize));
+    serverProperties.put("kafka.server.controller.quorum.voters", quorumVoters);
+    serverProperties.put("kafka.server.internal.host", brokerConfig._containerName);
+    serverProperties.put("kafka.server.skip.readiness.check", "true");
+    KafkaServerStartable kafkaServerStartable = new KafkaServerStartable();
+    kafkaServerStartable.init(serverProperties);
+    return kafkaServerStartable;
+  }
+
+  private List<KafkaBrokerConfig> createKafkaBrokerConfigs(int brokerCount) {
+    String containerPrefix = "pinot-it-kafka-" + UUID.randomUUID().toString().replace("-", "");
+    List<KafkaBrokerConfig> brokerConfigs = new ArrayList<>(brokerCount);
+    for (int i = 0; i < brokerCount; i++) {
+      int brokerId = i + 1;
+      int port = getAvailablePort();
+      String containerName = containerPrefix + "-" + brokerId;
+      brokerConfigs.add(new KafkaBrokerConfig(brokerId, port, containerName));
+    }
+    return brokerConfigs;
+  }
+
+  private List<KafkaBrokerConfig> getOrCreateKafkaBrokerConfigs(int brokerCount) {
+    if (_kafkaBrokerConfigs == null || _kafkaBrokerConfigs.size() != brokerCount) {
+      _kafkaBrokerConfigs = createKafkaBrokerConfigs(brokerCount);
+    }
+    return _kafkaBrokerConfigs;
+  }
+
+  private static int getAvailablePort() {
+    try (ServerSocket socket = new ServerSocket(0)) {
+      return socket.getLocalPort();
+    } catch (IOException e) {
+      throw new RuntimeException("Failed to find an available port for Kafka", e);
+    }
   }
 
   private void waitForKafkaClusterReady(String brokerList, int brokerCount, boolean requireTransactions) {
@@ -810,14 +874,129 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
 
   protected void createKafkaTopic(String topic) {
     _kafkaStarters.get(0).createTopic(topic, KafkaStarterUtils.getTopicCreationProps(getNumKafkaPartitions()));
+    waitForKafkaTopicReady(topic, getNumKafkaPartitions());
+    waitForKafkaTopicMetadataReadyForConsumer(topic, getNumKafkaPartitions());
+  }
+
+  private void waitForKafkaTopicReady(String topic, int expectedPartitions) {
+    TestUtils.waitForCondition(aVoid -> isKafkaTopicReady(topic, expectedPartitions), 200L, 60_000L,
+        "Kafka topic '" + topic + "' is not ready");
+  }
+
+  private void waitForKafkaTopicMetadataReadyForConsumer(String topic, int expectedPartitions) {
+    TestUtils.waitForCondition(aVoid -> isKafkaTopicMetadataReadyForConsumer(topic, expectedPartitions), 200L, 60_000L,
+        "Kafka topic '" + topic + "' metadata is not visible to consumers");
+  }
+
+  private boolean isKafkaTopicReady(String topic, int expectedPartitions) {
+    if (_kafkaStarters == null || _kafkaStarters.isEmpty()) {
+      return false;
+    }
+    for (StreamDataServerStartable kafkaStarter : _kafkaStarters) {
+      if (!isKafkaTopicReadyOnBroker("localhost:" + kafkaStarter.getPort(), topic, expectedPartitions)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private boolean isKafkaTopicMetadataReadyForConsumer(String topic, int expectedPartitions) {
+    Properties consumerProps = new Properties();
+    consumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, getKafkaBrokerList());
+    consumerProps.put(ConsumerConfig.GROUP_ID_CONFIG, "pinot-kafka-topic-ready-" + UUID.randomUUID());
+    consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+    consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+    consumerProps.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, "5000");
+    consumerProps.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "5000");
+    try (KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerProps)) {
+      List<PartitionInfo> partitionInfos = consumer.partitionsFor(topic, Duration.ofSeconds(5));
+      return partitionInfos != null && partitionInfos.size() >= expectedPartitions;
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  private boolean isKafkaTopicReadyOnBroker(String brokerList, String topic, int expectedPartitions) {
+    Properties adminProps = new Properties();
+    adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, brokerList);
+    adminProps.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "5000");
+    adminProps.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "5000");
+    try (AdminClient adminClient = AdminClient.create(adminProps)) {
+      return adminClient.describeTopics(Collections.singletonList(topic)).allTopicNames().get(5, TimeUnit.SECONDS)
+          .get(topic).partitions().size() >= expectedPartitions;
+    } catch (Exception e) {
+      return false;
+    }
   }
 
   protected void stopKafka() {
-    if (_kafkaStarters == null) {
+    if (_kafkaStarters == null || _kafkaStarters.isEmpty()) {
       return;
     }
-    for (MiniKafkaCluster kafkaStarter : _kafkaStarters) {
-      kafkaStarter.stop();
+    List<StreamDataServerStartable> kafkaStarters = _kafkaStarters;
+    _kafkaStarters = null;
+
+    RuntimeException stopException = null;
+    for (int i = kafkaStarters.size() - 1; i >= 0; i--) {
+      StreamDataServerStartable kafkaStarter = kafkaStarters.get(i);
+      try {
+        kafkaStarter.stop();
+      } catch (Exception e) {
+        RuntimeException wrapped = new RuntimeException(
+            "Failed to stop Kafka broker on port: " + kafkaStarter.getPort(), e);
+        if (stopException == null) {
+          stopException = wrapped;
+        } else {
+          stopException.addSuppressed(wrapped);
+        }
+      }
+    }
+
+    for (StreamDataServerStartable kafkaStarter : kafkaStarters) {
+      try {
+        waitForKafkaBrokerStopped(kafkaStarter.getPort());
+      } catch (RuntimeException e) {
+        if (stopException == null) {
+          stopException = e;
+        } else {
+          stopException.addSuppressed(e);
+        }
+      }
+    }
+
+    if (stopException != null) {
+      throw stopException;
+    }
+  }
+
+  private void waitForKafkaBrokerStopped(int brokerPort) {
+    String brokerList = "localhost:" + brokerPort;
+    TestUtils.waitForCondition(aVoid -> !isKafkaBrokerAvailable(brokerList), 200L, 60_000L,
+        "Kafka broker is still reachable after stop: " + brokerList);
+  }
+
+  private boolean isKafkaBrokerAvailable(String brokerList) {
+    Properties adminProps = new Properties();
+    adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, brokerList);
+    adminProps.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "2000");
+    adminProps.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "2000");
+    try (AdminClient adminClient = AdminClient.create(adminProps)) {
+      adminClient.describeCluster().nodes().get(2, TimeUnit.SECONDS);
+      return true;
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  private static final class KafkaBrokerConfig {
+    private final int _brokerId;
+    private final int _port;
+    private final String _containerName;
+
+    private KafkaBrokerConfig(int brokerId, int port, String containerName) {
+      _brokerId = brokerId;
+      _port = port;
+      _containerName = containerName;
     }
   }
 

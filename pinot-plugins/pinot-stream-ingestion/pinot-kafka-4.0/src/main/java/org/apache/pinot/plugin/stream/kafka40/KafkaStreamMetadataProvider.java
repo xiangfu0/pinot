@@ -73,7 +73,7 @@ public class KafkaStreamMetadataProvider extends KafkaPartitionLevelConnectionHa
       if (CollectionUtils.isNotEmpty(partitionInfos)) {
         return partitionInfos.size();
       }
-      throw new RuntimeException(String.format("Failed to fetch partition information for topic: %s", _topic));
+      throw transientPartitionInfoUnavailable();
     } catch (TimeoutException e) {
       throw new TransientConsumerException(e);
     }
@@ -84,7 +84,7 @@ public class KafkaStreamMetadataProvider extends KafkaPartitionLevelConnectionHa
     try {
       List<PartitionInfo> partitionInfos = _consumer.partitionsFor(_topic, Duration.ofMillis(timeoutMillis));
       if (CollectionUtils.isEmpty(partitionInfos)) {
-        throw new RuntimeException(String.format("Failed to fetch partition information for topic: %s", _topic));
+        throw transientPartitionInfoUnavailable();
       }
       Set<Integer> partitionIds = Sets.newHashSetWithExpectedSize(partitionInfos.size());
       for (PartitionInfo partitionInfo : partitionInfos) {
@@ -192,6 +192,11 @@ public class KafkaStreamMetadataProvider extends KafkaPartitionLevelConnectionHa
       perPartitionLag.put(entry.getKey(), new KafkaConsumerPartitionLag(offsetLagString, availabilityLagMs));
     }
     return perPartitionLag;
+  }
+
+  private TransientConsumerException transientPartitionInfoUnavailable() {
+    return new TransientConsumerException(
+        new RuntimeException(String.format("Failed to fetch partition information for topic: %s", _topic)));
   }
 
   @Override

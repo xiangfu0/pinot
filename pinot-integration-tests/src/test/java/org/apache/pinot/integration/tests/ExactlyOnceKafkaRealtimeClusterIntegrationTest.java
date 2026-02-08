@@ -30,6 +30,11 @@ public class ExactlyOnceKafkaRealtimeClusterIntegrationTest extends BaseRealtime
   }
 
   @Override
+  protected int getNumKafkaBrokers() {
+    return DEFAULT_TRANSACTION_NUM_KAFKA_BROKERS;
+  }
+
+  @Override
   protected void pushAvroIntoKafka(List<File> avroFiles)
       throws Exception {
     String kafkaBrokerList = getKafkaBrokerList();
