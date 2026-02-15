@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import org.apache.helix.model.IdealState;
 import org.apache.helix.task.TaskState;
 import org.apache.pinot.common.lineage.LineageEntry;
@@ -240,6 +241,7 @@ public class MergeRollupTaskGeneratorTest {
   @Test
   public void testGenerateTasksCheckConfigs() {
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
 
     when(mockClusterInfoProvide.getTaskStates(MinionConstants.MergeRollupTask.TASK_TYPE)).thenReturn(new HashMap<>());
     // the two following segments will be skipped when generating tasks
@@ -287,6 +289,7 @@ public class MergeRollupTaskGeneratorTest {
   @Test
   public void testFilterSegmentsforRealtimeTable() {
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
 
     when(mockClusterInfoProvide.getTaskStates(MinionConstants.MergeRollupTask.TASK_TYPE)).thenReturn(new HashMap<>());
     // construct 3 following segments, among these, only 0_0 can be scheduled, others should be filtered out
@@ -369,6 +372,30 @@ public class MergeRollupTaskGeneratorTest {
     });
   }
 
+  private void setupMockForEachSegmentsZKMetadata(ClusterInfoAccessor mockClusterInfoProvide) {
+    doAnswer(invocation -> {
+      String tableNameWithType = invocation.getArgument(0);
+      @SuppressWarnings("unchecked")
+      Consumer<SegmentZKMetadata> segmentMetadataConsumer = (Consumer<SegmentZKMetadata>) invocation.getArgument(1);
+      List<SegmentZKMetadata> segmentZKMetadataList = mockClusterInfoProvide.getSegmentsZKMetadata(tableNameWithType);
+      for (SegmentZKMetadata segmentZKMetadata : segmentZKMetadataList) {
+        segmentMetadataConsumer.accept(segmentZKMetadata);
+      }
+      return null;
+    }).when(mockClusterInfoProvide).forEachSegmentsZKMetadata(anyString(), any(Consumer.class));
+
+    doAnswer(invocation -> {
+      String tableNameWithType = invocation.getArgument(0);
+      @SuppressWarnings("unchecked")
+      Consumer<SegmentZKMetadata> segmentMetadataConsumer = (Consumer<SegmentZKMetadata>) invocation.getArgument(2);
+      List<SegmentZKMetadata> segmentZKMetadataList = mockClusterInfoProvide.getSegmentsZKMetadata(tableNameWithType);
+      for (SegmentZKMetadata segmentZKMetadata : segmentZKMetadataList) {
+        segmentMetadataConsumer.accept(segmentZKMetadata);
+      }
+      return null;
+    }).when(mockClusterInfoProvide).forEachSegmentsZKMetadata(anyString(), anyInt(), any(Consumer.class));
+  }
+
   /**
    * Test empty table
    */
@@ -383,6 +410,7 @@ public class MergeRollupTaskGeneratorTest {
     taskConfigsMap.put(MinionConstants.MergeRollupTask.TASK_TYPE, tableTaskConfigs);
     TableConfig offlineTableConfig = getTableConfig(TableType.OFFLINE, taskConfigsMap);
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
     when(mockClusterInfoProvide.getSegmentsZKMetadata(OFFLINE_TABLE_NAME)).thenReturn(
         Lists.newArrayList(Collections.emptyList()));
     when(mockClusterInfoProvide.getIdealState(OFFLINE_TABLE_NAME)).thenReturn(new IdealState(OFFLINE_TABLE_NAME));
@@ -410,6 +438,7 @@ public class MergeRollupTaskGeneratorTest {
     taskConfigsMap.put(MinionConstants.MergeRollupTask.TASK_TYPE, tableTaskConfigs);
     TableConfig offlineTableConfig = getTableConfig(TableType.OFFLINE, taskConfigsMap);
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
 
     String segmentName1 = "testTable__1";
     long currentTime = System.currentTimeMillis();
@@ -442,6 +471,7 @@ public class MergeRollupTaskGeneratorTest {
     taskConfigsMap.put(MinionConstants.MergeRollupTask.TASK_TYPE, tableTaskConfigs);
     TableConfig offlineTableConfig = getTableConfig(TableType.OFFLINE, taskConfigsMap);
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
 
     String segmentName1 = "testTable__1";
     long currentTime = System.currentTimeMillis();
@@ -472,6 +502,7 @@ public class MergeRollupTaskGeneratorTest {
     taskConfigsMap.put(MinionConstants.MergeRollupTask.TASK_TYPE, tableTaskConfigs);
     TableConfig offlineTableConfig = getTableConfig(TableType.OFFLINE, taskConfigsMap);
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
 
     String segmentName1 = "testTable__1";
     String segmentName2 = "testTable__2";
@@ -527,6 +558,7 @@ public class MergeRollupTaskGeneratorTest {
     taskConfigsMap.put(MinionConstants.MergeRollupTask.TASK_TYPE, tableTaskConfigs);
     TableConfig offlineTableConfig = getTableConfig(TableType.OFFLINE, taskConfigsMap);
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
 
     String segmentName1 = "testTable__1";
     String segmentName2 = "testTable__2";
@@ -672,6 +704,7 @@ public class MergeRollupTaskGeneratorTest {
     metadata4.setPartitionMetadata(new SegmentPartitionMetadata(Collections.singletonMap("memberId",
         new ColumnPartitionMetadata("murmur", 10, Collections.singleton(1), null))));
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
     when(mockClusterInfoProvide.getSegmentsZKMetadata(OFFLINE_TABLE_NAME)).thenReturn(
         Lists.newArrayList(metadata1, metadata2, metadata3, metadata4));
     when(mockClusterInfoProvide.getIdealState(OFFLINE_TABLE_NAME)).thenReturn(
@@ -754,6 +787,7 @@ public class MergeRollupTaskGeneratorTest {
     SegmentZKMetadata metadata2 =
         getSegmentZKMetadata(segmentName2, 345_600_000L, 400_000_000L, TimeUnit.MILLISECONDS, null);
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
     when(mockClusterInfoProvide.getSegmentsZKMetadata(OFFLINE_TABLE_NAME)).thenReturn(
         Lists.newArrayList(metadata1, metadata2));
     mockMergeRollupTaskMetadataGetterAndSetter(mockClusterInfoProvide);
@@ -820,6 +854,7 @@ public class MergeRollupTaskGeneratorTest {
     SegmentZKMetadata mergedMetadata1 =
         getSegmentZKMetadata(mergedSegmentName1, 90_000_000L, 100_000_000L, TimeUnit.MILLISECONDS, null);
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
     Map<String, Long> waterMarkMap = new TreeMap<>();
     waterMarkMap.put(DAILY, 86_400_000L);
     when(mockClusterInfoProvide.getMinionTaskMetadataZNRecord(MinionConstants.MergeRollupTask.TASK_TYPE,
@@ -919,6 +954,7 @@ public class MergeRollupTaskGeneratorTest {
         getSegmentZKMetadata(segmentName5, 2_592_000_000L, 2_592_020_000L, TimeUnit.MILLISECONDS,
             null); // starts 30 days since epoch
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
     when(mockClusterInfoProvide.getSegmentsZKMetadata(OFFLINE_TABLE_NAME)).thenReturn(
         Lists.newArrayList(metadata1, metadata2, metadata3, metadata4, metadata5));
     when(mockClusterInfoProvide.getIdealState(OFFLINE_TABLE_NAME)).thenReturn(getIdealState(OFFLINE_TABLE_NAME,

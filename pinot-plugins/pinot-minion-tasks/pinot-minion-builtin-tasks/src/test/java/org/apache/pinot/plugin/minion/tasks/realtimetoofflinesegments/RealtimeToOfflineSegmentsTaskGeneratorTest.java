@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import org.apache.helix.model.IdealState;
 import org.apache.helix.task.TaskState;
 import org.apache.pinot.common.metadata.segment.SegmentZKMetadata;
@@ -47,6 +48,10 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.when;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
@@ -84,6 +89,7 @@ public class RealtimeToOfflineSegmentsTaskGeneratorTest {
   @Test
   public void testGenerateTasksCheckConfigs() {
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
 
     when(mockClusterInfoProvide.getTaskStates(RealtimeToOfflineSegmentsTask.TASK_TYPE)).thenReturn(new HashMap<>());
     SegmentZKMetadata segmentZKMetadata =
@@ -131,6 +137,7 @@ public class RealtimeToOfflineSegmentsTaskGeneratorTest {
     TableConfig realtimeTableConfig = getRealtimeTableConfig(taskConfigsMap);
 
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
     Map<String, TaskState> taskStatesMap = new HashMap<>();
     String taskName = "Task_RealtimeToOfflineSegmentsTask_" + System.currentTimeMillis();
     Map<String, String> taskConfigs = new HashMap<>();
@@ -182,6 +189,7 @@ public class RealtimeToOfflineSegmentsTaskGeneratorTest {
 
     // No segments in table
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
     when(mockClusterInfoProvide.getTaskStates(RealtimeToOfflineSegmentsTask.TASK_TYPE)).thenReturn(new HashMap<>());
     when(mockClusterInfoProvide.getSegmentsZKMetadata(REALTIME_TABLE_NAME)).thenReturn(Lists.newArrayList());
     when(mockClusterInfoProvide.getIdealState(REALTIME_TABLE_NAME))
@@ -228,6 +236,7 @@ public class RealtimeToOfflineSegmentsTaskGeneratorTest {
   @Test
   public void testGenerateTasksNoMinionMetadata() {
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
     when(mockClusterInfoProvide.getTaskStates(RealtimeToOfflineSegmentsTask.TASK_TYPE)).thenReturn(new HashMap<>());
     when(mockClusterInfoProvide
         .getMinionTaskMetadataZNRecord(RealtimeToOfflineSegmentsTask.TASK_TYPE, REALTIME_TABLE_NAME)).thenReturn(null);
@@ -288,6 +297,7 @@ public class RealtimeToOfflineSegmentsTaskGeneratorTest {
   @Test
   public void testGenerateTasksWithMinionMetadata() {
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
     when(mockClusterInfoProvide.getTaskStates(RealtimeToOfflineSegmentsTask.TASK_TYPE)).thenReturn(new HashMap<>());
     when(mockClusterInfoProvide
         .getMinionTaskMetadataZNRecord(RealtimeToOfflineSegmentsTask.TASK_TYPE, REALTIME_TABLE_NAME)).thenReturn(
@@ -384,6 +394,7 @@ public class RealtimeToOfflineSegmentsTaskGeneratorTest {
     TableConfig realtimeTableConfig = getRealtimeTableConfig(taskConfigsMap);
 
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
     when(mockClusterInfoProvide.getTaskStates(RealtimeToOfflineSegmentsTask.TASK_TYPE)).thenReturn(new HashMap<>());
 
     when(mockClusterInfoProvide
@@ -439,6 +450,7 @@ public class RealtimeToOfflineSegmentsTaskGeneratorTest {
     TableConfig realtimeTableConfig = getRealtimeTableConfig(taskConfigsMap);
 
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
     when(mockClusterInfoProvide.getTaskStates(RealtimeToOfflineSegmentsTask.TASK_TYPE)).thenReturn(new HashMap<>());
     when(mockClusterInfoProvide.getMinionTaskMetadataZNRecord(RealtimeToOfflineSegmentsTask.TASK_TYPE,
         REALTIME_TABLE_NAME)).thenReturn(
@@ -472,6 +484,7 @@ public class RealtimeToOfflineSegmentsTaskGeneratorTest {
     long now = System.currentTimeMillis();
     long watermarkMs = now - TimeUnit.DAYS.toMillis(1);
     ClusterInfoAccessor mockClusterInfoProvide = mock(ClusterInfoAccessor.class);
+    setupMockForEachSegmentsZKMetadata(mockClusterInfoProvide);
     when(mockClusterInfoProvide.getTaskStates(RealtimeToOfflineSegmentsTask.TASK_TYPE)).thenReturn(new HashMap<>());
     when(mockClusterInfoProvide
         .getMinionTaskMetadataZNRecord(RealtimeToOfflineSegmentsTask.TASK_TYPE, REALTIME_TABLE_NAME))
@@ -639,6 +652,30 @@ public class RealtimeToOfflineSegmentsTaskGeneratorTest {
             Map.of("RealtimeToOfflineSegmentsTask", validAgg2Config, "SegmentGenerationAndPushTask",
                 segmentGenerationAndPushTaskConfig))).build();
     taskGenerator.validateTaskConfigs(tableConfig, schema, validAgg2Config);
+  }
+
+  private void setupMockForEachSegmentsZKMetadata(ClusterInfoAccessor mockClusterInfoProvide) {
+    doAnswer(invocation -> {
+      String tableNameWithType = invocation.getArgument(0);
+      @SuppressWarnings("unchecked")
+      Consumer<SegmentZKMetadata> segmentMetadataConsumer = (Consumer<SegmentZKMetadata>) invocation.getArgument(1);
+      List<SegmentZKMetadata> segmentZKMetadataList = mockClusterInfoProvide.getSegmentsZKMetadata(tableNameWithType);
+      for (SegmentZKMetadata segmentZKMetadata : segmentZKMetadataList) {
+        segmentMetadataConsumer.accept(segmentZKMetadata);
+      }
+      return null;
+    }).when(mockClusterInfoProvide).forEachSegmentsZKMetadata(anyString(), any(Consumer.class));
+
+    doAnswer(invocation -> {
+      String tableNameWithType = invocation.getArgument(0);
+      @SuppressWarnings("unchecked")
+      Consumer<SegmentZKMetadata> segmentMetadataConsumer = (Consumer<SegmentZKMetadata>) invocation.getArgument(2);
+      List<SegmentZKMetadata> segmentZKMetadataList = mockClusterInfoProvide.getSegmentsZKMetadata(tableNameWithType);
+      for (SegmentZKMetadata segmentZKMetadata : segmentZKMetadataList) {
+        segmentMetadataConsumer.accept(segmentZKMetadata);
+      }
+      return null;
+    }).when(mockClusterInfoProvide).forEachSegmentsZKMetadata(anyString(), anyInt(), any(Consumer.class));
   }
 
   private SegmentZKMetadata getSegmentZKMetadata(String segmentName, Status status, long startTime, long endTime,
