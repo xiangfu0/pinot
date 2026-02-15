@@ -163,22 +163,20 @@ public abstract class BaseTaskGenerator implements PinotTaskGenerator {
   public List<SegmentZKMetadata> getSegmentsZKMetadataForTable(String tableNameWithType) {
     IdealState idealState = _clusterInfoAccessor.getIdealState(tableNameWithType);
     Set<String> segmentsForTable = idealState.getPartitionSet();
-    List<SegmentZKMetadata> segmentZKMetadataList = _clusterInfoAccessor.getSegmentsZKMetadata(tableNameWithType);
     List<SegmentZKMetadata> selectedSegmentZKMetadataList = new ArrayList<>();
-    for (SegmentZKMetadata segmentZKMetadata : segmentZKMetadataList) {
+    _clusterInfoAccessor.forEachSegmentsZKMetadata(tableNameWithType, segmentZKMetadata -> {
       if (segmentsForTable.contains(segmentZKMetadata.getSegmentName())) {
         selectedSegmentZKMetadataList.add(segmentZKMetadata);
       }
-    }
+    });
     return selectedSegmentZKMetadataList;
   }
 
   public List<SegmentZKMetadata> getNonConsumingSegmentsZKMetadataForRealtimeTable(String tableNameWithType) {
     IdealState idealState = _clusterInfoAccessor.getIdealState(tableNameWithType);
     Set<String> idealStateSegments = idealState.getPartitionSet();
-    List<SegmentZKMetadata> segmentZKMetadataList = _clusterInfoAccessor.getSegmentsZKMetadata(tableNameWithType);
     List<SegmentZKMetadata> selectedSegmentZKMetadataList = new ArrayList<>();
-    for (SegmentZKMetadata segmentZKMetadata : segmentZKMetadataList) {
+    _clusterInfoAccessor.forEachSegmentsZKMetadata(tableNameWithType, segmentZKMetadata -> {
       String segmentName = segmentZKMetadata.getSegmentName();
       if (idealStateSegments.contains(segmentName)
           && segmentZKMetadata.getStatus().isCompleted() // skip consuming segments
@@ -189,7 +187,7 @@ public abstract class BaseTaskGenerator implements PinotTaskGenerator {
         // We avoid picking up such segments to allow RealtimeSegmentValidationManager to fix them.
         selectedSegmentZKMetadataList.add(segmentZKMetadata);
       }
-    }
+    });
     return selectedSegmentZKMetadataList;
   }
 

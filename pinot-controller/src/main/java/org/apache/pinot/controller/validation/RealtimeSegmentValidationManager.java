@@ -217,8 +217,8 @@ public class RealtimeSegmentValidationManager extends ControllerPeriodicTask<Rea
 
   private void runSegmentLevelValidation(TableConfig tableConfig) {
     String realtimeTableName = tableConfig.getTableName();
-
-    List<SegmentZKMetadata> segmentsZKMetadata = _pinotHelixResourceManager.getSegmentsZKMetadata(realtimeTableName);
+    List<SegmentZKMetadata> segmentsZKMetadata = new ArrayList<>();
+    _pinotHelixResourceManager.forEachSegmentsZKMetadata(realtimeTableName, segmentsZKMetadata::add);
 
     // Delete tmp segments
     if (_llcRealtimeSegmentManager.isTmpSegmentAsyncDeletionEnabled()) {
