@@ -103,9 +103,9 @@ public class TableTierReader {
       }
     }
     if (segmentName == null) {
-      for (SegmentZKMetadata segmentZKMetadata : _helixResourceManager.getSegmentsZKMetadata(tableNameWithType)) {
-        tableTierDetails._segmentTargetTiers.put(segmentZKMetadata.getSegmentName(), segmentZKMetadata.getTier());
-      }
+      _helixResourceManager.forEachSegmentsZKMetadata(tableNameWithType,
+          segmentZKMetadata -> tableTierDetails._segmentTargetTiers.put(segmentZKMetadata.getSegmentName(),
+              segmentZKMetadata.getTier()));
     } else {
       SegmentZKMetadata segmentZKMetadata = _helixResourceManager.getSegmentZKMetadata(tableNameWithType, segmentName);
       Preconditions.checkState(segmentZKMetadata != null,

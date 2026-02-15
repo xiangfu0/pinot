@@ -135,27 +135,46 @@ public class OfflineSegmentValidationManager extends ControllerPeriodicTask<Offl
   // For offline segment pushes, validate that there are no missing segments, and update metrics
   private void validateOfflineSegmentPush(TableConfig tableConfig) {
     String offlineTableName = tableConfig.getTableName();
-    List<SegmentZKMetadata> segmentsZKMetadata = _pinotHelixResourceManager.getSegmentsZKMetadata(offlineTableName);
+    int[] numSegments = new int[1];
+    int[] numSegmentsWithInvalidIntervals = new int[1];
+    List<Interval> segmentIntervals = new ArrayList<>();
+    long[] maxSegmentEndTimeHolder = new long[] {Long.MIN_VALUE};
+    long[] maxSegmentPushTimeHolder = new long[] {Long.MIN_VALUE};
+    long[] numTotalDocs = new long[] {0};
+    _pinotHelixResourceManager.forEachSegmentsZKMetadata(offlineTableName, segmentZKMetadata -> {
+      numSegments[0]++;
+      numTotalDocs[0] += segmentZKMetadata.getTotalDocs();
+
+      long startTimeMs = segmentZKMetadata.getStartTimeMs();
+      long endTimeMs = segmentZKMetadata.getEndTimeMs();
+      if (TimeUtils.timeValueInValidRange(startTimeMs) && TimeUtils.timeValueInValidRange(endTimeMs)) {
+        segmentIntervals.add(new Interval(startTimeMs, endTimeMs));
+      } else {
+        numSegmentsWithInvalidIntervals[0]++;
+      }
+
+      if (TimeUtils.timeValueInValidRange(endTimeMs) && maxSegmentEndTimeHolder[0] < endTimeMs) {
+        maxSegmentEndTimeHolder[0] = Math.max(maxSegmentEndTimeHolder[0], endTimeMs);
+      }
+
+      long segmentPushTime = segmentZKMetadata.getPushTime();
+      long segmentRefreshTime = segmentZKMetadata.getRefreshTime();
+      long segmentUpdateTime = Math.max(segmentPushTime, segmentRefreshTime);
+      maxSegmentPushTimeHolder[0] = Math.max(maxSegmentPushTimeHolder[0], segmentUpdateTime);
+    });
 
     // Compute the missing segments if there are at least two segments and the table has time column
     int numMissingSegments = 0;
-    int numSegments = segmentsZKMetadata.size();
+    int numSegmentsInt = numSegments[0];
+    int numSegmentsWithInvalidIntervalsInt = numSegmentsWithInvalidIntervals[0];
+    long maxSegmentEndTime = maxSegmentEndTimeHolder[0];
+    long maxSegmentPushTime = maxSegmentPushTimeHolder[0];
     SegmentsValidationAndRetentionConfig validationConfig = tableConfig.getValidationConfig();
-    if (SegmentIntervalUtils.eligibleForMissingSegmentCheck(numSegments, validationConfig)) {
-      List<Interval> segmentIntervals = new ArrayList<>(numSegments);
-      int numSegmentsWithInvalidIntervals = 0;
-      for (SegmentZKMetadata segmentZKMetadata : segmentsZKMetadata) {
-        long startTimeMs = segmentZKMetadata.getStartTimeMs();
-        long endTimeMs = segmentZKMetadata.getEndTimeMs();
-        if (TimeUtils.timeValueInValidRange(startTimeMs) && TimeUtils.timeValueInValidRange(endTimeMs)) {
-          segmentIntervals.add(new Interval(startTimeMs, endTimeMs));
-        } else {
-          numSegmentsWithInvalidIntervals++;
-        }
-      }
-      if (numSegmentsWithInvalidIntervals > 0) {
+    if (SegmentIntervalUtils.eligibleForMissingSegmentCheck(numSegmentsInt, validationConfig)) {
+      if (numSegmentsWithInvalidIntervalsInt > 0) {
         LOGGER
-            .warn("Table: {} has {} segments with invalid interval", offlineTableName, numSegmentsWithInvalidIntervals);
+            .warn("Table: {} has {} segments with invalid interval", offlineTableName,
+                numSegmentsWithInvalidIntervalsInt);
       }
       Duration frequency =
           SegmentIntervalUtils.convertToDuration(IngestionConfigUtils.getBatchSegmentIngestionFrequency(tableConfig));
@@ -164,33 +183,13 @@ public class OfflineSegmentValidationManager extends ControllerPeriodicTask<Offl
     // Update the gauge that contains the number of missing segments
     _validationMetrics.updateMissingSegmentCountGauge(offlineTableName, numMissingSegments);
 
-    // Compute the max segment end time and max segment push time
-    long maxSegmentEndTime = Long.MIN_VALUE;
-    long maxSegmentPushTime = Long.MIN_VALUE;
-
-    for (SegmentZKMetadata segmentZKMetadata : segmentsZKMetadata) {
-      long endTimeMs = segmentZKMetadata.getEndTimeMs();
-      if (TimeUtils.timeValueInValidRange(endTimeMs) && maxSegmentEndTime < endTimeMs) {
-        maxSegmentEndTime = endTimeMs;
-      }
-
-      long segmentPushTime = segmentZKMetadata.getPushTime();
-      long segmentRefreshTime = segmentZKMetadata.getRefreshTime();
-      long segmentUpdateTime = Math.max(segmentPushTime, segmentRefreshTime);
-
-      if (maxSegmentPushTime < segmentUpdateTime) {
-        maxSegmentPushTime = segmentUpdateTime;
-      }
-    }
-
     // Update the gauges that contain the delay between the current time and last segment end time
     _validationMetrics.updateOfflineSegmentDelayGauge(offlineTableName, maxSegmentEndTime);
     _validationMetrics.updateLastPushTimeGauge(offlineTableName, maxSegmentPushTime);
     // Update the gauge to contain the total document count in the segments
-    _validationMetrics
-        .updateTotalDocumentCountGauge(offlineTableName, computeOfflineTotalDocumentInSegments(segmentsZKMetadata));
+    _validationMetrics.updateTotalDocumentCountGauge(offlineTableName, numTotalDocs[0]);
     // Update the gauge to contain the total number of segments for this table
-    _validationMetrics.updateSegmentCountGauge(offlineTableName, numSegments);
+    _validationMetrics.updateSegmentCountGauge(offlineTableName, numSegmentsInt);
 
     if (_segmentAutoResetOnErrorAtValidation) {
       _pinotHelixResourceManager.resetSegments(offlineTableName, null, true);

@@ -770,12 +770,9 @@ public class PinotSegmentRestletResource {
     String tableNameWithType =
         ResourceUtils.getExistingTableNamesWithType(_pinotHelixResourceManager, tableName, tableType, LOGGER).get(0);
     Map<String, Map<String, String>> segmentToMetadataMap = new HashMap<>();
-    List<SegmentZKMetadata> segmentZKMetadataList =
-        _pinotHelixResourceManager.getSegmentsZKMetadata(tableNameWithType);
-
-    for (SegmentZKMetadata segmentZKMetadata : segmentZKMetadataList) {
+    _pinotHelixResourceManager.forEachSegmentsZKMetadata(tableNameWithType, segmentZKMetadata -> {
       segmentToMetadataMap.put(segmentZKMetadata.getSegmentName(), segmentZKMetadata.toMap());
-    }
+    });
     return segmentToMetadataMap;
   }
 
