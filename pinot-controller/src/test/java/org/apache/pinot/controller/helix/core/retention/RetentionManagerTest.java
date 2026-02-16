@@ -507,6 +507,8 @@ public class RetentionManagerTest {
   private void mockSegmentMetadataConsumer(PinotHelixResourceManager resourceManager, String tableNameWithType,
       List<SegmentZKMetadata> segmentZKMetadata) {
     when(resourceManager.getSegmentsZKMetadata(tableNameWithType)).thenReturn(segmentZKMetadata);
+    Object lineageLock = new Object();
+    when(resourceManager.getLineageUpdaterLock(tableNameWithType)).thenReturn(lineageLock);
     doAnswer(invocationOnMock -> {
       Consumer<SegmentZKMetadata> consumer = invocationOnMock.getArgument(1);
       segmentZKMetadata.forEach(consumer);
