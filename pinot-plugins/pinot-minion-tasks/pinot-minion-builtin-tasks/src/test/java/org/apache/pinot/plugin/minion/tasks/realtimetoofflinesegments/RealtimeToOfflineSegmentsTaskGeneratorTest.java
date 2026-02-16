@@ -660,6 +660,9 @@ public class RealtimeToOfflineSegmentsTaskGeneratorTest {
       @SuppressWarnings("unchecked")
       Consumer<SegmentZKMetadata> segmentMetadataConsumer = (Consumer<SegmentZKMetadata>) invocation.getArgument(1);
       List<SegmentZKMetadata> segmentZKMetadataList = mockClusterInfoProvide.getSegmentsZKMetadata(tableNameWithType);
+      if (segmentZKMetadataList == null) {
+        return null;
+      }
       for (SegmentZKMetadata segmentZKMetadata : segmentZKMetadataList) {
         segmentMetadataConsumer.accept(segmentZKMetadata);
       }
@@ -671,6 +674,9 @@ public class RealtimeToOfflineSegmentsTaskGeneratorTest {
       @SuppressWarnings("unchecked")
       Consumer<SegmentZKMetadata> segmentMetadataConsumer = (Consumer<SegmentZKMetadata>) invocation.getArgument(2);
       List<SegmentZKMetadata> segmentZKMetadataList = mockClusterInfoProvide.getSegmentsZKMetadata(tableNameWithType);
+      if (segmentZKMetadataList == null) {
+        return null;
+      }
       for (SegmentZKMetadata segmentZKMetadata : segmentZKMetadataList) {
         segmentMetadataConsumer.accept(segmentZKMetadata);
       }
