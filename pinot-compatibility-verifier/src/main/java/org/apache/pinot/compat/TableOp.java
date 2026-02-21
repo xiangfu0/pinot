@@ -125,9 +125,12 @@ public class TableOp extends BaseOp {
 
   private boolean createTable() {
     try {
+      TableConfig tableConfig =
+          JsonUtils.fileToObject(new File(getAbsoluteFileName(_tableConfigFileName)), TableConfig.class);
+      updateKafkaPortInStreamConfig(tableConfig);
       ControllerTest.sendPostRequestRaw(
           ControllerRequestURLBuilder.baseUrl(ClusterDescriptor.getInstance().getControllerUrl()).forTableCreate(),
-          FileUtils.readFileToString(new File(getAbsoluteFileName(_tableConfigFileName)), Charset.defaultCharset()),
+          JsonUtils.objectToString(tableConfig),
           Collections.emptyMap());
       return true;
     } catch (IOException e) {
@@ -147,6 +150,24 @@ public class TableOp extends BaseOp {
     } catch (IOException e) {
       LOGGER.error("Failed to delete table with file: {}", _tableConfigFileName, e);
       return false;
+    }
+  }
+
+  private void updateKafkaPortInStreamConfig(TableConfig tableConfig) {
+    if (tableConfig == null || tableConfig.getIndexingConfig() == null) {
+      return;
+    }
+    Map<String, String> streamConfigs = tableConfig.getIndexingConfig().getStreamConfigs();
+    if (streamConfigs == null || streamConfigs.isEmpty()) {
+      return;
+    }
+
+    String kafkaServerUrl = ClusterDescriptor.getInstance().getKafkaServerUrl();
+    if (streamConfigs.containsKey("stream.kafka.broker.list")) {
+      streamConfigs.put("stream.kafka.broker.list", kafkaServerUrl);
+    }
+    if (streamConfigs.containsKey("bootstrap.servers")) {
+      streamConfigs.put("bootstrap.servers", kafkaServerUrl);
     }
   }
 }

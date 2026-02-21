@@ -77,6 +77,16 @@ public class StartKafkaCommand extends AbstractBaseAdminCommand implements Comma
         StreamDataProvider.getServerDataStartable(KafkaStarterUtils.KAFKA_SERVER_STARTABLE_CLASS_NAME, props);
     kafkaStarter.start();
     LOGGER.info("Kafka server started at localhost:{}", _port);
+    try {
+      synchronized (this) {
+        this.wait();
+      }
+    } catch (InterruptedException e) {
+      LOGGER.info("Kafka server command interrupted, shutting down local Kafka");
+      Thread.currentThread().interrupt();
+    } finally {
+      kafkaStarter.stop();
+    }
     return true;
   }
 }

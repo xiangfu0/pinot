@@ -19,15 +19,19 @@
 package org.apache.pinot.compat;
 
 // TODO Support https, perhaps based on configuration
+import org.apache.pinot.tools.utils.KafkaStarterUtils;
+
 public class ClusterDescriptor {
 
   private static final String DEFAULT_HOST = "localhost";
-  private static final String KAFKA_PORT = "19092";
+  private static final String DEFAULT_KAFKA_PORT = "19092";
   private static final ClusterDescriptor INSTANCE = new ClusterDescriptor();
 
   private String _controllerPort = "9000";
   private String _brokerQueryPort = "8099";
   private String _serverAdminPort = "8097";
+  private String _kafkaPort = DEFAULT_KAFKA_PORT;
+  private boolean _kafkaPortOverridden = false;
 
   public static ClusterDescriptor getInstance() {
     return INSTANCE;
@@ -51,6 +55,13 @@ public class ClusterDescriptor {
     }
   }
 
+  public void setKafkaPort(String port) {
+    if (port != null && !port.isEmpty()) {
+      _kafkaPort = port;
+      _kafkaPortOverridden = true;
+    }
+  }
+
   public String getControllerUrl() {
     return String.format("http://%s:%s", DEFAULT_HOST, _controllerPort);
   }
@@ -60,6 +71,7 @@ public class ClusterDescriptor {
   }
 
   public String getKafkaServerUrl() {
-    return String.format("%s:%s", DEFAULT_HOST, KAFKA_PORT);
+    String kafkaServerUrl = String.format("%s:%s", DEFAULT_HOST, _kafkaPort);
+    return KafkaStarterUtils.resolveKafkaBrokerList(kafkaServerUrl, _kafkaPortOverridden);
   }
 }

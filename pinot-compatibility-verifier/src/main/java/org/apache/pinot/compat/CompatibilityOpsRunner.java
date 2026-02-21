@@ -80,6 +80,7 @@ public class CompatibilityOpsRunner {
     clusterDescriptor.setControllerPort(System.getProperty("ControllerPort"));
     clusterDescriptor.setBrokerQueryPort(System.getProperty("BrokerQueryPort"));
     clusterDescriptor.setServerAdminPort(System.getProperty("ServerAdminPort"));
+    clusterDescriptor.setKafkaPort(System.getProperty("KafkaPort"));
 
     CompatibilityOpsRunner runner = new CompatibilityOpsRunner(args[0], Integer.parseInt(args[1]));
     int exitStatus = 1;

@@ -40,6 +40,7 @@
 #  running some queries with the new data.
 
 RM="/bin/rm"
+KAFKA_PORT=${KAFKA_PORT:-19092}
 logCount=1
 #Declare the number of mandatory args
 cmdName=`basename $0`
@@ -107,12 +108,72 @@ function waitForControllerReady() {
 }
 
 function waitForKafkaReady() {
-  status=1
+  local status=1
+  local checkClasspath=""
+  local checkClass="/tmp/PinotKafkaReadyCheck.class"
+  local javaSource="/tmp/PinotKafkaReadyCheck.java"
+  local -a checkCommand=()
+
+  if [ -f "${oldTargetDir}/pinot-tools/target/pinot-tool-launcher-jar-with-dependencies.jar" ]; then
+    checkClasspath="${oldTargetDir}/pinot-tools/target/pinot-tool-launcher-jar-with-dependencies.jar"
+  fi
+
+  if [ -z "${checkClasspath}" ] && [ -d "${oldTargetDir}/pinot-tools/target/pinot-tools-pkg/lib" ]; then
+    local oldNullglob
+    oldNullglob=$(shopt -p nullglob)
+    shopt -s nullglob
+    local -a classpathEntries=()
+    local -a jarFiles
+    for jarFiles in "${oldTargetDir}/pinot-tools/target/pinot-tools-pkg/lib"/*.jar; do
+      classpathEntries+=("${jarFiles}")
+    done
+    ${oldNullglob}
+    if [ ${#classpathEntries[@]} -gt 0 ]; then
+      IFS=: checkClasspath="${classpathEntries[*]}"
+    fi
+  fi
+
+  if [ -n "${checkClasspath}" ] && command -v javac >/dev/null 2>&1; then
+    if [ ! -f "${checkClass}" ]; then
+      cat > "${javaSource}" <<'EOF'
+import org.apache.pinot.tools.utils.KafkaStarterUtils;
+
+public class PinotKafkaReadyCheck {
+  public static void main(String[] args) {
+    String brokerList = args[0];
+    if (!KafkaStarterUtils.isKafkaAvailable(brokerList)) {
+      System.exit(1);
+    }
+  }
+}
+EOF
+      if ! javac -cp "${checkClasspath}" "${javaSource}"; then
+        echo "Warning: unable to compile Kafka readiness checker; falling back to TCP check only"
+        checkClass=""
+      fi
+    fi
+    if [ -f "${checkClass}" ]; then
+      checkCommand=(java -cp "${checkClasspath}:/tmp" PinotKafkaReadyCheck)
+    fi
+  elif [ -z "${checkClasspath}" ]; then
+    echo "Warning: Kafka readiness checker classpath unavailable; falling back to TCP check only"
+  else
+    echo "Warning: javac not found; falling back to TCP check only"
+  fi
+
   while [ $status -ne 0 ]; do
     sleep 1
-    echo "Checking port 19092 for kafka ready"
-    echo x | nc localhost 19092 1>/dev/null 2>&1
+    echo "Checking port ${KAFKA_PORT} for kafka ready"
+    echo x | nc localhost ${KAFKA_PORT} 1>/dev/null 2>&1
     status=$?
+    if [ $status -ne 0 ]; then
+      continue
+    fi
+    if [ ${#checkCommand[@]} -gt 0 ]; then
+      echo "Port ${KAFKA_PORT} is open, validating Kafka metadata endpoint"
+      "${checkCommand[@]}" localhost:${KAFKA_PORT} > /dev/null 2>&1
+      status=$?
+    fi
   done
 }
 
@@ -196,7 +257,8 @@ function startService() {
     ./pinot-admin.sh StartServer ${configFileArg} 1>${LOG_DIR}/server2.${logCount}.log 2>&1 &
         echo $! >${PID_DIR}/server2.pid
   elif [ "$serviceName" = "kafka" ]; then
-    ./pinot-admin.sh StartKafka -zkAddress localhost:${ZK_PORT}/kafka 1>${LOG_DIR}/kafka.${logCount}.log 2>&1 &
+    # Start Kafka directly; no ZooKeeper argument is required in the current admin command.
+    ./pinot-admin.sh StartKafka -port ${KAFKA_PORT} 1>${LOG_DIR}/kafka.${logCount}.log 2>&1 &
     echo $! >${PID_DIR}/kafka.pid
   fi
   # Keep log files distinct so we can debug
@@ -209,6 +271,32 @@ function startService() {
 # Given a component, check if it known to be running and stop that specific component
 function stopService() {
   serviceName=$1
+
+  if [ "$serviceName" = "kafka" ]; then
+    if [ -f "${PID_DIR}/${serviceName}".pid ]; then
+      pid=$(cat "${PID_DIR}/${serviceName}".pid)
+      kill $pid 1>/dev/null 2>&1 || true
+      status=0
+      while [ $status -ne 1 ]; do
+        echo "Waiting for $serviceName (pid $pid) to die"
+        sleep 1
+        ps -p $pid
+        status=$(echo $?)
+      done
+    fi
+
+    if [ -d "${oldTargetDir}/pinot-tools/target/pinot-tools-pkg/bin" ]; then
+      pushd "${oldTargetDir}/pinot-tools/target/pinot-tools-pkg/bin" 1>/dev/null || exit 1
+      ./pinot-admin.sh StopProcess -kafka 1>${LOG_DIR}/kafka.stop.${logCount}.log 2>&1
+      popd 1>/dev/null || exit 1
+    else
+      echo "pinot-admin launcher not found in ${oldTargetDir}/pinot-tools/target/pinot-tools-pkg/bin"
+    fi
+    ${RM} -f "${PID_DIR}/kafka.pid"
+    echo "Kafka stopped"
+    return
+  fi
+
   if [ -f "${PID_DIR}/${serviceName}".pid ]; then
     pid=$(cat "${PID_DIR}/${serviceName}".pid)
     kill -9 $pid 1>/dev/null 2>&1
@@ -344,6 +432,20 @@ function checkPortAvailable() {
   fi
 }
 
+function resolveKafkaPort() {
+  local requestedPort=$1
+  local fallbackPort=$2
+  if checkPortAvailable "${requestedPort}"; then
+    echo "${requestedPort}"
+    return 0
+  fi
+  if [ -n "${fallbackPort}" ] && [ "${requestedPort}" != "${fallbackPort}" ] && checkPortAvailable "${fallbackPort}"; then
+    echo "${fallbackPort}"
+    return 0
+  fi
+  return 1
+}
+
 #
 # Main
 #
@@ -414,7 +516,13 @@ setupControllerVariables
 setupBrokerVariables
 setupServerVariables
 
-export JAVA_OPTS="-DControllerPort=${CONTROLLER_PORT} -DBrokerQueryPort=${BROKER_QUERY_PORT} -DServerAdminPort=${SERVER_ADMIN_PORT}"
+if ! KAFKA_PORT=$(resolveKafkaPort "${KAFKA_PORT}"); then
+  echo "Kafka port ${KAFKA_PORT} is not available. Check any existing process that may be using this port."
+  exit 1
+fi
+echo "Using kafka port ${KAFKA_PORT}"
+
+export JAVA_OPTS="-DControllerPort=${CONTROLLER_PORT} -DBrokerQueryPort=${BROKER_QUERY_PORT} -DServerAdminPort=${SERVER_ADMIN_PORT} -DKafkaPort=${KAFKA_PORT}"
 
 mkdir ${PID_DIR}
 mkdir ${LOG_DIR}

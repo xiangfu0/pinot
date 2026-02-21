@@ -167,7 +167,8 @@ public class StreamOp extends BaseOp {
       int partitions = Integer.parseInt(streamConfigMap.getProperty(NUM_PARTITIONS));
 
       final Map<String, Object> config = new HashMap<>();
-      config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, ClusterDescriptor.getInstance().getKafkaServerUrl());
+      String kafkaServerUrl = ClusterDescriptor.getInstance().getKafkaServerUrl();
+      config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaServerUrl);
       config.put(AdminClientConfig.CLIENT_ID_CONFIG, "KafkaAdminClient-" + UUID.randomUUID());
       config.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 15000);
       AdminClient adminClient = KafkaAdminClient.create(config);
@@ -199,7 +200,7 @@ public class StreamOp extends BaseOp {
 
       // push csv data to kafka
       Properties publisherProps = new Properties();
-      publisherProps.put("metadata.broker.list", KafkaStarterUtils.DEFAULT_KAFKA_BROKER);
+      publisherProps.put("metadata.broker.list", ClusterDescriptor.getInstance().getKafkaServerUrl());
       publisherProps.put("serializer.class", "kafka.serializer.DefaultEncoder");
       publisherProps.put("request.required.acks", "1");
       StreamDataProducer producer =
