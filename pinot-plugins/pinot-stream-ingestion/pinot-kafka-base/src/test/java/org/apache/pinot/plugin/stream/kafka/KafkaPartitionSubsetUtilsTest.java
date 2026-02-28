@@ -121,4 +121,81 @@ public class KafkaPartitionSubsetUtilsTest {
     Assert.assertNotNull(result);
     Assert.assertEquals(result, List.of(0, 2, 5));
   }
+
+  @Test
+  public void testGetPartitionIdsFromConfigMultipleCommasWithWhitespace() {
+    Map<String, String> config = new HashMap<>();
+    config.put(KafkaStreamConfigProperties.constructStreamProperty(KafkaStreamConfigProperties.PARTITION_IDS),
+        "  ,  ,  0  ,  ,  ");
+    List<Integer> result = KafkaPartitionSubsetUtils.getPartitionIdsFromConfig(config);
+    Assert.assertNotNull(result);
+    Assert.assertEquals(result, List.of(0));
+  }
+
+  @Test
+  public void testGetPartitionIdsFromConfigLeadingAndTrailingCommas() {
+    Map<String, String> config = new HashMap<>();
+    config.put(KafkaStreamConfigProperties.constructStreamProperty(KafkaStreamConfigProperties.PARTITION_IDS),
+        ",,,0,1,2,,,");
+    List<Integer> result = KafkaPartitionSubsetUtils.getPartitionIdsFromConfig(config);
+    Assert.assertNotNull(result);
+    Assert.assertEquals(result, List.of(0, 1, 2));
+  }
+
+  @Test
+  public void testGetPartitionIdsFromConfigAllEmptyCommas() {
+    Map<String, String> config = new HashMap<>();
+    config.put(KafkaStreamConfigProperties.constructStreamProperty(KafkaStreamConfigProperties.PARTITION_IDS),
+        " , , , , ");
+    List<Integer> result = KafkaPartitionSubsetUtils.getPartitionIdsFromConfig(config);
+    Assert.assertNull(result);
+  }
+
+  @Test
+  public void testGetPartitionIdsFromConfigVeryLargePartitionId() {
+    Map<String, String> config = new HashMap<>();
+    config.put(KafkaStreamConfigProperties.constructStreamProperty(KafkaStreamConfigProperties.PARTITION_IDS),
+        "999,1000,9999");
+    List<Integer> result = KafkaPartitionSubsetUtils.getPartitionIdsFromConfig(config);
+    Assert.assertNotNull(result);
+    Assert.assertEquals(result, List.of(999, 1000, 9999));
+  }
+
+  @Test
+  public void testGetPartitionIdsFromConfigAllPartitionsInSubset() {
+    // Simulates a subset config that contains all partitions (e.g., 0,1,2,3 for a 4-partition topic)
+    // This is valid config-wise but might not be useful in practice
+    Map<String, String> config = new HashMap<>();
+    config.put(KafkaStreamConfigProperties.constructStreamProperty(KafkaStreamConfigProperties.PARTITION_IDS),
+        "0,1,2,3");
+    List<Integer> result = KafkaPartitionSubsetUtils.getPartitionIdsFromConfig(config);
+    Assert.assertNotNull(result);
+    Assert.assertEquals(result, List.of(0, 1, 2, 3));
+  }
+
+  @Test
+  public void testGetPartitionIdsFromConfigMixedWhitespace() {
+    Map<String, String> config = new HashMap<>();
+    config.put(KafkaStreamConfigProperties.constructStreamProperty(KafkaStreamConfigProperties.PARTITION_IDS),
+        " 5 , 2 ,\t0\t,\n3\n");
+    List<Integer> result = KafkaPartitionSubsetUtils.getPartitionIdsFromConfig(config);
+    Assert.assertNotNull(result);
+    Assert.assertEquals(result, List.of(0, 2, 3, 5));
+  }
+
+  @Test(expectedExceptions = IllegalArgumentException.class)
+  public void testGetPartitionIdsFromConfigPartiallyInvalid() {
+    Map<String, String> config = new HashMap<>();
+    config.put(KafkaStreamConfigProperties.constructStreamProperty(KafkaStreamConfigProperties.PARTITION_IDS),
+        "0,1,2,invalid,3");
+    KafkaPartitionSubsetUtils.getPartitionIdsFromConfig(config);
+  }
+
+  @Test(expectedExceptions = IllegalArgumentException.class)
+  public void testGetPartitionIdsFromConfigNegativeInMiddle() {
+    Map<String, String> config = new HashMap<>();
+    config.put(KafkaStreamConfigProperties.constructStreamProperty(KafkaStreamConfigProperties.PARTITION_IDS),
+        "0,1,-5,2");
+    KafkaPartitionSubsetUtils.getPartitionIdsFromConfig(config);
+  }
 }
