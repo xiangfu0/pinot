@@ -35,3 +35,7 @@ if [ "$RUN_TEST_SET" == "2" ]; then
   mvn test \
       -P github-actions,codecoverage,integration-tests-set-2 && exit 0 || exit 1
 fi
+if [ "$RUN_TEST_SET" == "3" ]; then
+  mvn test \
+      -P github-actions,codecoverage,integration-tests-set-3 && exit 0 || exit 1
+fi
