@@ -31,6 +31,7 @@ import javax.annotation.Nullable;
 import org.apache.pinot.common.exception.TableNotFoundException;
 import org.apache.pinot.common.metrics.ServerQueryPhase;
 import org.apache.pinot.core.data.manager.InstanceDataManager;
+import org.apache.pinot.core.data.manager.offline.OfflineTableDataManager;
 import org.apache.pinot.core.data.manager.realtime.RealtimeTableDataManager;
 import org.apache.pinot.core.query.pruner.SegmentPrunerService;
 import org.apache.pinot.core.query.pruner.SegmentPrunerStatistics;
@@ -81,10 +82,9 @@ public class SingleTableExecutionInfo implements TableExecutionInfo {
         indexSegments.add(segmentDataManager.getSegment());
       }
     } else {
-      RealtimeTableDataManager rtdm = (RealtimeTableDataManager) tableDataManager;
-      TableUpsertMetadataManager tumm = rtdm.getTableUpsertMetadataManager();
+      TableUpsertMetadataManager tumm = getTableUpsertMetadataManager(tableDataManager);
       boolean isUsingConsistencyMode =
-          rtdm.getTableUpsertMetadataManager().getContext().getConsistencyMode() != UpsertConfig.ConsistencyMode.NONE;
+          tumm.getContext().getConsistencyMode() != UpsertConfig.ConsistencyMode.NONE;
       if (isUsingConsistencyMode) {
         tumm.lockForSegmentContexts();
       }
@@ -134,10 +134,23 @@ public class SingleTableExecutionInfo implements TableExecutionInfo {
     // those segments in the list of segments for query to process on the server, otherwise, the query will see less
     // than expected valid docs from the upsert table.
     if (tableDataManager instanceof RealtimeTableDataManager) {
-      RealtimeTableDataManager rtdm = (RealtimeTableDataManager) tableDataManager;
-      return rtdm.isUpsertEnabled();
+      return ((RealtimeTableDataManager) tableDataManager).isUpsertEnabled();
+    }
+    if (tableDataManager instanceof OfflineTableDataManager) {
+      return ((OfflineTableDataManager) tableDataManager).isUpsertEnabled();
     }
     return false;
+  }
+
+  @Nullable
+  private static TableUpsertMetadataManager getTableUpsertMetadataManager(TableDataManager tableDataManager) {
+    if (tableDataManager instanceof RealtimeTableDataManager) {
+      return ((RealtimeTableDataManager) tableDataManager).getTableUpsertMetadataManager();
+    }
+    if (tableDataManager instanceof OfflineTableDataManager) {
+      return ((OfflineTableDataManager) tableDataManager).getTableUpsertMetadataManager();
+    }
+    return null;
   }
 
   private SingleTableExecutionInfo(TableDataManager tableDataManager, List<SegmentDataManager> segmentDataManagers,

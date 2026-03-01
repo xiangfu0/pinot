@@ -89,6 +89,7 @@ import org.apache.pinot.core.auth.Authorize;
 import org.apache.pinot.core.auth.TargetType;
 import org.apache.pinot.core.data.manager.InstanceDataManager;
 import org.apache.pinot.core.data.manager.offline.ImmutableSegmentDataManager;
+import org.apache.pinot.core.data.manager.offline.OfflineTableDataManager;
 import org.apache.pinot.core.data.manager.realtime.RealtimeSegmentDataManager;
 import org.apache.pinot.core.data.manager.realtime.RealtimeSegmentMetadataUtils;
 import org.apache.pinot.core.data.manager.realtime.RealtimeTableDataManager;
@@ -296,11 +297,14 @@ public class TablesResource {
       }
     }
 
-    // fetch partition to primary key count for realtime tables that have upsert or dedup enabled
+    // fetch partition to primary key count for tables that have upsert or dedup enabled
     Map<Integer, Long> partitionToPrimaryKeyCountMap = new HashMap<>();
     if (tableDataManager instanceof RealtimeTableDataManager) {
       RealtimeTableDataManager realtimeTableDataManager = (RealtimeTableDataManager) tableDataManager;
       partitionToPrimaryKeyCountMap = realtimeTableDataManager.getPartitionToPrimaryKeyCount();
+    } else if (tableDataManager instanceof OfflineTableDataManager) {
+      OfflineTableDataManager offlineTableDataManager = (OfflineTableDataManager) tableDataManager;
+      partitionToPrimaryKeyCountMap = offlineTableDataManager.getPartitionToPrimaryKeyCount();
     }
 
     // construct partitionToServerPrimaryKeyCountMap to populate in TableMetadataInfo
