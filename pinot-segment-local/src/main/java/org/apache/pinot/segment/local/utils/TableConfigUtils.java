@@ -940,6 +940,8 @@ public final class TableConfigUtils {
           comparisonColumn, comparisonColumnDataType);
     } else {
       String comparisonColumn = tableConfig.getValidationConfig().getTimeColumnName();
+      Preconditions.checkState(comparisonColumn != null,
+          "MetadataTTL / DeletedKeysTTL requires either a comparison column or a time column to be configured");
       DataType comparisonColumnDataType = schema.getFieldSpecFor(comparisonColumn).getDataType();
       Preconditions.checkState(isValidTimeComparisonType(comparisonColumnDataType),
           "MetadataTTL / DeletedKeysTTL must have time column: %s in numeric type, found: %s",

@@ -43,7 +43,6 @@ import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.readers.GenericRow;
 import org.apache.pinot.spi.data.readers.RecordReader;
 import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
-import org.apache.pinot.spi.utils.builder.TableNameBuilder;
 import org.apache.pinot.util.TestUtils;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
@@ -70,7 +69,6 @@ import static org.testng.Assert.assertEquals;
  */
 public class OfflineUpsertTableIntegrationTest extends BaseClusterIntegrationTest {
   private static final String TABLE_NAME = "offlineUpsertTest";
-  private static final String OFFLINE_TABLE_NAME = TableNameBuilder.OFFLINE.tableNameWithType(TABLE_NAME);
   private static final String PRIMARY_KEY_COL = "playerId";
   private static final String TIME_COL_NAME = "timestampInEpoch";
   private static final int NUM_PARTITIONS = 1;
@@ -106,7 +104,7 @@ public class OfflineUpsertTableIntegrationTest extends BaseClusterIntegrationTes
   @AfterClass
   public void tearDown()
       throws IOException {
-    dropOfflineTable(OFFLINE_TABLE_NAME);
+    dropOfflineTable(TABLE_NAME);
     stopServer();
     stopBroker();
     stopController();
