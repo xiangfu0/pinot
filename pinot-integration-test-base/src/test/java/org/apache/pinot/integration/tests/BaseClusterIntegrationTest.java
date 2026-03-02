@@ -966,30 +966,11 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
   }
 
   protected void stopKafka() {
-    if (_kafkaStarters == null || _kafkaStarters.isEmpty()) {
-      return;
-    }
-    List<StreamDataServerStartable> kafkaStarters = _kafkaStarters;
-    _kafkaStarters = null;
-
-    RuntimeException stopException = null;
-    for (int i = kafkaStarters.size() - 1; i >= 0; i--) {
-      StreamDataServerStartable kafkaStarter = kafkaStarters.get(i);
-      try {
-        kafkaStarter.stop();
-      } catch (Exception e) {
-        RuntimeException wrapped = new RuntimeException(
-            "Failed to stop Kafka broker on port: " + kafkaStarter.getPort(), e);
-        if (stopException == null) {
-          stopException = wrapped;
-        } else {
-          stopException.addSuppressed(wrapped);
-        }
+    if (_kafkaStarters != null) {
+      for (StreamDataServerStartable starter : _kafkaStarters) {
+        starter.stop();
       }
-    }
-
-    if (stopException != null) {
-      throw stopException;
+      _kafkaStarters = null;
     }
   }
 
