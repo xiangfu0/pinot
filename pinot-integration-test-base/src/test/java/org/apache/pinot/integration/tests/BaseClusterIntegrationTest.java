@@ -119,7 +119,7 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
       "On_Time_On_Time_Performance_2014_100k_subset_nonulls.tar.gz";
   protected static final long DEFAULT_COUNT_STAR_RESULT = 115545L;
   protected static final int DEFAULT_LLC_SEGMENT_FLUSH_SIZE = 5000;
-  protected static final int DEFAULT_TRANSACTION_NUM_KAFKA_BROKERS = 3;
+  protected static final int DEFAULT_TRANSACTION_NUM_KAFKA_BROKERS = 1;
   protected static final int DEFAULT_LLC_NUM_KAFKA_BROKERS = 2;
   protected static final int DEFAULT_LLC_NUM_KAFKA_PARTITIONS = 2;
   protected static final int DEFAULT_MAX_NUM_KAFKA_MESSAGES_PER_BATCH = 10000;

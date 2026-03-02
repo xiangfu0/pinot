@@ -19,8 +19,6 @@
 package org.apache.pinot.plugin.stream.kafka30.server;
 
 import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ExecutionException;
 import kafka.testkit.KafkaClusterTestKit;
@@ -60,10 +58,6 @@ public class EmbeddedKafkaCluster implements StreamDataServerStartable {
   public void start() {
     try {
       int replicationFactor = Math.min(3, _brokerCount);
-      Map<String, String> serverProps = new HashMap<>();
-      serverProps.put("offsets.topic.replication.factor", String.valueOf(replicationFactor));
-      serverProps.put("transaction.state.log.replication.factor", String.valueOf(replicationFactor));
-      serverProps.put("transaction.state.log.min.isr", String.valueOf(Math.min(2, replicationFactor)));
 
       TestKitNodes nodes = new TestKitNodes.Builder()
           .setCombined(true)

@@ -67,11 +67,6 @@ public class ExactlyOnceKafkaRealtimeClusterIntegrationTest extends BaseRealtime
   }
 
   @Override
-  protected int getNumKafkaBrokers() {
-    return DEFAULT_TRANSACTION_NUM_KAFKA_BROKERS;
-  }
-
-  @Override
   protected long getDocsLoadedTimeoutMs() {
     return 1_200_000L;
   }
