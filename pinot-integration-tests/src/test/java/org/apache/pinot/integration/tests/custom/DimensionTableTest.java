@@ -34,6 +34,7 @@ import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
 import org.apache.pinot.spi.utils.builder.TableNameBuilder;
+import org.apache.pinot.util.TestUtils;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -116,17 +117,24 @@ public class DimensionTableTest extends CustomDataQueryClusterIntegrationTest {
 
     ClusterIntegrationTestUtils.buildSegmentsFromAvro(avroFiles, tableConfig, schema, 0, _segmentDir, _tarDir);
     uploadSegments(getTableName(), _tarDir);
-
-    // Dimension tables are loaded into memory; wait specifically for non-zero docs
-    waitForNonZeroDocsLoaded(60_000L, true, getTableName());
   }
 
   @Override
   protected void waitForAllDocsLoaded(long timeoutMs)
       throws Exception {
-    // Already waited in setUpTable; just verify
-    long count = getCurrentCountStarResult();
-    Assert.assertEquals(count, getCountStarResult(), "Dimension table doc count mismatch");
+    // Wait until the table is queryable via the broker HTTP endpoint (same path as test methods)
+    TestUtils.waitForCondition(aVoid -> {
+      try {
+        JsonNode node = postQuery("SELECT COUNT(*) FROM " + getTableName());
+        JsonNode exceptions = node.get("exceptions");
+        if (exceptions != null && !exceptions.isEmpty()) {
+          return false;
+        }
+        return node.get("resultTable").get("rows").get(0).get(0).asLong() == getCountStarResult();
+      } catch (Exception e) {
+        return false;
+      }
+    }, 100L, timeoutMs, "Failed to load " + getCountStarResult() + " documents for " + getTableName());
   }
 
   @Test
