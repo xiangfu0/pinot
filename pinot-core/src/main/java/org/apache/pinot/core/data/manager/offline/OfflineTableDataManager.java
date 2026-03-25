@@ -20,17 +20,27 @@ package org.apache.pinot.core.data.manager.offline;
 
 import com.google.common.base.Preconditions;
 import java.io.IOException;
+import java.util.List;
+import java.util.TreeMap;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pinot.common.metadata.segment.SegmentZKMetadata;
+import org.apache.pinot.common.metrics.ServerGauge;
 import org.apache.pinot.core.data.manager.BaseTableDataManager;
+import org.apache.pinot.core.data.manager.TabletSegmentDataManager;
 import org.apache.pinot.segment.local.data.manager.SegmentDataManager;
+import org.apache.pinot.segment.local.indexsegment.immutable.EmptyIndexSegment;
 import org.apache.pinot.segment.local.segment.index.loader.IndexLoadingConfig;
 import org.apache.pinot.segment.local.upsert.TableUpsertMetadataManagerFactory;
+import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.ImmutableSegment;
+import org.apache.pinot.segment.spi.index.metadata.ColumnMetadataImpl;
+import org.apache.pinot.segment.spi.index.metadata.SegmentMetadataImpl;
 import org.apache.pinot.spi.config.table.TableConfig;
+import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
+import org.apache.pinot.spi.utils.builder.TableNameBuilder;
 
 
 /**
@@ -81,6 +91,50 @@ public class OfflineTableDataManager extends BaseTableDataManager {
     } else {
       replaceSegmentIfCrcMismatch(segmentDataManager, zkMetadata, indexLoadingConfig);
     }
+  }
+
+  @Override
+  protected void addNewLakehouseTabletSegment(SegmentZKMetadata zkMetadata, IndexLoadingConfig indexLoadingConfig)
+      throws Exception {
+    Pair<TableConfig, Schema> tableConfigAndSchema = getCachedTableConfigAndSchema();
+    Schema schema = Preconditions.checkNotNull(tableConfigAndSchema.getRight(),
+        "Failed to find schema for tablet segment: %s in table: %s", zkMetadata.getSegmentName(), _tableNameWithType);
+    String rawTableName = TableNameBuilder.extractRawTableName(_tableNameWithType);
+    long creationTime = zkMetadata.getCreationTime() > 0 ? zkMetadata.getCreationTime() : System.currentTimeMillis();
+    SegmentMetadataImpl segmentMetadata = new SegmentMetadataImpl(rawTableName, zkMetadata.getSegmentName(), schema,
+        creationTime) {
+      private final TreeMap<String, ColumnMetadata> _columnMetadataMap = createColumnMetadataMap(schema);
+
+      @Override
+      public TreeMap<String, ColumnMetadata> getColumnMetadataMap() {
+        return _columnMetadataMap;
+      }
+    };
+    EmptyIndexSegment tabletSegment = new EmptyIndexSegment(segmentMetadata);
+    setZkOperationTimeIfAvailable(tabletSegment, zkMetadata);
+
+    ImmutableSegmentDataManager childSegmentDataManager = new ImmutableSegmentDataManager(tabletSegment);
+    TabletSegmentDataManager tabletSegmentDataManager =
+        new TabletSegmentDataManager(zkMetadata.getSegmentName(), List.of(childSegmentDataManager));
+    _serverMetrics.addValueToTableGauge(_tableNameWithType, ServerGauge.DOCUMENT_COUNT,
+        tabletSegment.getSegmentMetadata().getTotalDocs());
+    _serverMetrics.addValueToTableGauge(_tableNameWithType, ServerGauge.SEGMENT_COUNT, 1L);
+
+    SegmentDataManager oldSegmentManager = registerSegment(zkMetadata.getSegmentName(), tabletSegmentDataManager);
+    if (oldSegmentManager != null) {
+      oldSegmentManager.offload();
+      releaseSegment(oldSegmentManager);
+    }
+    _logger.info("Added lakehouse tablet segment: {} as a tablet container with {} child segment(s)",
+        zkMetadata.getSegmentName(), tabletSegmentDataManager.getSegments().size());
+  }
+
+  private static TreeMap<String, ColumnMetadata> createColumnMetadataMap(Schema schema) {
+    TreeMap<String, ColumnMetadata> columnMetadataMap = new TreeMap<>();
+    for (FieldSpec fieldSpec : schema.getAllFieldSpecs()) {
+      columnMetadataMap.put(fieldSpec.getName(), new ColumnMetadataImpl.Builder().setFieldSpec(fieldSpec).build());
+    }
+    return columnMetadataMap;
   }
 
   @Override

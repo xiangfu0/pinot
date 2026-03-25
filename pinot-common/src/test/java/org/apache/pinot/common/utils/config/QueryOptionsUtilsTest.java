@@ -70,6 +70,15 @@ public class QueryOptionsUtilsTest {
   }
 
   @Test
+  public void shouldResolveLakehouseSnapshotSelectorsCaseInsensitively() {
+    Map<String, String> resolved =
+        QueryOptionsUtils.resolveCaseInsensitiveOptions(Map.of("SNAPSHOTID", "12", "snapshotbranch", "main"));
+
+    assertEquals(resolved.get(SNAPSHOT_ID), "12");
+    assertEquals(resolved.get(SNAPSHOT_BRANCH), "main");
+  }
+
+  @Test
   public void shouldExtractTableSamplerOption() {
     assertEquals(QueryOptionsUtils.getTableSampler(Map.of(TABLE_SAMPLER, "firstOnly")), "firstOnly");
     assertNull(QueryOptionsUtils.getTableSampler(Map.of()));
@@ -192,6 +201,64 @@ public class QueryOptionsUtilsTest {
     Map<String, String> queryOptions = new HashMap<>();
     String actualHash = QueryOptionsUtils.getQueryHash(queryOptions);
     assertEquals(actualHash, "");
+  }
+
+  @Test
+  public void shouldParseLakehouseSnapshotSelectors() {
+    assertEquals(QueryOptionsUtils.getSnapshotId(Map.of(SNAPSHOT_ID, "123")), Long.valueOf(123));
+    assertEquals(QueryOptionsUtils.getSnapshotBranch(Map.of(SNAPSHOT_BRANCH, "main")), "main");
+    assertEquals(QueryOptionsUtils.getSnapshotTag(Map.of(SNAPSHOT_TAG, "prod")), "prod");
+    assertEquals(QueryOptionsUtils.getSnapshotAsOfTimestampMs(Map.of(SNAPSHOT_AS_OF_TIMESTAMP_MS, "0")),
+        Long.valueOf(0));
+
+    assertNull(QueryOptionsUtils.getSnapshotId(Map.of()));
+    assertNull(QueryOptionsUtils.getSnapshotBranch(Map.of(SNAPSHOT_BRANCH, "   ")));
+    assertNull(QueryOptionsUtils.getSnapshotTag(Map.of()));
+    assertNull(QueryOptionsUtils.getSnapshotAsOfTimestampMs(Map.of()));
+  }
+
+  @Test
+  public void shouldBuildCanonicalLakehouseSnapshotSelector() {
+    assertEquals(QueryOptionsUtils.getLakehouseSnapshotSelector(Map.of(SNAPSHOT_ID, "123")), "snapshotId=123");
+    assertEquals(QueryOptionsUtils.getLakehouseSnapshotSelector(Map.of(SNAPSHOT_BRANCH, "main")),
+        "snapshotBranch=main");
+    assertEquals(QueryOptionsUtils.getLakehouseSnapshotSelector(Map.of(SNAPSHOT_TAG, "prod")), "snapshotTag=prod");
+    assertEquals(QueryOptionsUtils.getLakehouseSnapshotSelector(Map.of(SNAPSHOT_AS_OF_TIMESTAMP_MS, "99")),
+        "snapshotAsOfTimestampMs=99");
+    assertNull(QueryOptionsUtils.getLakehouseSnapshotSelector(Map.of()));
+    assertNull(QueryOptionsUtils.getLakehouseSnapshotSelector(null));
+  }
+
+  @Test
+  public void shouldValidateMutuallyExclusiveLakehouseSnapshotSelectors() {
+    QueryOptionsUtils.validateMutuallyExclusiveSnapshotSelectors(Map.of());
+    QueryOptionsUtils.validateMutuallyExclusiveSnapshotSelectors(Map.of(SNAPSHOT_TAG, "prod"));
+    QueryOptionsUtils.validateMutuallyExclusiveSnapshotSelectors(Map.of(SNAPSHOT_BRANCH, "  "));
+
+    try {
+      QueryOptionsUtils.validateMutuallyExclusiveSnapshotSelectors(Map.of(SNAPSHOT_ID, "1", SNAPSHOT_TAG, "prod"));
+      fail("Expected mutually exclusive selector validation to fail");
+    } catch (IllegalArgumentException e) {
+      assertEquals(e.getMessage(),
+          "Only one lakehouse snapshot selector can be set in query options. Found: [snapshotId, snapshotTag]");
+    }
+  }
+
+  @Test
+  public void shouldRejectInvalidLakehouseSnapshotSelectorValues() {
+    try {
+      QueryOptionsUtils.getSnapshotId(Map.of(SNAPSHOT_ID, "0"));
+      fail("Expected snapshotId parsing to fail");
+    } catch (IllegalArgumentException e) {
+      assertEquals(e.getMessage(), SNAPSHOT_ID + " must be a number between 1 and 2^63-1, got: 0");
+    }
+
+    try {
+      QueryOptionsUtils.getSnapshotAsOfTimestampMs(Map.of(SNAPSHOT_AS_OF_TIMESTAMP_MS, "-1"));
+      fail("Expected snapshotAsOfTimestampMs parsing to fail");
+    } catch (IllegalArgumentException e) {
+      assertEquals(e.getMessage(), SNAPSHOT_AS_OF_TIMESTAMP_MS + " must be a number between 0 and 2^63-1, got: -1");
+    }
   }
 
   private static Object getValue(Map<String, String> map, String key) {

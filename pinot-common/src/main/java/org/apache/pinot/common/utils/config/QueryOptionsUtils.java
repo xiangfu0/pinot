@@ -459,6 +459,77 @@ public class QueryOptionsUtils {
     return Boolean.parseBoolean(queryOptions.get(QueryOptionKey.IGNORE_MISSING_SEGMENTS));
   }
 
+  @Nullable
+  public static Long getSnapshotId(Map<String, String> queryOptions) {
+    String snapshotId = queryOptions.get(QueryOptionKey.SNAPSHOT_ID);
+    return checkedParseLongPositive(QueryOptionKey.SNAPSHOT_ID, snapshotId);
+  }
+
+  @Nullable
+  public static String getSnapshotBranch(Map<String, String> queryOptions) {
+    return StringUtils.trimToNull(queryOptions.get(QueryOptionKey.SNAPSHOT_BRANCH));
+  }
+
+  @Nullable
+  public static String getSnapshotTag(Map<String, String> queryOptions) {
+    return StringUtils.trimToNull(queryOptions.get(QueryOptionKey.SNAPSHOT_TAG));
+  }
+
+  @Nullable
+  public static Long getSnapshotAsOfTimestampMs(Map<String, String> queryOptions) {
+    String asOfTimestampMs = queryOptions.get(QueryOptionKey.SNAPSHOT_AS_OF_TIMESTAMP_MS);
+    return checkedParseLong(QueryOptionKey.SNAPSHOT_AS_OF_TIMESTAMP_MS, asOfTimestampMs, 0);
+  }
+
+  @Nullable
+  public static String getLakehouseSnapshotSelector(@Nullable Map<String, String> queryOptions) {
+    if (queryOptions == null || queryOptions.isEmpty()) {
+      return null;
+    }
+
+    Long snapshotId = getSnapshotId(queryOptions);
+    if (snapshotId != null) {
+      return QueryOptionKey.SNAPSHOT_ID + "=" + snapshotId;
+    }
+
+    String snapshotBranch = getSnapshotBranch(queryOptions);
+    if (snapshotBranch != null) {
+      return QueryOptionKey.SNAPSHOT_BRANCH + "=" + snapshotBranch;
+    }
+
+    String snapshotTag = getSnapshotTag(queryOptions);
+    if (snapshotTag != null) {
+      return QueryOptionKey.SNAPSHOT_TAG + "=" + snapshotTag;
+    }
+
+    Long snapshotAsOfTimestampMs = getSnapshotAsOfTimestampMs(queryOptions);
+    if (snapshotAsOfTimestampMs != null) {
+      return QueryOptionKey.SNAPSHOT_AS_OF_TIMESTAMP_MS + "=" + snapshotAsOfTimestampMs;
+    }
+
+    return null;
+  }
+
+  public static void validateMutuallyExclusiveSnapshotSelectors(Map<String, String> queryOptions) {
+    List<String> selectors = new ArrayList<>(4);
+    if (getSnapshotId(queryOptions) != null) {
+      selectors.add(QueryOptionKey.SNAPSHOT_ID);
+    }
+    if (getSnapshotBranch(queryOptions) != null) {
+      selectors.add(QueryOptionKey.SNAPSHOT_BRANCH);
+    }
+    if (getSnapshotTag(queryOptions) != null) {
+      selectors.add(QueryOptionKey.SNAPSHOT_TAG);
+    }
+    if (getSnapshotAsOfTimestampMs(queryOptions) != null) {
+      selectors.add(QueryOptionKey.SNAPSHOT_AS_OF_TIMESTAMP_MS);
+    }
+    if (selectors.size() > 1) {
+      throw new IllegalArgumentException(
+          "Only one lakehouse snapshot selector can be set in query options. Found: " + selectors);
+    }
+  }
+
   public static boolean isSecondaryWorkload(Map<String, String> queryOptions) {
     return Boolean.parseBoolean(queryOptions.get(QueryOptionKey.IS_SECONDARY_WORKLOAD));
   }

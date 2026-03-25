@@ -19,6 +19,7 @@
 package org.apache.pinot.controller.api.resources;
 
 import javax.annotation.Nullable;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.controller.ControllerConf;
 import org.apache.pinot.controller.helix.core.PinotHelixResourceManager;
 import org.apache.pinot.controller.helix.core.minion.PinotTaskManager;
@@ -27,6 +28,11 @@ import org.apache.pinot.controller.util.TaskConfigUtils;
 import org.apache.pinot.segment.local.utils.TableConfigUtils;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableType;
+import org.apache.pinot.spi.config.table.lakehouse.IcebergCatalogConfig;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseConfig;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseMode;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseTabletConfig;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseWriteMode;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.utils.builder.TableNameBuilder;
 
@@ -56,6 +62,7 @@ public final class TableConfigValidationUtils {
   public static void validateTableConfig(TableConfig tableConfig, Schema schema,
       @Nullable String typesToSkip, PinotHelixResourceManager resourceManager,
       ControllerConf controllerConf, @Nullable PinotTaskManager taskManager) {
+    validateLakehouseNativeConfig(tableConfig);
     TableConfigUtils.validate(tableConfig, schema, typesToSkip);
     TableConfigUtils.validateTableName(tableConfig);
     TableConfigUtils.ensureMinReplicas(tableConfig, controllerConf.getDefaultTableMinReplicas());
@@ -65,6 +72,66 @@ public final class TableConfigValidationUtils {
     validateInstanceAssignment(resourceManager, tableConfig);
     resourceManager.validateTableTenantConfig(tableConfig);
     resourceManager.validateTableTaskMinionInstanceTagConfig(tableConfig);
+  }
+
+  /**
+   * Validates the Phase 1 lakehouse-native constraints that do not require controller state.
+   */
+  public static void validateLakehouseNativeConfig(TableConfig tableConfig) {
+    LakehouseConfig lakehouseConfig = tableConfig.getLakehouseConfig();
+    if (lakehouseConfig == null || !lakehouseConfig.isEnabled()) {
+      return;
+    }
+
+    String tableNameWithType = tableConfig.getTableName();
+    if (tableConfig.getTableType() != TableType.OFFLINE) {
+      throw new IllegalStateException(
+          "Phase 1 lakehouse-native validation failed for table " + tableNameWithType
+              + ": only OFFLINE tables are supported for now");
+    }
+
+    if (lakehouseConfig.getMode() != LakehouseMode.ICEBERG_NATIVE) {
+      throw new IllegalStateException(
+          "Phase 1 lakehouse-native validation failed for table " + tableNameWithType
+              + ": lakehouseConfig.mode must be ICEBERG_NATIVE");
+    }
+
+    IcebergCatalogConfig catalogConfig = lakehouseConfig.getCatalogConfig();
+    if (catalogConfig == null) {
+      throw new IllegalStateException(
+          "Phase 1 lakehouse-native validation failed for table " + tableNameWithType
+              + ": lakehouseConfig.catalogConfig is required");
+    }
+    if (StringUtils.isBlank(catalogConfig.getTableIdentifier())) {
+      throw new IllegalStateException(
+          "Phase 1 lakehouse-native validation failed for table " + tableNameWithType
+              + ": lakehouseConfig.catalogConfig.tableIdentifier is required");
+    }
+
+    if (lakehouseConfig.getWriteMode() != LakehouseWriteMode.DISABLED) {
+      throw new IllegalStateException(
+          "Phase 1 lakehouse-native validation failed for table " + tableNameWithType
+              + ": lakehouseConfig.writeMode must remain DISABLED");
+    }
+
+    LakehouseTabletConfig tabletConfig = lakehouseConfig.getTabletConfig();
+    if (tabletConfig != null) {
+      if (tabletConfig.getTargetFilesPerTablet() <= 0) {
+        throw new IllegalStateException(
+            "Phase 1 lakehouse-native validation failed for table " + tableNameWithType
+                + ": lakehouseConfig.tabletConfig.targetFilesPerTablet must be positive");
+      }
+      if (tabletConfig.getTargetBytesPerTablet() <= 0) {
+        throw new IllegalStateException(
+            "Phase 1 lakehouse-native validation failed for table " + tableNameWithType
+                + ": lakehouseConfig.tabletConfig.targetBytesPerTablet must be positive");
+      }
+      if (tabletConfig.getMaxEnvelopeBytes() <= 0) {
+        throw new IllegalStateException(
+            "Phase 1 lakehouse-native validation failed for table " + tableNameWithType
+                + ": lakehouseConfig.tabletConfig.maxEnvelopeBytes must be positive");
+      }
+    }
   }
 
   private static void checkHybridTableConfig(PinotHelixResourceManager resourceManager, TableConfig tableConfig) {

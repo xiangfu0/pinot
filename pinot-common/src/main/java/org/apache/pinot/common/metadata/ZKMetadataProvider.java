@@ -53,6 +53,7 @@ import org.apache.pinot.spi.config.user.UserConfig;
 import org.apache.pinot.spi.config.workload.QueryWorkloadConfig;
 import org.apache.pinot.spi.data.LogicalTableConfig;
 import org.apache.pinot.spi.data.Schema;
+import org.apache.pinot.spi.lakehouse.TabletMetadataEnvelope;
 import org.apache.pinot.spi.utils.CommonConstants;
 import org.apache.pinot.spi.utils.CommonConstants.ZkPaths;
 import org.apache.pinot.spi.utils.JsonUtils;
@@ -86,6 +87,7 @@ public class ZKMetadataProvider {
   private static final String PROPERTYSTORE_MINION_TASK_METADATA_PREFIX = "/MINION_TASK_METADATA";
   private static final String PROPERTYSTORE_QUERY_WORKLOAD_CONFIGS_PREFIX = "/CONFIGS/QUERYWORKLOAD";
   private static final String PROPERTYSTORE_TASK_LOCK_SUFFIX = "-Lock";
+  private static final String TABLET_METADATA_ENVELOPE_JSON_KEY = "tabletMetadataEnvelopeJson";
 
   public static void setUserConfig(ZkHelixPropertyStore<ZNRecord> propertyStore, String username, ZNRecord znRecord) {
     propertyStore.set(constructPropertyStorePathForUserConfig(username), znRecord, AccessOption.PERSISTENT);
@@ -332,6 +334,14 @@ public class ZKMetadataProvider {
     return StringUtil.join("/", ZkPaths.LOGICAL_TABLE_PARENT_PATH, tableName);
   }
 
+  public static String constructPropertyStorePathForTabletMetadata(String tableNameWithType) {
+    return StringUtil.join("/", ZkPaths.LAKEHOUSE_TABLET_METADATA_PARENT_PATH, tableNameWithType);
+  }
+
+  public static String constructPropertyStorePathForTabletMetadata(String tableNameWithType, String tabletId) {
+    return StringUtil.join("/", ZkPaths.LAKEHOUSE_TABLET_METADATA_PARENT_PATH, tableNameWithType, tabletId);
+  }
+
   public static boolean isSegmentExisted(ZkHelixPropertyStore<ZNRecord> propertyStore, String resourceNameForResource,
       String segmentName) {
     return propertyStore.exists(constructPropertyStorePathForSegment(resourceNameForResource, segmentName),
@@ -359,6 +369,50 @@ public class ZKMetadataProvider {
     if (propertyStore.exists(propertyStorePath, AccessOption.PERSISTENT)) {
       propertyStore.remove(propertyStorePath, AccessOption.PERSISTENT);
     }
+  }
+
+  /**
+   * Creates a new znode for {@link TabletMetadataEnvelope}. This call is atomic. If there are concurrent calls trying
+   * to create the same znode, only one of them would succeed.
+   */
+  public static boolean createTabletMetadataEnvelope(ZkHelixPropertyStore<ZNRecord> propertyStore,
+      TabletMetadataEnvelope tabletMetadataEnvelope) {
+    try {
+      return propertyStore.create(
+          constructPropertyStorePathForTabletMetadata(tabletMetadataEnvelope.getTableNameWithType(),
+              tabletMetadataEnvelope.getTabletId()), toZNRecord(tabletMetadataEnvelope), AccessOption.PERSISTENT);
+    } catch (Exception e) {
+      LOGGER.error("Caught exception while creating tablet metadata envelope for table: {}, tablet: {}",
+          tabletMetadataEnvelope.getTableNameWithType(), tabletMetadataEnvelope.getTabletId(), e);
+      return false;
+    }
+  }
+
+  public static boolean setTabletMetadataEnvelope(ZkHelixPropertyStore<ZNRecord> propertyStore,
+      TabletMetadataEnvelope tabletMetadataEnvelope, int expectedVersion) {
+    try {
+      return propertyStore.set(
+          constructPropertyStorePathForTabletMetadata(tabletMetadataEnvelope.getTableNameWithType(),
+              tabletMetadataEnvelope.getTabletId()), toZNRecord(tabletMetadataEnvelope), expectedVersion,
+          AccessOption.PERSISTENT);
+    } catch (ZkBadVersionException e) {
+      return false;
+    } catch (Exception e) {
+      LOGGER.error("Caught exception while updating tablet metadata envelope for table: {}, tablet: {}",
+          tabletMetadataEnvelope.getTableNameWithType(), tabletMetadataEnvelope.getTabletId(), e);
+      return false;
+    }
+  }
+
+  public static boolean setTabletMetadataEnvelope(ZkHelixPropertyStore<ZNRecord> propertyStore,
+      TabletMetadataEnvelope tabletMetadataEnvelope) {
+    return setTabletMetadataEnvelope(propertyStore, tabletMetadataEnvelope, -1);
+  }
+
+  public static boolean removeTabletMetadataEnvelope(ZkHelixPropertyStore<ZNRecord> propertyStore,
+      String tableNameWithType, String tabletId) {
+    return propertyStore.remove(constructPropertyStorePathForTabletMetadata(tableNameWithType, tabletId),
+        AccessOption.PERSISTENT);
   }
 
   /**
@@ -432,6 +486,45 @@ public class ZKMetadataProvider {
     ZNRecord znRecord = propertyStore.get(constructPropertyStorePathForSegment(tableNameWithType, segmentName), null,
         AccessOption.PERSISTENT);
     return znRecord != null ? new SegmentZKMetadata(znRecord) : null;
+  }
+
+  @Nullable
+  public static TabletMetadataEnvelope getTabletMetadataEnvelope(ZkHelixPropertyStore<ZNRecord> propertyStore,
+      String tableNameWithType, String tabletId) {
+    return toTabletMetadataEnvelope(
+        propertyStore.get(constructPropertyStorePathForTabletMetadata(tableNameWithType, tabletId), null,
+            AccessOption.PERSISTENT));
+  }
+
+  public static List<String> getTabletMetadataEnvelopeIds(ZkHelixPropertyStore<ZNRecord> propertyStore,
+      String tableNameWithType) {
+    List<String> tabletIds =
+        propertyStore.getChildNames(constructPropertyStorePathForTabletMetadata(tableNameWithType),
+            AccessOption.PERSISTENT);
+    return tabletIds != null ? tabletIds : Collections.emptyList();
+  }
+
+  public static List<TabletMetadataEnvelope> getTabletMetadataEnvelopes(ZkHelixPropertyStore<ZNRecord> propertyStore,
+      String tableNameWithType) {
+    List<String> tabletIds = getTabletMetadataEnvelopeIds(propertyStore, tableNameWithType);
+    if (tabletIds.isEmpty()) {
+      return Collections.emptyList();
+    }
+
+    List<TabletMetadataEnvelope> tabletMetadataEnvelopes = new ArrayList<>(tabletIds.size());
+    for (String tabletId : tabletIds) {
+      TabletMetadataEnvelope tabletMetadataEnvelope =
+          getTabletMetadataEnvelope(propertyStore, tableNameWithType, tabletId);
+      if (tabletMetadataEnvelope != null) {
+        tabletMetadataEnvelopes.add(tabletMetadataEnvelope);
+      }
+    }
+    if (tabletMetadataEnvelopes.size() < tabletIds.size()) {
+      LOGGER.warn("Failed to read {}/{} tablet metadata envelopes under path: {}",
+          tabletIds.size() - tabletMetadataEnvelopes.size(), tabletIds.size(),
+          constructPropertyStorePathForTabletMetadata(tableNameWithType));
+    }
+    return tabletMetadataEnvelopes;
   }
 
   @Nullable
@@ -638,6 +731,28 @@ public class ZKMetadataProvider {
       return applyDecorator ? TableConfigDecoratorRegistry.applyDecorator(processedTableConfig) : tableConfig;
     } catch (Exception e) {
       LOGGER.error("Caught exception while creating table config from ZNRecord: {}", znRecord.getId(), e);
+      return null;
+    }
+  }
+
+  private static ZNRecord toZNRecord(TabletMetadataEnvelope tabletMetadataEnvelope)
+      throws JsonProcessingException {
+    ZNRecord znRecord = new ZNRecord(tabletMetadataEnvelope.getTabletId());
+    znRecord.setSimpleField(TABLET_METADATA_ENVELOPE_JSON_KEY, JsonUtils.objectToString(tabletMetadataEnvelope));
+    return znRecord;
+  }
+
+  @Nullable
+  private static TabletMetadataEnvelope toTabletMetadataEnvelope(@Nullable ZNRecord znRecord) {
+    if (znRecord == null) {
+      return null;
+    }
+    try {
+      String tabletMetadataEnvelopeJson = znRecord.getSimpleField(TABLET_METADATA_ENVELOPE_JSON_KEY);
+      return tabletMetadataEnvelopeJson != null
+          ? JsonUtils.stringToObject(tabletMetadataEnvelopeJson, TabletMetadataEnvelope.class) : null;
+    } catch (IOException e) {
+      LOGGER.error("Caught exception while creating tablet metadata envelope from ZNRecord: {}", znRecord.getId(), e);
       return null;
     }
   }

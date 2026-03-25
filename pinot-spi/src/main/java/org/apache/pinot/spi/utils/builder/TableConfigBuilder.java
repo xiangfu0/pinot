@@ -51,6 +51,7 @@ import org.apache.pinot.spi.config.table.assignment.InstanceAssignmentConfig;
 import org.apache.pinot.spi.config.table.assignment.InstancePartitionsType;
 import org.apache.pinot.spi.config.table.assignment.SegmentAssignmentConfig;
 import org.apache.pinot.spi.config.table.ingestion.IngestionConfig;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseConfig;
 import org.apache.pinot.spi.config.table.sampler.TableSamplerConfig;
 
 
@@ -141,6 +142,7 @@ public class TableConfigBuilder {
   private JsonNode _tierOverwrites;
   private Map<String, JsonIndexConfig> _jsonIndexConfigs;
   private MultiColumnTextIndexConfig _multiColumnTextIndexConfig;
+  private LakehouseConfig _lakehouseConfig;
   private String _description;
   private List<String> _tags;
 
@@ -457,6 +459,11 @@ public class TableConfigBuilder {
     return this;
   }
 
+  public TableConfigBuilder setLakehouseConfig(LakehouseConfig lakehouseConfig) {
+    _lakehouseConfig = lakehouseConfig;
+    return this;
+  }
+
   public TableConfigBuilder setTierConfigList(List<TierConfig> tierConfigList) {
     _tierConfigList = tierConfigList;
     return this;
@@ -559,6 +566,7 @@ public class TableConfigBuilder {
             _customConfig, _quotaConfig, _taskConfig, _routingConfig, _queryConfig, _instanceAssignmentConfigMap,
             _fieldConfigList, _upsertConfig, _dedupConfig, _dimensionTableConfig, _ingestionConfig, _tierConfigList,
             _isDimTable, _tunerConfigList, _instancePartitionsMap, _segmentAssignmentConfigMap, _tableSamplers);
+    tableConfig.setLakehouseConfig(_lakehouseConfig);
     tableConfig.setDescription(_description);
     tableConfig.setTags(_tags);
     return tableConfig;

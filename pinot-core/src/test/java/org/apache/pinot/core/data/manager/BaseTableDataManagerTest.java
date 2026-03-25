@@ -79,7 +79,9 @@ import org.testng.annotations.Test;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.testng.Assert.*;
 
@@ -584,6 +586,37 @@ public class BaseTableDataManagerTest {
   }
 
   @Test
+  public void testAddNewLakehouseSegmentRegistersTabletContainer()
+      throws Exception {
+    SegmentZKMetadata zkMetadata = createLakehouseTabletSegmentMetadata();
+    OfflineTableDataManager tableDataManager = spy(createTableManager());
+
+    tableDataManager.addNewOnlineSegment(zkMetadata, new IndexLoadingConfig());
+
+    assertTrue(tableDataManager.hasSegment(SEGMENT_NAME));
+    SegmentDataManager segmentDataManager = tableDataManager.acquireSegment(SEGMENT_NAME);
+    assertNotNull(segmentDataManager);
+    try {
+      assertTrue(segmentDataManager instanceof TabletSegmentDataManager);
+      assertTrue(segmentDataManager.hasMultiSegments());
+      assertEquals(segmentDataManager.getSegmentName(), SEGMENT_NAME);
+      assertEquals(segmentDataManager.getSegments().size(), 1);
+      ImmutableSegment tabletSegment = (ImmutableSegment) segmentDataManager.getSegments().get(0);
+      assertEquals(tabletSegment.getSegmentName(), SEGMENT_NAME);
+      assertNotNull(tabletSegment.getDataSource(STRING_COLUMN, SCHEMA));
+      SegmentMetadataImpl segmentMetadata = (SegmentMetadataImpl) tabletSegment.getSegmentMetadata();
+      assertEquals(segmentMetadata.getZkCreationTime(), 123L);
+    } finally {
+      tableDataManager.releaseSegment(segmentDataManager);
+    }
+
+    verify(tableDataManager, never()).tryLoadExistingSegment(any(SegmentZKMetadata.class),
+        any(IndexLoadingConfig.class));
+    verify(tableDataManager, never()).downloadAndLoadSegment(any(SegmentZKMetadata.class),
+        any(IndexLoadingConfig.class));
+  }
+
+  @Test
   public void testAddSegmentUseLocalCopyNewTier()
       throws Exception {
     File indexDir = createSegment(SegmentVersion.v3, 5);
@@ -947,6 +980,15 @@ public class BaseTableDataManagerTest {
     File indexDir = createSegment(segmentVersion, numRows);
     return makeRawSegment(indexDir,
         new File(TEMP_DIR, SEGMENT_NAME + TarCompressionUtils.TAR_COMPRESSED_FILE_EXTENSION), true);
+  }
+
+  private static SegmentZKMetadata createLakehouseTabletSegmentMetadata() {
+    SegmentZKMetadata zkMetadata = new SegmentZKMetadata(SEGMENT_NAME);
+    zkMetadata.setCreationTime(123L);
+    zkMetadata.setCustomMap(Map.of(CommonConstants.Segment.Lakehouse.SEGMENT_KIND,
+        CommonConstants.Segment.Lakehouse.TABLET_SEGMENT_KIND, CommonConstants.Segment.Lakehouse.TABLET_ID,
+        SEGMENT_NAME, CommonConstants.Segment.Lakehouse.MANIFEST_URI, "file:///tmp/" + SEGMENT_NAME + ".json"));
+    return zkMetadata;
   }
 
   private static SegmentZKMetadata makeRawSegment(File indexDir, File rawSegmentFile, boolean deleteIndexDir)

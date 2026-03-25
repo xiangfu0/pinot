@@ -82,6 +82,10 @@ public enum ControllerMeter implements AbstractMetrics.Meter {
   AUDIT_REQUEST_FAILURES("failures", true),
   AUDIT_RESPONSE_FAILURES("failures", true),
   AUDIT_REQUEST_PAYLOAD_TRUNCATED("count", true),
+  LAKEHOUSE_SNAPSHOT_REFRESH_SUCCESS("refreshes", false),
+  LAKEHOUSE_SNAPSHOT_REFRESH_FAILURE("refreshes", false),
+  LAKEHOUSE_MANIFEST_PUBLISH_SUCCESS("manifests", false),
+  LAKEHOUSE_MANIFEST_PUBLISH_FAILURE("manifests", false),
   // Upsert compact merge task metrics
   UPSERT_COMPACT_MERGE_SEGMENT_SKIPPED_CONSENSUS_FAILURE("UpsertCompactMergeSegmentsSkipped", false);
 

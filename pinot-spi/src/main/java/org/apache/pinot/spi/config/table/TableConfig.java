@@ -36,6 +36,7 @@ import org.apache.pinot.spi.config.table.assignment.InstanceAssignmentConfig;
 import org.apache.pinot.spi.config.table.assignment.InstancePartitionsType;
 import org.apache.pinot.spi.config.table.assignment.SegmentAssignmentConfig;
 import org.apache.pinot.spi.config.table.ingestion.IngestionConfig;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseConfig;
 import org.apache.pinot.spi.config.table.sampler.TableSamplerConfig;
 import org.apache.pinot.spi.utils.builder.TableNameBuilder;
 
@@ -65,6 +66,7 @@ public class TableConfig extends BaseJsonConfig {
   public static final String TUNER_CONFIG_LIST_KEY = "tunerConfigs";
   public static final String TIER_OVERWRITES_KEY = "tierOverwrites";
   public static final String TABLE_SAMPLERS_KEY = "tableSamplers";
+  public static final String LAKEHOUSE_CONFIG_KEY = "lakehouseConfig";
   public static final String DESCRIPTION_KEY = "description";
   public static final String TAGS_KEY = "tags";
 
@@ -133,6 +135,9 @@ public class TableConfig extends BaseJsonConfig {
 
   @JsonPropertyDescription(value = "Configs for table samplers")
   private List<TableSamplerConfig> _tableSamplers;
+
+  @JsonPropertyDescription(value = "Config for lakehouse-native storage and execution")
+  private LakehouseConfig _lakehouseConfig;
 
   @JsonCreator
   public TableConfig(@JsonProperty(value = TABLE_NAME_KEY, required = true) String tableName,
@@ -217,6 +222,7 @@ public class TableConfig extends BaseJsonConfig {
     _instancePartitionsMap = tableConfig.getInstancePartitionsMap();
     _segmentAssignmentConfigMap = tableConfig.getSegmentAssignmentConfigMap();
     _tableSamplers = sanitizeAndValidateTableSamplers(tableConfig.getTableSamplers());
+    _lakehouseConfig = tableConfig.getLakehouseConfig();
     _description = tableConfig.getDescription();
     _tags = tableConfig.getTags();
   }
@@ -308,6 +314,16 @@ public class TableConfig extends BaseJsonConfig {
 
   public void setTableSamplers(@Nullable List<TableSamplerConfig> tableSamplers) {
     _tableSamplers = sanitizeAndValidateTableSamplers(tableSamplers);
+  }
+
+  @JsonProperty(LAKEHOUSE_CONFIG_KEY)
+  @Nullable
+  public LakehouseConfig getLakehouseConfig() {
+    return _lakehouseConfig;
+  }
+
+  public void setLakehouseConfig(@Nullable LakehouseConfig lakehouseConfig) {
+    _lakehouseConfig = lakehouseConfig;
   }
 
   @Nullable

@@ -47,6 +47,18 @@ public interface TableExecutionInfo {
   boolean hasRealtime();
 
   /**
+   * Returns whether the table execution includes tablet-backed segments.
+   * <p>
+   * This is a lightweight marker for server-side execution plumbing. It does not change query semantics on its own,
+   * but it allows the runtime to preserve extension points for tablet-native execution paths.
+   *
+   * @return true if the execution includes tablet-backed segments, false otherwise
+   */
+  default boolean hasTabletBackedSegments() {
+    return false;
+  }
+
+  /**
    * Get the index segments for a table referenced in the query.
    * @return A list of index segments for the table
    */

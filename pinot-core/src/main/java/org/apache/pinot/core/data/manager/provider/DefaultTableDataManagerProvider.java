@@ -29,6 +29,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.helix.HelixManager;
 import org.apache.pinot.common.restlet.resources.SegmentErrorInfo;
 import org.apache.pinot.core.data.manager.offline.DimensionTableDataManager;
+import org.apache.pinot.core.data.manager.offline.LakehouseOfflineTableDataManager;
 import org.apache.pinot.core.data.manager.offline.OfflineTableDataManager;
 import org.apache.pinot.core.data.manager.realtime.RealtimeTableDataManager;
 import org.apache.pinot.segment.local.data.manager.TableDataManager;
@@ -82,6 +83,8 @@ public class DefaultTableDataManagerProvider implements TableDataManagerProvider
       case OFFLINE:
         if (tableConfig.isDimTable()) {
           tableDataManager = DimensionTableDataManager.createInstanceByTableName(tableConfig.getTableName());
+        } else if (isLakehouseOfflineTable(tableConfig)) {
+          tableDataManager = new LakehouseOfflineTableDataManager();
         } else {
           tableDataManager = new OfflineTableDataManager();
         }
@@ -103,5 +106,9 @@ public class DefaultTableDataManagerProvider implements TableDataManagerProvider
         segmentReloadSemaphore, segmentReloadRefreshExecutor, segmentPreloadExecutor, errorCache,
         _segmentOperationsThrottlerSet, enableAsyncSegmentRefresh, reloadJobStatusCache);
     return tableDataManager;
+  }
+
+  private static boolean isLakehouseOfflineTable(TableConfig tableConfig) {
+    return tableConfig.getLakehouseConfig() != null && tableConfig.getLakehouseConfig().isEnabled();
   }
 }

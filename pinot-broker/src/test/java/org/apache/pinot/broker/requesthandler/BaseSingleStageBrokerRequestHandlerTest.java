@@ -40,13 +40,20 @@ import org.apache.pinot.core.routing.TableRouteInfo;
 import org.apache.pinot.core.transport.ServerInstance;
 import org.apache.pinot.spi.accounting.ThreadAccountantUtils;
 import org.apache.pinot.spi.config.table.TableConfig;
+import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.config.table.TenantConfig;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseConfig;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseMode;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.eventlistener.query.BrokerQueryEventListenerFactory;
 import org.apache.pinot.spi.exception.BadQueryRequestException;
+import org.apache.pinot.spi.exception.QueryErrorCode;
+import org.apache.pinot.spi.trace.DefaultRequestContext;
 import org.apache.pinot.spi.trace.LoggerConstants;
 import org.apache.pinot.spi.trace.RequestContext;
 import org.apache.pinot.spi.utils.CommonConstants;
+import org.apache.pinot.spi.utils.JsonUtils;
+import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
 import org.apache.pinot.sql.parsers.CalciteSqlParser;
 import org.apache.pinot.util.TestUtils;
 import org.mockito.Mockito;
@@ -59,6 +66,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.testng.Assert.assertEquals;
 
 
 public class BaseSingleStageBrokerRequestHandlerTest {
@@ -272,5 +280,165 @@ public class BaseSingleStageBrokerRequestHandlerTest {
         pinotQuery.getQueryOptions().get(CommonConstants.Broker.Request.QueryOptionKey.QUERY_HASH),
         queryHash,
         "QueryOptions should contain the correct queryHash value");
+  }
+
+  @Test
+  public void testRejectsConflictingLakehouseSnapshotSelectors() throws Exception {
+    TableCache tableCache = mock(TableCache.class);
+    QueryQuotaManager queryQuotaManager = mock(QueryQuotaManager.class);
+    when(queryQuotaManager.acquire(anyString())).thenReturn(true);
+    when(queryQuotaManager.acquireDatabase(anyString())).thenReturn(true);
+    when(queryQuotaManager.acquireApplication(anyString())).thenReturn(true);
+
+    BrokerRoutingManager routingManager = mock(BrokerRoutingManager.class);
+    PinotConfiguration config = new PinotConfiguration();
+    BrokerQueryEventListenerFactory.init(config);
+    BaseSingleStageBrokerRequestHandler requestHandler =
+        new BaseSingleStageBrokerRequestHandler(config, "testBrokerId", new BrokerRequestIdGenerator(), routingManager,
+            new AllowAllAccessControlFactory(), queryQuotaManager, tableCache,
+            ThreadAccountantUtils.getNoOpAccountant(), null) {
+          @Override
+          public void start() {
+          }
+
+          @Override
+          public void shutDown() {
+          }
+
+          @Override
+          protected BrokerResponseNative processBrokerRequest(long requestId, BrokerRequest originalBrokerRequest,
+              BrokerRequest serverBrokerRequest, TableRouteInfo route, long timeoutMs, ServerStats serverStats,
+              RequestContext requestContext) {
+            Assert.fail("Snapshot selector validation should fail before broker execution");
+            return null;
+          }
+        };
+
+    DefaultRequestContext requestContext = new DefaultRequestContext();
+    requestContext.setRequestArrivalTimeMillis(System.currentTimeMillis());
+    com.fasterxml.jackson.databind.node.ObjectNode request = JsonUtils.newObjectNode();
+    request.put(CommonConstants.Broker.Request.SQL, "SELECT * FROM myTable");
+    request.put(CommonConstants.Broker.Request.QUERY_OPTIONS, "snapshotId=1;snapshotTag=prod");
+
+    BrokerResponseNative response =
+        (BrokerResponseNative) requestHandler.handleRequest(request, null, null, requestContext, null);
+    assertEquals(response.getExceptionsSize(), 1);
+    assertEquals(response.getExceptions().get(0).getErrorCode(), QueryErrorCode.QUERY_VALIDATION.getId());
+    Assert.assertTrue(response.getExceptions().get(0).getMessage().contains(
+        "Only one lakehouse snapshot selector can be set in query options. Found: [snapshotId, snapshotTag]"));
+  }
+
+  @Test
+  public void testCountUniqueLakehouseTabletsAcrossReplicas() {
+    ServerInstance serverA = new ServerInstance(new InstanceConfig("serverA_8098"));
+    ServerInstance serverB = new ServerInstance(new InstanceConfig("serverB_8098"));
+    Map<ServerInstance, SegmentsToQuery> routingTable = Map.of(serverA,
+        new SegmentsToQuery(List.of("tablet-1", "tablet-2"), List.of("tablet-optional")),
+        serverB, new SegmentsToQuery(List.of("tablet-2", "tablet-3"), List.of("tablet-optional", "tablet-4")));
+
+    assertEquals(BaseSingleStageBrokerRequestHandler.collectUniqueSegments(routingTable, false),
+        Set.of("tablet-1", "tablet-2", "tablet-3"));
+    assertEquals(BaseSingleStageBrokerRequestHandler.collectUniqueSegments(routingTable, true),
+        Set.of("tablet-4", "tablet-optional"));
+    assertEquals(BaseSingleStageBrokerRequestHandler.countUniqueSegments(routingTable, false), 3);
+    assertEquals(BaseSingleStageBrokerRequestHandler.countUniqueSegments(routingTable, true), 2);
+  }
+
+  @Test
+  public void testBuildLakehouseTraceInfo() {
+    Map<String, String> traceInfo = BaseSingleStageBrokerRequestHandler.buildLakehouseTraceInfo(
+        Map.of(CommonConstants.Broker.Request.QueryOptionKey.SNAPSHOT_BRANCH, "main"),
+        Set.of("tablet-1", "tablet-2"), Set.of("tablet-optional-1", "tablet-optional-2"), 3, 30);
+
+    assertEquals(traceInfo.get("lakehouseSnapshotSelector"), "snapshotBranch=main");
+    assertEquals(traceInfo.get("lakehouseRoutedTabletCount"), "2");
+    assertEquals(traceInfo.get("lakehouseOptionalTabletCount"), "2");
+    assertEquals(traceInfo.get("lakehousePrunedTabletCount"), "3");
+    assertEquals(traceInfo.get("lakehouseTabletPruningPercent"), "30");
+    assertEquals(traceInfo.get("lakehouseRoutedTabletIds"), "tablet-1,tablet-2");
+  }
+
+  @Test
+  public void testBuildLakehouseTraceInfoTruncatesTabletIds() {
+    Map<String, String> traceInfo = BaseSingleStageBrokerRequestHandler.buildLakehouseTraceInfo(
+        Map.of(), Set.of("tablet-0", "tablet-1", "tablet-2", "tablet-3", "tablet-4", "tablet-5", "tablet-6",
+            "tablet-7", "tablet-8"), Set.of(), 0, 0);
+
+    assertEquals(traceInfo.get("lakehouseRoutedTabletCount"), "9");
+    assertEquals(traceInfo.get("lakehouseRoutedTabletIds"),
+        "tablet-0,tablet-1,tablet-2,tablet-3,tablet-4,tablet-5,tablet-6,tablet-7,...(1 more)");
+  }
+
+  @Test
+  public void testCalculateLakehouseTabletPruningPercent() {
+    assertEquals(BaseSingleStageBrokerRequestHandler.calculateLakehouseTabletPruningPercent(0, 0), 0);
+    assertEquals(BaseSingleStageBrokerRequestHandler.calculateLakehouseTabletPruningPercent(6, 0), 0);
+    assertEquals(BaseSingleStageBrokerRequestHandler.calculateLakehouseTabletPruningPercent(6, 2), 25);
+  }
+
+  @Test
+  public void testLakehouseRoutingStatsAddedToBrokerResponseTraceInfo()
+      throws Exception {
+    String tableName = "lakehouse_OFFLINE";
+    TableCache tableCache = mock(TableCache.class);
+    QueryQuotaManager queryQuotaManager = mock(QueryQuotaManager.class);
+    when(queryQuotaManager.acquire(anyString())).thenReturn(true);
+    when(queryQuotaManager.acquireDatabase(anyString())).thenReturn(true);
+    when(queryQuotaManager.acquireApplication(anyString())).thenReturn(true);
+    when(tableCache.getActualTableName(anyString())).thenReturn(tableName);
+    when(tableCache.getColumnNameMap("lakehouse")).thenReturn(Map.of("col", "col"));
+    when(tableCache.getTableConfig(tableName)).thenReturn(buildLakehouseTableConfig(tableName));
+
+    BrokerRoutingManager routingManager = mock(BrokerRoutingManager.class);
+    when(routingManager.routingExists(tableName)).thenReturn(true);
+    when(routingManager.getQueryTimeoutMs(tableName)).thenReturn(10_000L);
+    RoutingTable routingTable = mock(RoutingTable.class);
+    ServerInstance serverA = new ServerInstance(new InstanceConfig("serverA_8098"));
+    ServerInstance serverB = new ServerInstance(new InstanceConfig("serverB_8098"));
+    when(routingTable.getServerInstanceToSegmentsMap()).thenReturn(
+        Map.of(serverA, new SegmentsToQuery(List.of("tablet-1", "tablet-2"), List.of("tablet-3")), serverB,
+            new SegmentsToQuery(List.of("tablet-2"), List.of("tablet-4"))));
+    when(routingTable.getUnavailableSegments()).thenReturn(List.of());
+    when(routingTable.getNumPrunedSegments()).thenReturn(2);
+    when(routingManager.getRoutingTable(any(), Mockito.anyLong())).thenReturn(routingTable);
+
+    BrokerMetrics.register(mock(BrokerMetrics.class));
+    PinotConfiguration config = new PinotConfiguration();
+    BrokerQueryEventListenerFactory.init(config);
+    BaseSingleStageBrokerRequestHandler requestHandler =
+        new BaseSingleStageBrokerRequestHandler(config, "testBrokerId", new BrokerRequestIdGenerator(), routingManager,
+            new AllowAllAccessControlFactory(), queryQuotaManager, tableCache,
+            ThreadAccountantUtils.getNoOpAccountant(), null) {
+          @Override
+          public void start() {
+          }
+
+          @Override
+          public void shutDown() {
+          }
+
+          @Override
+          protected BrokerResponseNative processBrokerRequest(long requestId, BrokerRequest originalBrokerRequest,
+              BrokerRequest serverBrokerRequest, TableRouteInfo route, long timeoutMs, ServerStats serverStats,
+              RequestContext requestContext) {
+            return BrokerResponseNative.empty();
+          }
+        };
+
+    BrokerResponseNative response =
+        (BrokerResponseNative) requestHandler.handleRequest("SELECT col FROM lakehouse WHERE col = 1");
+    assertEquals(response.getTraceInfo().get("lakehouseRoutedTabletCount"), "2");
+    assertEquals(response.getTraceInfo().get("lakehouseOptionalTabletCount"), "2");
+    assertEquals(response.getTraceInfo().get("lakehousePrunedTabletCount"), "2");
+    assertEquals(response.getTraceInfo().get("lakehouseTabletPruningPercent"), "50");
+    assertEquals(response.getTraceInfo().get("lakehouseRoutedTabletIds"), "tablet-1,tablet-2");
+  }
+
+  private static TableConfig buildLakehouseTableConfig(String tableNameWithType) {
+    LakehouseConfig lakehouseConfig = new LakehouseConfig();
+    lakehouseConfig.setEnabled(true);
+    lakehouseConfig.setMode(LakehouseMode.ICEBERG_NATIVE);
+    return new TableConfigBuilder(TableType.OFFLINE).setTableName(tableNameWithType).setBrokerTenant("DefaultTenant")
+        .setServerTenant("DefaultTenant_OFFLINE").setLakehouseConfig(lakehouseConfig).build();
   }
 }

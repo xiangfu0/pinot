@@ -43,7 +43,9 @@ import org.apache.pinot.segment.spi.IndexSegment;
 import org.apache.pinot.segment.spi.MutableSegment;
 import org.apache.pinot.segment.spi.SegmentContext;
 import org.apache.pinot.segment.spi.SegmentMetadata;
+import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.UpsertConfig;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseConfig;
 import org.apache.pinot.spi.data.Schema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,10 +77,8 @@ public class SingleTableExecutionInfo implements TableExecutionInfo {
 
     if (!tableDataManager.isUpsertEnabled()) {
       segmentDataManagers = tableDataManager.acquireSegments(segmentsToQuery, optionalSegments, notAcquiredSegments);
-      indexSegments = new ArrayList<>(segmentDataManagers.size());
-      for (SegmentDataManager segmentDataManager : segmentDataManagers) {
-        indexSegments.add(segmentDataManager.getSegment());
-      }
+      boolean useMultiSegments = isLakehouseEnabled(tableDataManager);
+      indexSegments = flattenIndexSegments(segmentDataManagers, useMultiSegments);
     } else {
       TableUpsertMetadataManager tumm = tableDataManager.getTableUpsertMetadataManager();
       Preconditions.checkState(tumm != null,
@@ -101,14 +101,7 @@ public class SingleTableExecutionInfo implements TableExecutionInfo {
           }
         }
         segmentDataManagers = tableDataManager.acquireSegments(segmentsToQuery, optionalSegments, notAcquiredSegments);
-        indexSegments = new ArrayList<>(segmentDataManagers.size());
-        for (SegmentDataManager segmentDataManager : segmentDataManagers) {
-          if (segmentDataManager.hasMultiSegments()) {
-            indexSegments.addAll(segmentDataManager.getSegments());
-          } else {
-            indexSegments.add(segmentDataManager.getSegment());
-          }
-        }
+        indexSegments = flattenIndexSegments(segmentDataManagers, true);
         if (isUsingConsistencyMode) {
           List<SegmentContext> segmentContexts =
               tableDataManager.getSegmentContexts(indexSegments, queryContext.getQueryOptions());
@@ -140,6 +133,25 @@ public class SingleTableExecutionInfo implements TableExecutionInfo {
     _notAcquiredSegments = notAcquiredSegments;
   }
 
+  private static boolean isLakehouseEnabled(TableDataManager tableDataManager) {
+    TableConfig tableConfig = tableDataManager.getCachedTableConfigAndSchema().getLeft();
+    LakehouseConfig lakehouseConfig = tableConfig != null ? tableConfig.getLakehouseConfig() : null;
+    return lakehouseConfig != null && lakehouseConfig.isEnabled();
+  }
+
+  private static List<IndexSegment> flattenIndexSegments(List<SegmentDataManager> segmentDataManagers,
+      boolean useMultiSegments) {
+    List<IndexSegment> indexSegments = new ArrayList<>(segmentDataManagers.size());
+    for (SegmentDataManager segmentDataManager : segmentDataManagers) {
+      if (useMultiSegments && segmentDataManager.hasMultiSegments()) {
+        indexSegments.addAll(segmentDataManager.getSegments());
+      } else {
+        indexSegments.add(segmentDataManager.getSegment());
+      }
+    }
+    return indexSegments;
+  }
+
   public TableDataManager getTableDataManager() {
     return _tableDataManager;
   }
@@ -152,6 +164,12 @@ public class SingleTableExecutionInfo implements TableExecutionInfo {
   @Override
   public boolean hasRealtime() {
     return _tableDataManager instanceof RealtimeTableDataManager;
+  }
+
+  @Override
+  public boolean hasTabletBackedSegments() {
+    return isLakehouseEnabled(_tableDataManager) && _segmentDataManagers.stream()
+        .anyMatch(SegmentDataManager::hasMultiSegments);
   }
 
   @Override

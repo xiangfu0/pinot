@@ -46,6 +46,7 @@ import org.apache.pinot.spi.config.table.assignment.InstanceAssignmentConfig;
 import org.apache.pinot.spi.config.table.assignment.InstancePartitionsType;
 import org.apache.pinot.spi.config.table.assignment.SegmentAssignmentConfig;
 import org.apache.pinot.spi.config.table.ingestion.IngestionConfig;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseConfig;
 import org.apache.pinot.spi.config.table.sampler.TableSamplerConfig;
 import org.apache.pinot.spi.utils.JsonUtils;
 
@@ -185,6 +186,12 @@ public class TableConfigSerDeUtils {
       });
     }
 
+    LakehouseConfig lakehouseConfig = null;
+    String lakehouseConfigString = simpleFields.get(TableConfig.LAKEHOUSE_CONFIG_KEY);
+    if (lakehouseConfigString != null) {
+      lakehouseConfig = JsonUtils.stringToObject(lakehouseConfigString, LakehouseConfig.class);
+    }
+
     String description = simpleFields.get(TableConfig.DESCRIPTION_KEY);
 
     List<String> tags = null;
@@ -199,6 +206,7 @@ public class TableConfigSerDeUtils {
             quotaConfig, taskConfig, routingConfig, queryConfig, instanceAssignmentConfigMap, fieldConfigList,
             upsertConfig, dedupConfig, dimensionTableConfig, ingestionConfig, tierConfigList, isDimTable,
             tunerConfigList, instancePartitionsMap, segmentAssignmentConfigMap, tableSamplerConfigs);
+    tableConfig.setLakehouseConfig(lakehouseConfig);
     tableConfig.setDescription(description);
     tableConfig.setTags(tags);
     return tableConfig;
@@ -279,6 +287,10 @@ public class TableConfigSerDeUtils {
     List<TableSamplerConfig> tableSamplerConfigs = tableConfig.getTableSamplers();
     if (tableSamplerConfigs != null) {
       simpleFields.put(TableConfig.TABLE_SAMPLERS_KEY, JsonUtils.objectToString(tableSamplerConfigs));
+    }
+    LakehouseConfig lakehouseConfig = tableConfig.getLakehouseConfig();
+    if (lakehouseConfig != null) {
+      simpleFields.put(TableConfig.LAKEHOUSE_CONFIG_KEY, JsonUtils.objectToString(lakehouseConfig));
     }
     String description = tableConfig.getDescription();
     if (StringUtils.isNotBlank(description)) {

@@ -166,6 +166,19 @@ public class LogicalTableExecutionInfoTest {
     assertSame(selectedSegmentsInfo.getSelectedSegmentContexts().get(0).getIndexSegment(), seg1);
   }
 
+  @Test
+  public void testHasTabletBackedSegmentsAggregatesAcrossTables() {
+    SingleTableExecutionInfo tableInfo1 = mockSingleTableExecutionInfo(List.of(mockIndexSegment(10)), null);
+    SingleTableExecutionInfo tableInfo2 = mockSingleTableExecutionInfo(List.of(mockIndexSegment(10)), null);
+    when(tableInfo1.hasTabletBackedSegments()).thenReturn(false);
+    when(tableInfo2.hasTabletBackedSegments()).thenReturn(true);
+
+    LogicalTableExecutionInfo logicalTableExecutionInfo =
+        new LogicalTableExecutionInfo(List.of(tableInfo1, tableInfo2));
+
+    assertTrue(logicalTableExecutionInfo.hasTabletBackedSegments());
+  }
+
   /**
    * Verifies that selected segment contexts are in the same order as the pruned segment list.
    */

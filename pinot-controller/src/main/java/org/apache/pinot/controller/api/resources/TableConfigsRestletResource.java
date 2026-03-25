@@ -521,6 +521,7 @@ public class TableConfigsRestletResource {
             TableNameBuilder.extractRawTableName(offlineTableConfig.getTableName()), database);
         Preconditions.checkState(offlineRawTableName.equals(rawTableName),
             "Name in 'offline' table config: %s must be equal to 'tableName': %s", offlineRawTableName, rawTableName);
+        TableConfigValidationUtils.validateLakehouseNativeConfig(offlineTableConfig);
         TableConfigUtils.validateTableName(offlineTableConfig);
         TableConfigUtils.validate(offlineTableConfig, schema, typesToSkip);
         if (!skipTypes.contains(TableConfigUtils.ValidationType.ALL)) {
@@ -541,6 +542,7 @@ public class TableConfigsRestletResource {
             TableNameBuilder.extractRawTableName(realtimeTableConfig.getTableName()), database);
         Preconditions.checkState(realtimeRawTableName.equals(rawTableName),
             "Name in 'realtime' table config: %s must be equal to 'tableName': %s", realtimeRawTableName, rawTableName);
+        TableConfigValidationUtils.validateLakehouseNativeConfig(realtimeTableConfig);
         TableConfigUtils.validateTableName(realtimeTableConfig);
         TableConfigUtils.validate(realtimeTableConfig, schema, typesToSkip);
         if (!skipTypes.contains(TableConfigUtils.ValidationType.ALL)) {

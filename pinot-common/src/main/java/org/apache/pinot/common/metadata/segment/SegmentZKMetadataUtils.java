@@ -31,6 +31,7 @@ import org.apache.pinot.segment.spi.creator.SegmentVersion;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.segment.spi.partition.metadata.ColumnPartitionMetadata;
 import org.apache.pinot.spi.data.DateTimeFieldSpec;
+import org.apache.pinot.spi.lakehouse.TabletMetadataEnvelope;
 import org.apache.pinot.spi.utils.CommonConstants;
 import org.apache.pinot.spi.utils.builder.TableNameBuilder;
 import org.joda.time.Interval;
@@ -82,6 +83,68 @@ public class SegmentZKMetadataUtils {
       long updatedEndTime = dateTimeFieldSpec.getFormatSpec().fromFormatToMillis(endTimeString);
       segmentZKMetadata.setEndTime(updatedEndTime);
     }
+  }
+
+  /**
+   * Creates a small SegmentZKMetadata stub for a lakehouse tablet.
+   *
+   * <p>The tablet manifest remains outside ZooKeeper. Pinot only stores the manifest pointer and coarse routing
+   * metadata in the custom-map so the existing OFFLINE assignment machinery can route `tabletId` partitions without
+   * copying file-level Iceberg metadata into Helix/ZK.</p>
+   */
+  public static SegmentZKMetadata createLakehouseTabletSegmentZKMetadata(
+      TabletMetadataEnvelope tabletMetadataEnvelope) {
+    SegmentZKMetadata segmentZKMetadata = new SegmentZKMetadata(tabletMetadataEnvelope.getTabletId());
+    long nowMs = System.currentTimeMillis();
+    long manifestVersion =
+        tabletMetadataEnvelope.getManifestVersion() != null ? tabletMetadataEnvelope.getManifestVersion()
+            : tabletMetadataEnvelope.getSnapshotId();
+    segmentZKMetadata.setCreationTime(nowMs);
+    segmentZKMetadata.setPushTime(nowMs);
+
+    Long minTimeMillis = tabletMetadataEnvelope.getMinTimeMillis();
+    Long maxTimeMillis = tabletMetadataEnvelope.getMaxTimeMillis();
+    if (minTimeMillis != null && maxTimeMillis != null) {
+      segmentZKMetadata.setStartTime(minTimeMillis);
+      segmentZKMetadata.setEndTime(maxTimeMillis);
+      segmentZKMetadata.setRawStartTime(Long.toString(minTimeMillis));
+      segmentZKMetadata.setRawEndTime(Long.toString(maxTimeMillis));
+      segmentZKMetadata.setTimeUnit(TimeUnit.MILLISECONDS);
+    } else {
+      segmentZKMetadata.setStartTime(-1L);
+      segmentZKMetadata.setEndTime(-1L);
+      segmentZKMetadata.setTimeUnit(null);
+    }
+
+    segmentZKMetadata.setTotalDocs(Math.max(0L, nullToZero(tabletMetadataEnvelope.getApproximateRowCount())));
+    segmentZKMetadata.setSizeInBytes(Math.max(0L, nullToZero(tabletMetadataEnvelope.getApproximateSizeBytes())));
+    segmentZKMetadata.setCrc(Math.max(0L, manifestVersion));
+    segmentZKMetadata.setDataCrc(Math.max(0L, manifestVersion));
+
+    Map<String, String> customMap = new HashMap<>();
+    customMap.put(CommonConstants.Segment.Lakehouse.SEGMENT_KIND,
+        CommonConstants.Segment.Lakehouse.TABLET_SEGMENT_KIND);
+    customMap.put(CommonConstants.Segment.Lakehouse.TABLET_ID, tabletMetadataEnvelope.getTabletId());
+    customMap.put(CommonConstants.Segment.Lakehouse.MANIFEST_URI, tabletMetadataEnvelope.getManifestUri());
+    customMap.put(CommonConstants.Segment.Lakehouse.MANIFEST_VERSION,
+        Long.toString(manifestVersion));
+    customMap.put(CommonConstants.Segment.Lakehouse.SNAPSHOT_ID,
+        Long.toString(tabletMetadataEnvelope.getSnapshotId()));
+    customMap.put(CommonConstants.Segment.Lakehouse.SPEC_ID, Integer.toString(tabletMetadataEnvelope.getSpecId()));
+    segmentZKMetadata.setCustomMap(customMap);
+    return segmentZKMetadata;
+  }
+
+  public static boolean isLakehouseTabletSegment(@Nullable SegmentZKMetadata segmentZKMetadata) {
+    Map<String, String> customMap = segmentZKMetadata != null ? segmentZKMetadata.getCustomMap() : null;
+    return customMap != null && CommonConstants.Segment.Lakehouse.TABLET_SEGMENT_KIND.equals(
+        customMap.get(CommonConstants.Segment.Lakehouse.SEGMENT_KIND));
+  }
+
+  @Nullable
+  public static String getLakehouseManifestUri(@Nullable SegmentZKMetadata segmentZKMetadata) {
+    Map<String, String> customMap = segmentZKMetadata != null ? segmentZKMetadata.getCustomMap() : null;
+    return customMap != null ? customMap.get(CommonConstants.Segment.Lakehouse.MANIFEST_URI) : null;
   }
 
   private static void updateSegmentZKMetadata(String tableNameWithType, SegmentZKMetadata segmentZKMetadata,
@@ -200,5 +263,9 @@ public class SegmentZKMetadataUtils {
   private static boolean isValidTimeMetadata(ColumnMetadata timeColumnMetadata) {
     return timeColumnMetadata != null && timeColumnMetadata.getMinValue() != null
         && timeColumnMetadata.getMaxValue() != null && !timeColumnMetadata.isMinMaxValueInvalid();
+  }
+
+  private static long nullToZero(@Nullable Long value) {
+    return value != null ? value : 0L;
   }
 }

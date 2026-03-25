@@ -80,6 +80,11 @@ public class LogicalTableExecutionInfo implements TableExecutionInfo {
         .anyMatch(tableExecutionInfo -> tableExecutionInfo.getTableDataManager() instanceof RealtimeTableDataManager);
   }
 
+  @Override
+  public boolean hasTabletBackedSegments() {
+    return _tableExecutionInfos.stream().anyMatch(TableExecutionInfo::hasTabletBackedSegments);
+  }
+
   /**
    * Returns selected segments and contexts for the logical table. Unlike single-table execution, this collects
    * all segments from every physical table, runs segment pruning once on the combined list (cross-table prune),

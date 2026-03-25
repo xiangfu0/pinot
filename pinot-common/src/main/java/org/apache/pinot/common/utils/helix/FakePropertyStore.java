@@ -88,6 +88,19 @@ public class FakePropertyStore extends ZkHelixPropertyStore<ZNRecord> {
   }
 
   @Override
+  public boolean create(String path, ZNRecord record, int options) {
+    if (_contents.containsKey(path)) {
+      return false;
+    }
+    try {
+      setContentAndStat(path, record);
+      return true;
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  @Override
   public boolean remove(String path, int options) {
     List<String> descendants = _contents.keySet().stream().filter(e -> e.startsWith(path)).collect(Collectors.toList());
     descendants.forEach(e -> _contents.remove(e));

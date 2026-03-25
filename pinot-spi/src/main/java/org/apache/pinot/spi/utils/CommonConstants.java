@@ -810,6 +810,10 @@ public class CommonConstants {
         // Ignore server-side segment missing errors and proceed without marking the query as failed.
         // When set to true, SERVER_SEGMENT_MISSING exceptions are filtered out on the broker.
         public static final String IGNORE_MISSING_SEGMENTS = "ignoreMissingSegments";
+        public static final String SNAPSHOT_ID = "snapshotId";
+        public static final String SNAPSHOT_BRANCH = "snapshotBranch";
+        public static final String SNAPSHOT_TAG = "snapshotTag";
+        public static final String SNAPSHOT_AS_OF_TIMESTAMP_MS = "snapshotAsOfTimestampMs";
 
         // Indicates that a query belongs to a secondary workload when using the BinaryWorkloadScheduler. The
         // BinaryWorkloadScheduler divides queries into two workloads, primary and secondary. Primary workloads are
@@ -1840,6 +1844,22 @@ public class CommonConstants {
     public static final String SIZE_IN_BYTES = "segment.size.in.bytes";
 
     /**
+     * Segment custom-map keys used for lakehouse-native tablet stubs.
+     */
+    public static class Lakehouse {
+      private Lakehouse() {
+      }
+
+      public static final String SEGMENT_KIND = "segment.lakehouse.kind";
+      public static final String TABLET_SEGMENT_KIND = "tablet";
+      public static final String TABLET_ID = "segment.lakehouse.tabletId";
+      public static final String MANIFEST_URI = "segment.lakehouse.manifestUri";
+      public static final String MANIFEST_VERSION = "segment.lakehouse.manifestVersion";
+      public static final String SNAPSHOT_ID = "segment.lakehouse.snapshotId";
+      public static final String SPEC_ID = "segment.lakehouse.specId";
+    }
+
+    /**
      * This field is used for parallel push protection to lock the segment globally.
      * We put the segment upload start timestamp so that if the previous push failed without unlock the segment, the
      * next upload won't be blocked forever.
@@ -2176,6 +2196,8 @@ public class CommonConstants {
    * ZK paths used by Pinot.
    */
   public static class ZkPaths {
+    public static final String LAKEHOUSE_TABLET_METADATA_PARENT_PATH = "/LAKEHOUSE/TABLET_METADATA";
+    public static final String LAKEHOUSE_TABLET_METADATA_PATH_PREFIX = "/LAKEHOUSE/TABLET_METADATA/";
     public static final String LOGICAL_TABLE_PARENT_PATH = "/LOGICAL/TABLE";
     public static final String LOGICAL_TABLE_PATH_PREFIX = "/LOGICAL/TABLE/";
     public static final String TABLE_CONFIG_PATH_PREFIX = "/CONFIGS/TABLE/";

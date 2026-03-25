@@ -33,6 +33,10 @@ import org.apache.pinot.spi.config.table.SegmentsValidationAndRetentionConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.config.table.TunerConfig;
+import org.apache.pinot.spi.config.table.lakehouse.IcebergCatalogConfig;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseConfig;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseMode;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseWriteMode;
 import org.apache.pinot.spi.data.DateTimeFieldSpec;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.LogicalTableConfig;
@@ -95,8 +99,25 @@ public class TableConfigsRestletResourceTest extends ControllerTest {
         Lists.newArrayList(new TunerConfig("realtimeAutoIndexTuner", null))).build();
   }
 
+  private TableConfig createLakehouseRealtimeTableConfig(String tableName) {
+    return getBaseTableConfigBuilder(tableName, TableType.REALTIME)
+        .setLakehouseConfig(enabledLakehouseConfig())
+        .build();
+  }
+
   private TableConfig createOfflineDimTableConfig(String tableName) {
     return getBaseTableConfigBuilder(tableName, TableType.OFFLINE).setIsDimTable(true).build();
+  }
+
+  private static LakehouseConfig enabledLakehouseConfig() {
+    LakehouseConfig lakehouseConfig = new LakehouseConfig();
+    lakehouseConfig.setEnabled(true);
+    lakehouseConfig.setMode(LakehouseMode.ICEBERG_NATIVE);
+    IcebergCatalogConfig catalogConfig = new IcebergCatalogConfig();
+    catalogConfig.setTableIdentifier("db.table");
+    lakehouseConfig.setCatalogConfig(catalogConfig);
+    lakehouseConfig.setWriteMode(LakehouseWriteMode.DISABLED);
+    return lakehouseConfig;
   }
 
   @Test
@@ -783,6 +804,22 @@ public class TableConfigsRestletResourceTest extends ControllerTest {
 
     // Verify response contains the table config
     Assert.assertTrue(response.contains(tableName));
+  }
+
+  @Test
+  public void testValidateConfigRejectsPhase1LakehouseRealtimeTable()
+      throws IOException {
+    String validateConfigUrl = DEFAULT_INSTANCE.getControllerRequestURLBuilder().forTableConfigsValidate();
+
+    String tableName = "testLakehouseValidate";
+    TableConfig realtimeTableConfig = createLakehouseRealtimeTableConfig(tableName);
+    TableConfigs tableConfigs =
+        new TableConfigs(tableName, createDummySchema(tableName), null, realtimeTableConfig);
+
+    IOException exception = Assert.expectThrows(IOException.class,
+        () -> sendPostRequest(validateConfigUrl, tableConfigs.toPrettyJsonString()));
+    Assert.assertTrue(exception.getMessage().contains("Phase 1 lakehouse-native validation failed"));
+    Assert.assertTrue(exception.getMessage().contains("only OFFLINE tables are supported"));
   }
 
   @AfterClass

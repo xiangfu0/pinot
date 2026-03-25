@@ -150,6 +150,12 @@ public enum ControllerGauge implements AbstractMetrics.Gauge {
   // Number of in progress segment uploads
   SEGMENT_UPLOADS_IN_PROGRESS("segmentUploadsInProgress", true),
 
+  // Number of published lakehouse tablets for a table
+  LAKEHOUSE_TABLET_COUNT("tablets", false),
+
+  // Number of stale lakehouse manifests left behind after a refresh
+  LAKEHOUSE_STALE_MANIFEST_COUNT("manifests", false),
+
   // Records lag at a partition level
   MAX_RECORDS_LAG("maxRecordsLag", false),
 

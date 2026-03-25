@@ -106,6 +106,8 @@ public class QueryContext {
   private long _endTimeMs;
   // Whether to enable prefetch for the query
   private boolean _enablePrefetch;
+  // Whether the execution includes tablet-backed segments
+  private boolean _hasTabletBackedSegments;
   // Whether to skip upsert for the query
   private boolean _skipUpsert;
   // Whether to skip star-tree index for the query
@@ -375,6 +377,14 @@ public class QueryContext {
 
   public void setEnablePrefetch(boolean enablePrefetch) {
     _enablePrefetch = enablePrefetch;
+  }
+
+  public boolean hasTabletBackedSegments() {
+    return _hasTabletBackedSegments;
+  }
+
+  public void setHasTabletBackedSegments(boolean hasTabletBackedSegments) {
+    _hasTabletBackedSegments = hasTabletBackedSegments;
   }
 
   public boolean isSkipUpsert() {

@@ -2925,6 +2925,10 @@ public class PinotHelixResourceManager {
     return ZKMetadataProvider.removeSegmentZKMetadata(_propertyStore, tableNameWithType, segmentName);
   }
 
+  public void removeSegmentsFromIdealState(String tableNameWithType, List<String> segmentNames) {
+    HelixHelper.removeSegmentsFromIdealState(_helixZkManager, tableNameWithType, segmentNames);
+  }
+
   /**
    * Delete the table on servers by sending table deletion messages.
    */

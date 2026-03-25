@@ -859,6 +859,7 @@ public class PinotTableRestletResource {
       if (schema == null) {
         throw new SchemaNotFoundException("Failed to find schema for table: " + tableNameWithType);
       }
+      TableConfigValidationUtils.validateLakehouseNativeConfig(tableConfig);
       TableConfigUtils.validate(tableConfig, schema, typesToSkip);
       TaskConfigUtils.validateTaskConfigs(tableConfig, schema, _pinotTaskManager, typesToSkip);
       ObjectNode tableConfigValidateStr = JsonUtils.newObjectNode();

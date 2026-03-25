@@ -54,6 +54,7 @@ import org.apache.helix.zookeeper.datamodel.ZNRecord;
 import org.apache.pinot.common.auth.AuthProviderUtils;
 import org.apache.pinot.common.metadata.ZKMetadataProvider;
 import org.apache.pinot.common.metadata.segment.SegmentZKMetadata;
+import org.apache.pinot.common.metadata.segment.SegmentZKMetadataUtils;
 import org.apache.pinot.common.metrics.ServerGauge;
 import org.apache.pinot.common.metrics.ServerMeter;
 import org.apache.pinot.common.metrics.ServerMetrics;
@@ -432,9 +433,27 @@ public abstract class BaseTableDataManager implements TableDataManager {
   public void addNewOnlineSegment(SegmentZKMetadata zkMetadata, IndexLoadingConfig indexLoadingConfig)
       throws Exception {
     _logger.info("Adding new ONLINE segment: {}", zkMetadata.getSegmentName());
+    if (SegmentZKMetadataUtils.isLakehouseTabletSegment(zkMetadata)) {
+      addNewLakehouseTabletSegment(zkMetadata, indexLoadingConfig);
+      return;
+    }
     if (!tryLoadExistingSegment(zkMetadata, indexLoadingConfig)) {
       downloadAndLoadSegment(zkMetadata, indexLoadingConfig);
     }
+  }
+
+  /**
+   * Hook for lakehouse-native tablet loading.
+   *
+   * <p>Lakehouse tablet stubs are Helix-visible routing units, not Pinot segment tarballs. They therefore need a
+   * dedicated server-side load path instead of the legacy local-segment-or-deep-store flow. Subclasses can override
+   * this method to materialize tablet-backed execution state without affecting Pinot-native tables.</p>
+   */
+  protected void addNewLakehouseTabletSegment(SegmentZKMetadata zkMetadata, IndexLoadingConfig indexLoadingConfig)
+      throws Exception {
+    throw new UnsupportedOperationException(
+        String.format("Lakehouse tablet segment loading is not implemented for table: %s, segment: %s",
+            _tableNameWithType, zkMetadata.getSegmentName()));
   }
 
   /**

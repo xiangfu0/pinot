@@ -135,6 +135,10 @@ public class ServerQueryExecutorV1Impl implements QueryExecutor {
     LOGGER.info("Query executor shut down");
   }
 
+  static void setTabletBackedSegments(QueryContext queryContext, TableExecutionInfo executionInfo) {
+    queryContext.setHasTabletBackedSegments(executionInfo.hasTabletBackedSegments());
+  }
+
   @Override
   public InstanceResponseBlock execute(ServerQueryRequest queryRequest, ExecutorService executorService,
       @Nullable ResultsBlockStreamer streamer) {
@@ -205,6 +209,8 @@ public class ServerQueryExecutorV1Impl implements QueryExecutor {
       LOGGER.error("{} while processing requestId: {}", errorMessage, requestId);
       return instanceResponse;
     }
+
+    setTabletBackedSegments(queryContext, executionInfo);
 
     if (LOGGER.isDebugEnabled()) {
       LOGGER.debug("Processing requestId: {} with segmentsToQuery: {}, optionalSegments: {} and acquiredSegments: {}",

@@ -21,11 +21,13 @@ package org.apache.pinot.broker.requesthandler;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.common.annotations.VisibleForTesting;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -90,6 +92,8 @@ import org.apache.pinot.spi.accounting.ThreadAccountant;
 import org.apache.pinot.spi.auth.TableAuthorizationResult;
 import org.apache.pinot.spi.auth.broker.RequesterIdentity;
 import org.apache.pinot.spi.config.instance.InstanceType;
+import org.apache.pinot.spi.config.table.TableConfig;
+import org.apache.pinot.spi.data.LogicalTableConfig;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.exception.QueryErrorCode;
 import org.apache.pinot.spi.exception.QueryException;
@@ -354,6 +358,7 @@ public class MultiStageBrokerRequestHandler extends BaseBrokerRequestHandler {
         QueryEnvironment.CompiledQuery compiledQuery = compileQuery(requestId, query, sqlNodeAndOptions, requestContext,
             httpHeaders, queryTimer)) {
       validatePhysicalTablesWithMultiClusterRouting(compiledQuery.getTableNames(), compiledQuery.getOptions());
+      validateLakehouseTablesDoNotUseMultiStage(compiledQuery.getTableNames(), _tableCache);
       AtomicBoolean rlsFiltersApplied = new AtomicBoolean(false);
       checkAuthorization(requesterIdentity, requestContext, httpHeaders, compiledQuery, rlsFiltersApplied);
 
@@ -530,7 +535,7 @@ public class MultiStageBrokerRequestHandler extends BaseBrokerRequestHandler {
     QueryEnvironment.QueryPlannerResult queryPlanResult = callAsync(requestId, query.getTextQuery(),
         () -> query.explain(requestId, fragmentToPlanNode), timer);
     String plan = queryPlanResult.getExplainPlan();
-    Map<String, String> extraFields = queryPlanResult.getExtraFields();
+    Map<String, String> extraFields = buildExplainExtraFields(queryOptions, queryPlanResult.getExtraFields());
     return constructMultistageExplainPlan(query.getTextQuery(), plan, extraFields);
   }
 
@@ -789,6 +794,64 @@ public class MultiStageBrokerRequestHandler extends BaseBrokerRequestHandler {
       brokerResponse.setStageStats(JsonNodeFactory.instance.objectNode()
           .put("error", "Error encountered while collecting multi-stage stats - " + e));
     }
+  }
+
+  @VisibleForTesting
+  static void validateLakehouseTablesDoNotUseMultiStage(Set<String> tableNames, TableCache tableCache) {
+    if (tableNames == null || tableNames.isEmpty() || tableCache == null) {
+      return;
+    }
+    for (String tableName : tableNames) {
+      if (isLakehouseNativeTable(tableCache, tableName)) {
+        throw QueryErrorCode.QUERY_VALIDATION.asException(
+            "Lakehouse-native tables do not support the multi-stage query engine in Phase 1. "
+                + "Use single-stage execution instead.");
+      }
+    }
+  }
+
+  @VisibleForTesting
+  static boolean isLakehouseNativeTable(TableCache tableCache, String tableName) {
+    String actualTableName = BaseSingleStageBrokerRequestHandler.getActualTableName(tableName, tableCache);
+    if (isLakehouseEnabled(tableCache.getTableConfig(actualTableName))) {
+      return true;
+    }
+    LogicalTableConfig logicalTableConfig = tableCache.getLogicalTableConfig(actualTableName);
+    if (logicalTableConfig != null && logicalTableConfig.getPhysicalTableConfigMap() != null) {
+      for (String physicalTableName : logicalTableConfig.getPhysicalTableConfigMap().keySet()) {
+        String actualPhysicalTableName = BaseSingleStageBrokerRequestHandler.getActualTableName(physicalTableName,
+            tableCache);
+        if (isLakehouseEnabled(tableCache.getTableConfig(actualPhysicalTableName))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private static boolean isLakehouseEnabled(@Nullable TableConfig tableConfig) {
+    return tableConfig != null && tableConfig.getLakehouseConfig() != null
+        && tableConfig.getLakehouseConfig().isEnabled();
+  }
+
+  @VisibleForTesting
+  static Map<String, String> buildExplainExtraFields(Map<String, String> queryOptions,
+      Map<String, String> extraFields) {
+    Map<String, String> explainExtraFields = new LinkedHashMap<>();
+    if (extraFields != null && !extraFields.isEmpty()) {
+      explainExtraFields.putAll(extraFields);
+    }
+    String snapshotSelector = getLakehouseSnapshotSelector(queryOptions);
+    if (snapshotSelector != null) {
+      explainExtraFields.put("LAKEHOUSE_SNAPSHOT_SELECTOR", snapshotSelector);
+    }
+    return explainExtraFields;
+  }
+
+  @VisibleForTesting
+  @Nullable
+  static String getLakehouseSnapshotSelector(Map<String, String> queryOptions) {
+    return QueryOptionsUtils.getLakehouseSnapshotSelector(queryOptions);
   }
 
   private BrokerResponse constructMultistageExplainPlan(String sql, String plan, Map<String, String> extraFields) {

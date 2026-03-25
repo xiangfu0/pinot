@@ -20,19 +20,31 @@ package org.apache.pinot.controller.api.resources;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.InputStream;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
+import org.apache.pinot.controller.api.exception.ControllerApplicationException;
 import org.apache.pinot.controller.helix.core.PinotHelixResourceManager;
 import org.apache.pinot.controller.helix.core.WatermarkInductionResult;
 import org.apache.pinot.controller.helix.core.realtime.PinotLLCRealtimeSegmentManager;
+import org.apache.pinot.spi.config.table.TableConfig;
+import org.apache.pinot.spi.config.table.TableType;
+import org.apache.pinot.spi.config.table.lakehouse.IcebergCatalogConfig;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseConfig;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseMode;
+import org.apache.pinot.spi.config.table.lakehouse.LakehouseWriteMode;
 import org.apache.pinot.spi.stream.LongMsgOffset;
 import org.apache.pinot.spi.stream.StreamConfig;
 import org.apache.pinot.spi.stream.StreamMetadata;
 import org.apache.pinot.spi.utils.JsonUtils;
+import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
 import org.mockito.Mockito;
 import org.testng.annotations.Test;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertTrue;
+import static org.testng.Assert.fail;
 
 public class PinotTableRestletResourceTest {
 
@@ -99,5 +111,46 @@ public class PinotTableRestletResourceTest {
     assertEquals(((LongMsgOffset) streamMetadata1.getPartitionGroupMetadataList().get(0).getStartOffset()).getOffset(),
         200L);
     assertEquals(streamMetadata1.getPartitionGroupMetadataList().get(0).getSequenceNumber(), 5);
+  }
+
+  @Test
+  public void testValidateConfigRejectsPhase1LakehouseRealtimeTable()
+      throws Exception {
+    PinotTableRestletResource resource = new PinotTableRestletResource();
+    PinotHelixResourceManager pinotHelixResourceManager = Mockito.mock(PinotHelixResourceManager.class);
+    org.apache.pinot.spi.data.Schema schema = new org.apache.pinot.spi.data.Schema();
+    schema.setSchemaName("lakehouse");
+    Mockito.when(pinotHelixResourceManager.getTableSchema("lakehouse")).thenReturn(schema);
+    Mockito.when(pinotHelixResourceManager.getTableSchema("lakehouse_REALTIME")).thenReturn(schema);
+    resource._pinotHelixResourceManager = pinotHelixResourceManager;
+    resource._pinotTaskManager = Mockito.mock(org.apache.pinot.controller.helix.core.minion.PinotTaskManager.class);
+
+    Method validateConfigMethod =
+        PinotTableRestletResource.class.getDeclaredMethod("validateConfig", TableConfig.class, String.class);
+    validateConfigMethod.setAccessible(true);
+
+    TableConfig tableConfig = new TableConfigBuilder(TableType.REALTIME).setTableName("lakehouse")
+        .setLakehouseConfig(enabledLakehouseConfig())
+        .build();
+
+    try {
+      validateConfigMethod.invoke(resource, tableConfig, null);
+      fail("Expected lakehouse validation to fail");
+    } catch (InvocationTargetException e) {
+      assertTrue(e.getCause() instanceof ControllerApplicationException);
+      assertTrue(e.getCause().getMessage().contains("Phase 1 lakehouse-native validation failed"));
+      assertTrue(e.getCause().getMessage().contains("only OFFLINE tables are supported"));
+    }
+  }
+
+  private static LakehouseConfig enabledLakehouseConfig() {
+    LakehouseConfig lakehouseConfig = new LakehouseConfig();
+    lakehouseConfig.setEnabled(true);
+    lakehouseConfig.setMode(LakehouseMode.ICEBERG_NATIVE);
+    IcebergCatalogConfig catalogConfig = new IcebergCatalogConfig();
+    catalogConfig.setTableIdentifier("db.table");
+    lakehouseConfig.setCatalogConfig(catalogConfig);
+    lakehouseConfig.setWriteMode(LakehouseWriteMode.DISABLED);
+    return lakehouseConfig;
   }
 }

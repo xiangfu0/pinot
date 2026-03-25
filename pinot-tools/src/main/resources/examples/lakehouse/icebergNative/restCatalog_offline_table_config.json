@@ -1,0 +1,50 @@
+{
+  "tableName": "icebergRestCatalogLakehouse",
+  "tableType": "OFFLINE",
+  "segmentsConfig": {
+    "timeColumnName": "eventTime",
+    "timeType": "MILLISECONDS",
+    "segmentPushType": "APPEND",
+    "segmentAssignmentStrategy": "BalanceNumSegmentAssignmentStrategy",
+    "replication": "1"
+  },
+  "tenants": {},
+  "tableIndexConfig": {
+    "loadMode": "MMAP"
+  },
+  "metadata": {
+    "customConfigs": {}
+  },
+  "lakehouseConfig": {
+    "enabled": true,
+    "mode": "ICEBERG_NATIVE",
+    "catalogConfig": {
+      "catalogType": "REST",
+      "catalogName": "lakehouse-rest",
+      "catalogUri": "https://iceberg-rest.example.com",
+      "warehouseUri": "s3://example-warehouse/warehouse",
+      "tableIdentifier": "db.iceberg_rest_catalog_lakehouse",
+      "pluginName": "lakehouse-rest",
+      "properties": {
+        "controller.adapter.class": "org.example.pinot.lakehouse.RestCatalogLakehouseCatalogAdapter",
+        "client.timeout-ms": "30000",
+        "client.retry-count": "3"
+      }
+    },
+    "readVisibilityMode": "SNAPSHOT_ONLY",
+    "writeMode": "DISABLED",
+    "tabletConfig": {
+      "targetFilesPerTablet": 128,
+      "targetBytesPerTablet": 34359738368,
+      "timePartitionColumn": "eventTime",
+      "timePartitionBucket": "DAY",
+      "maxEnvelopeBytes": 16384
+    },
+    "sidecarConfig": {
+      "enabled": false,
+      "failOpen": true,
+      "provider": "pinotSidecar",
+      "storageUri": "s3://example-warehouse/sidecars/icebergRestCatalogLakehouse"
+    }
+  }
+}

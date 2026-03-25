@@ -29,6 +29,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletionService;
 import java.util.concurrent.ConcurrentHashMap;
@@ -93,6 +94,7 @@ import org.apache.pinot.core.routing.ImplicitHybridTableRouteProvider;
 import org.apache.pinot.core.routing.LogicalTableRouteProvider;
 import org.apache.pinot.core.routing.MultiClusterRoutingContext;
 import org.apache.pinot.core.routing.RoutingManager;
+import org.apache.pinot.core.routing.SegmentsToQuery;
 import org.apache.pinot.core.routing.TableRouteInfo;
 import org.apache.pinot.core.routing.TableRouteProvider;
 import org.apache.pinot.core.routing.timeboundary.TimeBoundaryInfo;
@@ -144,6 +146,13 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
   private static final Expression TRUE = RequestUtils.getLiteralExpression(true);
   private static final Expression STAR = RequestUtils.getIdentifierExpression("*");
   private static final int MAX_UNAVAILABLE_SEGMENTS_TO_PRINT_IN_QUERY_EXCEPTION = 10;
+  private static final String LAKEHOUSE_TRACE_SNAPSHOT_SELECTOR = "lakehouseSnapshotSelector";
+  private static final String LAKEHOUSE_TRACE_ROUTED_TABLET_COUNT = "lakehouseRoutedTabletCount";
+  private static final String LAKEHOUSE_TRACE_OPTIONAL_TABLET_COUNT = "lakehouseOptionalTabletCount";
+  private static final String LAKEHOUSE_TRACE_PRUNED_TABLET_COUNT = "lakehousePrunedTabletCount";
+  private static final String LAKEHOUSE_TRACE_TABLET_PRUNING_PERCENT = "lakehouseTabletPruningPercent";
+  private static final String LAKEHOUSE_TRACE_ROUTED_TABLET_IDS = "lakehouseRoutedTabletIds";
+  private static final int MAX_LAKEHOUSE_TRACE_TABLET_IDS = 8;
   // TODO: After the next release, remove overrides here for consolidated aggregation functions
   //  (see https://github.com/apache/pinot/issues/17061)
   private static final Map<String, String> MV_COL_AGG_FUNCTION_OVERRIDE_MAP = Map.ofEntries(
@@ -679,6 +688,28 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
     Set<ServerInstance> realtimeExecutionServers = routeInfo.getRealtimeExecutionServers();
     List<String> unavailableSegments = routeInfo.getUnavailableSegments();
     int numPrunedSegmentsTotal = routeInfo.getNumPrunedSegmentsTotal();
+    boolean lakehouseQuery = isLakehouseEnabled(offlineTableConfig) || isLakehouseEnabled(realtimeTableConfig);
+    Map<String, String> lakehouseTraceInfo = null;
+    if (lakehouseQuery) {
+      Set<String> routedTabletIds = collectUniqueSegments(routeInfo.getOfflineRoutingTable(), false);
+      routedTabletIds.addAll(collectUniqueSegments(routeInfo.getRealtimeRoutingTable(), false));
+      Set<String> optionalTabletIds = collectUniqueSegments(routeInfo.getOfflineRoutingTable(), true);
+      optionalTabletIds.addAll(collectUniqueSegments(routeInfo.getRealtimeRoutingTable(), true));
+      int routedTabletCount = routedTabletIds.size();
+      int optionalTabletCount = optionalTabletIds.size();
+      int lakehouseTabletPruningPercent = calculateLakehouseTabletPruningPercent(routedTabletCount,
+          numPrunedSegmentsTotal);
+      _brokerMetrics.setValueOfTableGauge(rawTableName, BrokerGauge.LAKEHOUSE_ROUTED_TABLET_COUNT, routedTabletCount);
+      _brokerMetrics.setValueOfTableGauge(rawTableName, BrokerGauge.LAKEHOUSE_OPTIONAL_TABLET_COUNT,
+          optionalTabletCount);
+      _brokerMetrics.setValueOfTableGauge(rawTableName, BrokerGauge.LAKEHOUSE_PRUNED_TABLET_COUNT,
+          numPrunedSegmentsTotal);
+      _brokerMetrics.setValueOfTableGauge(rawTableName, BrokerGauge.LAKEHOUSE_TABLET_PRUNING_PERCENT,
+          lakehouseTabletPruningPercent);
+      lakehouseTraceInfo =
+          buildLakehouseTraceInfo(pinotQuery.getQueryOptions(), routedTabletIds, optionalTabletIds,
+              numPrunedSegmentsTotal, lakehouseTabletPruningPercent);
+    }
 
     // Rewrite the broker requests as the rest of the code expects them to be null or not based on whether the routing
     // calculation was successful or not.
@@ -876,6 +907,9 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
     }
 
     brokerResponse.setNumSegmentsPrunedByBroker(numPrunedSegmentsTotal);
+    if (lakehouseTraceInfo != null && !lakehouseTraceInfo.isEmpty()) {
+      brokerResponse.getTraceInfo().putAll(lakehouseTraceInfo);
+    }
     long executionEndTimeNs = System.nanoTime();
     _brokerMetrics.addPhaseTiming(rawTableName, BrokerQueryPhase.QUERY_EXECUTION,
         executionEndTimeNs - routingEndTimeNs);
@@ -936,6 +970,15 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
   private CompileResult compileRequest(long requestId, String query, SqlNodeAndOptions sqlNodeAndOptions,
       JsonNode request, @Nullable RequesterIdentity requesterIdentity, RequestContext requestContext,
       @Nullable HttpHeaders httpHeaders, AccessControl accessControl) {
+    try {
+      QueryOptionsUtils.validateMutuallyExclusiveSnapshotSelectors(sqlNodeAndOptions.getOptions());
+    } catch (IllegalArgumentException e) {
+      LOGGER.info("Caught invalid lakehouse snapshot selector options in request {}: {}, {}", requestId, query,
+          e.getMessage());
+      requestContext.setErrorCode(QueryErrorCode.QUERY_VALIDATION);
+      return new CompileResult(new BrokerResponseNative(QueryErrorCode.QUERY_VALIDATION, e.getMessage()));
+    }
+
     PinotQuery pinotQuery;
     try {
       pinotQuery = CalciteSqlParser.compileToPinotQuery(sqlNodeAndOptions);
@@ -1796,6 +1839,91 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
       }
     }
     return true;
+  }
+
+  @VisibleForTesting
+  static Set<String> collectUniqueSegments(@Nullable Map<ServerInstance, SegmentsToQuery> routingTable,
+      boolean optionalSegments) {
+    Set<String> segmentNames = new TreeSet<>();
+    if (routingTable == null || routingTable.isEmpty()) {
+      return segmentNames;
+    }
+    for (SegmentsToQuery segmentsToQuery : routingTable.values()) {
+      List<String> segments = optionalSegments ? segmentsToQuery.getOptionalSegments() : segmentsToQuery.getSegments();
+      if (segments != null) {
+        segmentNames.addAll(segments);
+      }
+    }
+    return segmentNames;
+  }
+
+  @VisibleForTesting
+  static int countUniqueSegments(@Nullable Map<ServerInstance, SegmentsToQuery> routingTable,
+      boolean optionalSegments) {
+    return collectUniqueSegments(routingTable, optionalSegments).size();
+  }
+
+  @VisibleForTesting
+  static int calculateLakehouseTabletPruningPercent(int routedTabletCount, int prunedTabletCount) {
+    int totalTabletCount = routedTabletCount + prunedTabletCount;
+    if (totalTabletCount <= 0) {
+      return 0;
+    }
+    return (int) Math.round((prunedTabletCount * 100d) / totalTabletCount);
+  }
+
+  @VisibleForTesting
+  static Map<String, String> buildLakehouseTraceInfo(Map<String, String> queryOptions, int routedTabletCount,
+      int optionalTabletCount, int prunedTabletCount, int tabletPruningPercent) {
+    return buildLakehouseTraceInfo(queryOptions, Collections.emptySet(), Collections.emptySet(), prunedTabletCount,
+        tabletPruningPercent, routedTabletCount, optionalTabletCount);
+  }
+
+  @VisibleForTesting
+  static Map<String, String> buildLakehouseTraceInfo(Map<String, String> queryOptions, Set<String> routedTabletIds,
+      Set<String> optionalTabletIds, int prunedTabletCount, int tabletPruningPercent) {
+    return buildLakehouseTraceInfo(queryOptions, routedTabletIds, optionalTabletIds, prunedTabletCount,
+        tabletPruningPercent, routedTabletIds.size(), optionalTabletIds.size());
+  }
+
+  private static Map<String, String> buildLakehouseTraceInfo(Map<String, String> queryOptions,
+      Set<String> routedTabletIds, Set<String> optionalTabletIds, int prunedTabletCount, int tabletPruningPercent,
+      int routedTabletCount, int optionalTabletCount) {
+    Map<String, String> traceInfo = new HashMap<>();
+    String snapshotSelector = QueryOptionsUtils.getLakehouseSnapshotSelector(queryOptions);
+    if (snapshotSelector != null) {
+      traceInfo.put(LAKEHOUSE_TRACE_SNAPSHOT_SELECTOR, snapshotSelector);
+    }
+    traceInfo.put(LAKEHOUSE_TRACE_ROUTED_TABLET_COUNT, Integer.toString(routedTabletCount));
+    traceInfo.put(LAKEHOUSE_TRACE_OPTIONAL_TABLET_COUNT, Integer.toString(optionalTabletCount));
+    traceInfo.put(LAKEHOUSE_TRACE_PRUNED_TABLET_COUNT, Integer.toString(prunedTabletCount));
+    traceInfo.put(LAKEHOUSE_TRACE_TABLET_PRUNING_PERCENT, Integer.toString(tabletPruningPercent));
+    String routedTabletTrace = formatTabletTraceSample(routedTabletIds);
+    if (routedTabletTrace != null) {
+      traceInfo.put(LAKEHOUSE_TRACE_ROUTED_TABLET_IDS, routedTabletTrace);
+    }
+    return traceInfo;
+  }
+
+  @Nullable
+  private static String formatTabletTraceSample(Set<String> tabletIds) {
+    if (tabletIds.isEmpty()) {
+      return null;
+    }
+    List<String> sortedTabletIds = new ArrayList<>(tabletIds);
+    Collections.sort(sortedTabletIds);
+    int sampleCount = Math.min(sortedTabletIds.size(), MAX_LAKEHOUSE_TRACE_TABLET_IDS);
+    String sample = String.join(",", sortedTabletIds.subList(0, sampleCount));
+    int remaining = sortedTabletIds.size() - sampleCount;
+    if (remaining > 0) {
+      return sample + ",...(" + remaining + " more)";
+    }
+    return sample;
+  }
+
+  private static boolean isLakehouseEnabled(@Nullable TableConfig tableConfig) {
+    return tableConfig != null && tableConfig.getLakehouseConfig() != null && tableConfig.getLakehouseConfig()
+        .isEnabled();
   }
 
   /**
