@@ -628,4 +628,40 @@ public class QueryOptionsUtils {
     }
     return i;
   }
+
+  // ---- Lakehouse-native Iceberg query options ----
+
+  /**
+   * Returns the explicit Iceberg snapshot ID from the query options, or {@code null} if not set.
+   */
+  @Nullable
+  public static Long getIcebergSnapshotId(Map<String, String> queryOptions) {
+    String val = queryOptions.get(QueryOptionKey.ICEBERG_SNAPSHOT_ID);
+    return val != null ? Long.parseLong(val) : null;
+  }
+
+  /**
+   * Returns the Iceberg branch name from the query options, or {@code null} if not set.
+   */
+  @Nullable
+  public static String getIcebergBranch(Map<String, String> queryOptions) {
+    return queryOptions.get(QueryOptionKey.ICEBERG_BRANCH);
+  }
+
+  /**
+   * Returns the Iceberg tag name from the query options, or {@code null} if not set.
+   */
+  @Nullable
+  public static String getIcebergTag(Map<String, String> queryOptions) {
+    return queryOptions.get(QueryOptionKey.ICEBERG_TAG);
+  }
+
+  /**
+   * Returns the Iceberg as-of timestamp (epoch millis) from the query options, or {@code null} if not set.
+   */
+  @Nullable
+  public static Long getIcebergAsOfMs(Map<String, String> queryOptions) {
+    String val = queryOptions.get(QueryOptionKey.ICEBERG_AS_OF_MS);
+    return val != null ? Long.parseLong(val) : null;
+  }
 }

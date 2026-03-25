@@ -1,0 +1,55 @@
+{
+  "schemaName": "events",
+  "dimensionFieldSpecs": [
+    {
+      "name": "event_id",
+      "dataType": "STRING"
+    },
+    {
+      "name": "user_id",
+      "dataType": "STRING"
+    },
+    {
+      "name": "event_type",
+      "dataType": "STRING"
+    },
+    {
+      "name": "device_type",
+      "dataType": "STRING"
+    },
+    {
+      "name": "country",
+      "dataType": "STRING"
+    },
+    {
+      "name": "session_id",
+      "dataType": "STRING"
+    },
+    {
+      "name": "page_url",
+      "dataType": "STRING"
+    },
+    {
+      "name": "referrer_url",
+      "dataType": "STRING"
+    }
+  ],
+  "metricFieldSpecs": [
+    {
+      "name": "duration_ms",
+      "dataType": "LONG"
+    },
+    {
+      "name": "payload_bytes",
+      "dataType": "LONG"
+    }
+  ],
+  "dateTimeFieldSpecs": [
+    {
+      "name": "event_timestamp",
+      "dataType": "TIMESTAMP",
+      "format": "1:MILLISECONDS:EPOCH",
+      "granularity": "1:MILLISECONDS"
+    }
+  ]
+}

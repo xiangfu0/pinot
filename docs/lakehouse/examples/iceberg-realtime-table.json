@@ -1,0 +1,59 @@
+{
+  "tableName": "clickstream",
+  "tableType": "REALTIME",
+  "segmentsConfig": {
+    "schemaName": "clickstream",
+    "replication": "2",
+    "timeColumnName": "event_time",
+    "retentionTimeUnit": "DAYS",
+    "retentionTimeValue": "90"
+  },
+  "tenants": {
+    "broker": "DefaultTenant",
+    "server": "DefaultTenant"
+  },
+  "tableIndexConfig": {
+    "loadMode": "MMAP",
+    "streamConfigs": {
+      "streamType": "kafka",
+      "stream.kafka.consumer.type": "lowlevel",
+      "stream.kafka.topic.name": "clickstream-events",
+      "stream.kafka.broker.list": "kafka-broker-1:9092,kafka-broker-2:9092,kafka-broker-3:9092",
+      "stream.kafka.decoder.class.name": "org.apache.pinot.plugin.stream.kafka.KafkaJSONMessageDecoder",
+      "stream.kafka.consumer.factory.class.name": "org.apache.pinot.plugin.stream.kafka30.KafkaConsumerFactory",
+      "stream.kafka.consumer.prop.auto.offset.reset": "smallest",
+      "realtime.segment.flush.threshold.rows": "500000",
+      "realtime.segment.flush.threshold.time": "6h"
+    }
+  },
+  "lakehouseConfig": {
+    "enabled": true,
+    "mode": "ICEBERG_NATIVE",
+    "catalog": {
+      "type": "REST",
+      "uri": "https://catalog.example.com",
+      "warehouse": "s3://data-lake/warehouse",
+      "tableIdentifier": "streaming.clickstream",
+      "properties": {
+        "credential": "client_credentials",
+        "oauth2-server-uri": "https://auth.example.com/token"
+      }
+    },
+    "read": {
+      "visibilityMode": "HOT_PLUS_SNAPSHOT",
+      "defaultRefType": "BRANCH",
+      "defaultRefName": "main"
+    },
+    "write": {
+      "enabled": true,
+      "mode": "APPEND",
+      "fileFormat": "PARQUET"
+    },
+    "tablet": {
+      "targetFilesPerTablet": 128,
+      "targetBytesPerTablet": 68719476736,
+      "timeBucket": "HOUR"
+    }
+  },
+  "metadata": {}
+}

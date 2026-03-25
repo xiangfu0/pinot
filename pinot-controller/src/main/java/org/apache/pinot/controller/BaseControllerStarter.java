@@ -68,6 +68,7 @@ import org.apache.pinot.common.config.DefaultClusterConfigChangeHandler;
 import org.apache.pinot.common.config.TlsConfig;
 import org.apache.pinot.common.function.FunctionRegistry;
 import org.apache.pinot.common.http.PoolingHttpClientConnectionManagerHelper;
+import org.apache.pinot.common.lakehouse.FileSystemTabletManifestStore;
 import org.apache.pinot.common.metadata.ZKMetadataProvider;
 import org.apache.pinot.common.metrics.ControllerGauge;
 import org.apache.pinot.common.metrics.ControllerMeter;
@@ -103,6 +104,8 @@ import org.apache.pinot.controller.helix.SegmentStatusChecker;
 import org.apache.pinot.controller.helix.core.PinotHelixResourceManager;
 import org.apache.pinot.controller.helix.core.cleanup.StaleInstancesCleanupTask;
 import org.apache.pinot.controller.helix.core.controllerjob.ControllerJobTypes;
+import org.apache.pinot.controller.helix.core.lakehouse.LakehouseTableManager;
+import org.apache.pinot.controller.helix.core.lakehouse.TabletRefreshTask;
 import org.apache.pinot.controller.helix.core.minion.PinotHelixTaskResourceManager;
 import org.apache.pinot.controller.helix.core.minion.PinotTaskManager;
 import org.apache.pinot.controller.helix.core.minion.TaskMetricsEmitter;
@@ -151,6 +154,7 @@ import org.apache.pinot.spi.crypt.PinotCrypterFactory;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.filesystem.PinotFSFactory;
+import org.apache.pinot.spi.lakehouse.LakehouseCatalogAdapter;
 import org.apache.pinot.spi.metrics.PinotMetricUtils;
 import org.apache.pinot.spi.metrics.PinotMetricsRegistry;
 import org.apache.pinot.spi.plugin.PluginManager;
@@ -224,6 +228,7 @@ public abstract class BaseControllerStarter implements ServiceStartable {
   protected List<ServiceStatus.ServiceStatusCallback> _serviceStatusCallbackList;
   protected StaleInstancesCleanupTask _staleInstancesCleanupTask;
   protected TaskMetricsEmitter _taskMetricsEmitter;
+  protected LakehouseTableManager _lakehouseTableManager;
   protected PoolingHttpClientConnectionManager _connectionManager;
   protected TenantRebalancer _tenantRebalancer;
   // This executor should be used by all code paths for user initiated rebalances, so that the controller config
@@ -727,6 +732,7 @@ public abstract class BaseControllerStarter implements ServiceStartable {
         bind(_tableSizeReader).to(TableSizeReader.class);
         bind(_storageQuotaChecker).to(StorageQuotaChecker.class);
         bind(_resourceUtilizationManager).to(ResourceUtilizationManager.class);
+        bind(_lakehouseTableManager).to(LakehouseTableManager.class);
         bind(controllerStartTime).named(ControllerAdminApiApplication.START_TIME);
 
         bindAsContract(PinotTableReloadService.class).in(Singleton.class);
@@ -1029,8 +1035,42 @@ public abstract class BaseControllerStarter implements ServiceStartable {
     PeriodicTask tenantRebalanceChecker =
         new TenantRebalanceChecker(_config, _helixResourceManager, _tenantRebalancer);
     periodicTasks.add(tenantRebalanceChecker);
+    _lakehouseTableManager = createLakehouseTableManager();
+    PeriodicTask tabletRefreshTask =
+        new TabletRefreshTask(_lakehouseTableManager, _helixResourceManager, _leadControllerManager,
+            _controllerMetrics);
+    periodicTasks.add(tabletRefreshTask);
 
     return periodicTasks;
+  }
+
+  /**
+   * Creates the LakehouseTableManager with a default manifest store and catalog adapter factory.
+   * The manifest store uses the controller's data directory for local storage.
+   * The catalog adapter factory creates adapters dynamically using the SPI plugin loader.
+   */
+  @VisibleForTesting
+  protected LakehouseTableManager createLakehouseTableManager() {
+    // Use a local filesystem manifest store by default; operators can override via subclass
+    String manifestStoreBaseUri = _config.getDataDir() + "/lakehouse-manifests";
+    FileSystemTabletManifestStore manifestStore = new FileSystemTabletManifestStore();
+    manifestStore.init(manifestStoreBaseUri);
+
+    // Default factory: creates adapters from IcebergCatalogConfig using SPI class loading
+    LakehouseTableManager.CatalogAdapterFactory adapterFactory = lakehouseConfig -> {
+      try {
+        Class<?> adapterClass =
+            Thread.currentThread().getContextClassLoader()
+                .loadClass("org.apache.pinot.plugin.catalog.iceberg.IcebergCatalogAdapterImpl");
+        LakehouseCatalogAdapter adapter = (LakehouseCatalogAdapter) adapterClass.getDeclaredConstructor().newInstance();
+        adapter.init(lakehouseConfig.getCatalog());
+        return adapter;
+      } catch (Exception e) {
+        throw new RuntimeException("Failed to create Iceberg catalog adapter. "
+            + "Ensure pinot-iceberg plugin is on the classpath.", e);
+      }
+    };
+    return new LakehouseTableManager(manifestStore, adapterFactory);
   }
 
   private void initRealtimeOffsetAutoResetManager(List<PeriodicTask> periodicTasks) {

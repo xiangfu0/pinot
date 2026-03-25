@@ -893,6 +893,12 @@ public class CommonConstants {
 
         /// Option to customize the value of [Broker#CONFIG_OF_SORT_EXCHANGE_COPY_THRESHOLD]
         public static final String SORT_EXCHANGE_COPY_THRESHOLD = "sortExchangeCopyThreshold";
+
+        // Lakehouse-native query options for Iceberg snapshot/ref resolution
+        public static final String ICEBERG_SNAPSHOT_ID = "icebergSnapshotId";
+        public static final String ICEBERG_BRANCH = "icebergBranch";
+        public static final String ICEBERG_TAG = "icebergTag";
+        public static final String ICEBERG_AS_OF_MS = "icebergAsOfMs";
       }
 
       public static class QueryOptionValue {

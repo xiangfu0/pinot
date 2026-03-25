@@ -1,0 +1,42 @@
+{
+  "tableName": "user_profiles",
+  "tableType": "OFFLINE",
+  "segmentsConfig": {
+    "schemaName": "user_profiles",
+    "replication": "3",
+    "timeColumnName": "updated_at"
+  },
+  "tenants": {
+    "broker": "DefaultTenant",
+    "server": "DefaultTenant"
+  },
+  "tableIndexConfig": {
+    "loadMode": "MMAP"
+  },
+  "lakehouseConfig": {
+    "enabled": true,
+    "mode": "ICEBERG_NATIVE",
+    "catalog": {
+      "type": "HADOOP",
+      "warehouse": "s3://data-lake/warehouse",
+      "tableIdentifier": "prod_db.user_profiles",
+      "properties": {
+        "io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
+        "s3.region": "us-east-1",
+        "s3.access-key-id": "${S3_ACCESS_KEY}",
+        "s3.secret-access-key": "${S3_SECRET_KEY}"
+      }
+    },
+    "read": {
+      "visibilityMode": "SNAPSHOT_ONLY",
+      "defaultRefType": "BRANCH",
+      "defaultRefName": "main"
+    },
+    "tablet": {
+      "targetFilesPerTablet": 64,
+      "targetBytesPerTablet": 34359738368,
+      "timeBucket": "DAY"
+    }
+  },
+  "metadata": {}
+}

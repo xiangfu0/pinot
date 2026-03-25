@@ -198,7 +198,7 @@ public class TableConfigSerDeUtils {
         new TableConfig(tableName, tableType, validationConfig, tenantConfig, indexingConfig, customConfig,
             quotaConfig, taskConfig, routingConfig, queryConfig, instanceAssignmentConfigMap, fieldConfigList,
             upsertConfig, dedupConfig, dimensionTableConfig, ingestionConfig, tierConfigList, isDimTable,
-            tunerConfigList, instancePartitionsMap, segmentAssignmentConfigMap, tableSamplerConfigs);
+            tunerConfigList, instancePartitionsMap, segmentAssignmentConfigMap, tableSamplerConfigs, null);
     tableConfig.setDescription(description);
     tableConfig.setTags(tags);
     return tableConfig;

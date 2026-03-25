@@ -65,6 +65,7 @@ public class TableConfig extends BaseJsonConfig {
   public static final String TUNER_CONFIG_LIST_KEY = "tunerConfigs";
   public static final String TIER_OVERWRITES_KEY = "tierOverwrites";
   public static final String TABLE_SAMPLERS_KEY = "tableSamplers";
+  public static final String LAKEHOUSE_CONFIG_KEY = "lakehouseConfig";
   public static final String DESCRIPTION_KEY = "description";
   public static final String TAGS_KEY = "tags";
 
@@ -134,6 +135,9 @@ public class TableConfig extends BaseJsonConfig {
   @JsonPropertyDescription(value = "Configs for table samplers")
   private List<TableSamplerConfig> _tableSamplers;
 
+  @JsonPropertyDescription(value = "Lakehouse-native mode configuration (Iceberg + Parquet)")
+  private LakehouseConfig _lakehouseConfig;
+
   @JsonCreator
   public TableConfig(@JsonProperty(value = TABLE_NAME_KEY, required = true) String tableName,
       @JsonProperty(value = TABLE_TYPE_KEY, required = true) String tableType,
@@ -160,7 +164,8 @@ public class TableConfig extends BaseJsonConfig {
       Map<InstancePartitionsType, String> instancePartitionsMap,
       @JsonProperty(SEGMENT_ASSIGNMENT_CONFIG_MAP_KEY) @Nullable
       Map<String, SegmentAssignmentConfig> segmentAssignmentConfigMap,
-      @JsonProperty(TABLE_SAMPLERS_KEY) @Nullable List<TableSamplerConfig> tableSamplers) {
+      @JsonProperty(TABLE_SAMPLERS_KEY) @Nullable List<TableSamplerConfig> tableSamplers,
+      @JsonProperty(LAKEHOUSE_CONFIG_KEY) @Nullable LakehouseConfig lakehouseConfig) {
     Preconditions.checkArgument(tableName != null, "'tableName' must be configured");
     Preconditions.checkArgument(!tableName.contains(TABLE_NAME_FORBIDDEN_SUBSTRING),
         "'tableName' cannot contain double underscore ('__')");
@@ -192,6 +197,7 @@ public class TableConfig extends BaseJsonConfig {
     _instancePartitionsMap = instancePartitionsMap;
     _segmentAssignmentConfigMap = segmentAssignmentConfigMap;
     _tableSamplers = sanitizeAndValidateTableSamplers(tableSamplers);
+    _lakehouseConfig = lakehouseConfig;
   }
 
   public TableConfig(TableConfig tableConfig) {
@@ -217,6 +223,7 @@ public class TableConfig extends BaseJsonConfig {
     _instancePartitionsMap = tableConfig.getInstancePartitionsMap();
     _segmentAssignmentConfigMap = tableConfig.getSegmentAssignmentConfigMap();
     _tableSamplers = sanitizeAndValidateTableSamplers(tableConfig.getTableSamplers());
+    _lakehouseConfig = tableConfig.getLakehouseConfig();
     _description = tableConfig.getDescription();
     _tags = tableConfig.getTags();
   }
@@ -490,6 +497,21 @@ public class TableConfig extends BaseJsonConfig {
 
   public void setSegmentAssignmentConfigMap(Map<String, SegmentAssignmentConfig> segmentAssignmentConfigMap) {
     _segmentAssignmentConfigMap = segmentAssignmentConfigMap;
+  }
+
+  @JsonProperty(LAKEHOUSE_CONFIG_KEY)
+  @Nullable
+  public LakehouseConfig getLakehouseConfig() {
+    return _lakehouseConfig;
+  }
+
+  public void setLakehouseConfig(@Nullable LakehouseConfig lakehouseConfig) {
+    _lakehouseConfig = lakehouseConfig;
+  }
+
+  @JsonIgnore
+  public boolean isLakehouseEnabled() {
+    return _lakehouseConfig != null && _lakehouseConfig.isEnabled();
   }
 
   @JsonIgnore

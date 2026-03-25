@@ -64,7 +64,10 @@ import org.apache.pinot.spi.config.table.DedupConfig;
 import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.FieldConfig.EncodingType;
 import org.apache.pinot.spi.config.table.HashFunction;
+import org.apache.pinot.spi.config.table.IcebergCatalogConfig;
 import org.apache.pinot.spi.config.table.IndexingConfig;
+import org.apache.pinot.spi.config.table.LakehouseConfig;
+import org.apache.pinot.spi.config.table.LakehouseWriteConfig;
 import org.apache.pinot.spi.config.table.MultiColumnTextIndexConfig;
 import org.apache.pinot.spi.config.table.QuotaConfig;
 import org.apache.pinot.spi.config.table.ReplicaGroupStrategyConfig;
@@ -76,6 +79,7 @@ import org.apache.pinot.spi.config.table.StarTreeIndexConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableTaskConfig;
 import org.apache.pinot.spi.config.table.TableType;
+import org.apache.pinot.spi.config.table.TabletConfig;
 import org.apache.pinot.spi.config.table.TagOverrideConfig;
 import org.apache.pinot.spi.config.table.TenantConfig;
 import org.apache.pinot.spi.config.table.TierConfig;
@@ -194,6 +198,7 @@ public final class TableConfigUtils {
     }
 
     validateTaskConfig(tableConfig);
+    validateLakehouseConfig(tableConfig);
 
     if (_enforcePoolBasedAssignment) {
       validateInstancePoolsAndReplicaGroups(tableConfig);
@@ -1428,6 +1433,63 @@ public final class TableConfigUtils {
             UPSERT_COMPACTION_TASK_TYPE, minNumSegmentsPerTaskKey));
       }
     }
+  }
+
+  /**
+   * Validates the lakehouse config for Iceberg-native tables.
+   *
+   * Checks:
+   * - Mode must be ICEBERG_NATIVE (only supported mode)
+   * - Catalog config must have a table identifier
+   * - Tablet sizing must be positive
+   * - Write config is only allowed for REALTIME tables
+   * - Lakehouse tables cannot use upsert or dedup (Phase 1 constraint)
+   */
+  @VisibleForTesting
+  static void validateLakehouseConfig(TableConfig tableConfig) {
+    LakehouseConfig lakehouseConfig = tableConfig.getLakehouseConfig();
+    if (lakehouseConfig == null || !lakehouseConfig.isEnabled()) {
+      return;
+    }
+
+    String tableName = tableConfig.getTableName();
+
+    // Mode validation
+    Preconditions.checkArgument(lakehouseConfig.getMode() != null,
+        "Lakehouse mode must be specified for table: %s", tableName);
+    Preconditions.checkArgument(lakehouseConfig.getMode() == LakehouseConfig.Mode.ICEBERG_NATIVE,
+        "Only ICEBERG_NATIVE mode is supported for lakehouse tables. Table: %s", tableName);
+
+    // Catalog validation
+    IcebergCatalogConfig catalogConfig = lakehouseConfig.getCatalog();
+    Preconditions.checkArgument(catalogConfig != null,
+        "Iceberg catalog config must be specified for lakehouse table: %s", tableName);
+    Preconditions.checkArgument(catalogConfig.getType() != null,
+        "Iceberg catalog type must be specified for lakehouse table: %s", tableName);
+    Preconditions.checkArgument(StringUtils.isNotBlank(catalogConfig.getTableIdentifier()),
+        "Iceberg table identifier must be specified for lakehouse table: %s", tableName);
+
+    // Tablet sizing validation
+    TabletConfig tabletConfig = lakehouseConfig.getTablet();
+    if (tabletConfig != null) {
+      Preconditions.checkArgument(tabletConfig.getTargetFilesPerTablet() > 0,
+          "targetFilesPerTablet must be positive for lakehouse table: %s", tableName);
+      Preconditions.checkArgument(tabletConfig.getTargetBytesPerTablet() > 0,
+          "targetBytesPerTablet must be positive for lakehouse table: %s", tableName);
+    }
+
+    // Write config validation
+    LakehouseWriteConfig writeConfig = lakehouseConfig.getWrite();
+    if (writeConfig != null && writeConfig.isEnabled()) {
+      Preconditions.checkArgument(tableConfig.getTableType() == TableType.REALTIME,
+          "Lakehouse direct write is only supported for REALTIME tables. Table: %s", tableName);
+    }
+
+    // Phase 1 constraint: lakehouse tables cannot use upsert or dedup
+    Preconditions.checkArgument(!tableConfig.isUpsertEnabled(),
+        "Upsert is not supported for lakehouse-native tables. Table: %s", tableName);
+    Preconditions.checkArgument(!tableConfig.isDedupEnabled(),
+        "Dedup is not supported for lakehouse-native tables. Table: %s", tableName);
   }
 
   /**

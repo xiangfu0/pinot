@@ -1,0 +1,41 @@
+{
+  "tableName": "events",
+  "tableType": "OFFLINE",
+  "segmentsConfig": {
+    "schemaName": "events",
+    "replication": "2",
+    "timeColumnName": "event_timestamp"
+  },
+  "tenants": {
+    "broker": "DefaultTenant",
+    "server": "DefaultTenant"
+  },
+  "tableIndexConfig": {
+    "loadMode": "MMAP"
+  },
+  "lakehouseConfig": {
+    "enabled": true,
+    "mode": "ICEBERG_NATIVE",
+    "catalog": {
+      "type": "REST",
+      "uri": "https://catalog.example.com",
+      "warehouse": "s3://my-warehouse",
+      "tableIdentifier": "analytics.events",
+      "properties": {
+        "credential": "client_credentials",
+        "oauth2-server-uri": "https://auth.example.com/token"
+      }
+    },
+    "read": {
+      "visibilityMode": "SNAPSHOT_ONLY",
+      "defaultRefType": "BRANCH",
+      "defaultRefName": "main"
+    },
+    "tablet": {
+      "targetFilesPerTablet": 128,
+      "targetBytesPerTablet": 68719476736,
+      "timeBucket": "DAY"
+    }
+  },
+  "metadata": {}
+}

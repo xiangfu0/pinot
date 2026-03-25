@@ -30,6 +30,7 @@ import org.apache.pinot.spi.config.table.DimensionTableConfig;
 import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.IndexingConfig;
 import org.apache.pinot.spi.config.table.JsonIndexConfig;
+import org.apache.pinot.spi.config.table.LakehouseConfig;
 import org.apache.pinot.spi.config.table.MultiColumnTextIndexConfig;
 import org.apache.pinot.spi.config.table.QueryConfig;
 import org.apache.pinot.spi.config.table.QuotaConfig;
@@ -141,6 +142,7 @@ public class TableConfigBuilder {
   private JsonNode _tierOverwrites;
   private Map<String, JsonIndexConfig> _jsonIndexConfigs;
   private MultiColumnTextIndexConfig _multiColumnTextIndexConfig;
+  private LakehouseConfig _lakehouseConfig;
   private String _description;
   private List<String> _tags;
 
@@ -498,6 +500,11 @@ public class TableConfigBuilder {
     return this;
   }
 
+  public TableConfigBuilder setLakehouseConfig(LakehouseConfig lakehouseConfig) {
+    _lakehouseConfig = lakehouseConfig;
+    return this;
+  }
+
   public TableConfig build() {
     // Validation config
     SegmentsValidationAndRetentionConfig validationConfig = new SegmentsValidationAndRetentionConfig();
@@ -558,7 +565,8 @@ public class TableConfigBuilder {
         new TableConfig(_tableName, _tableType.toString(), validationConfig, tenantConfig, indexingConfig,
             _customConfig, _quotaConfig, _taskConfig, _routingConfig, _queryConfig, _instanceAssignmentConfigMap,
             _fieldConfigList, _upsertConfig, _dedupConfig, _dimensionTableConfig, _ingestionConfig, _tierConfigList,
-            _isDimTable, _tunerConfigList, _instancePartitionsMap, _segmentAssignmentConfigMap, _tableSamplers);
+            _isDimTable, _tunerConfigList, _instancePartitionsMap, _segmentAssignmentConfigMap, _tableSamplers,
+            _lakehouseConfig);
     tableConfig.setDescription(_description);
     tableConfig.setTags(_tags);
     return tableConfig;

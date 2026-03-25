@@ -39,7 +39,10 @@ import org.apache.pinot.spi.config.table.DedupConfig;
 import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.FieldConfig.CompressionCodec;
 import org.apache.pinot.spi.config.table.HashFunction;
+import org.apache.pinot.spi.config.table.IcebergCatalogConfig;
 import org.apache.pinot.spi.config.table.IndexingConfig;
+import org.apache.pinot.spi.config.table.LakehouseConfig;
+import org.apache.pinot.spi.config.table.LakehouseWriteConfig;
 import org.apache.pinot.spi.config.table.ReplicaGroupStrategyConfig;
 import org.apache.pinot.spi.config.table.RoutingConfig;
 import org.apache.pinot.spi.config.table.SegmentPartitionConfig;
@@ -49,6 +52,7 @@ import org.apache.pinot.spi.config.table.StarTreeIndexConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableCustomConfig;
 import org.apache.pinot.spi.config.table.TableType;
+import org.apache.pinot.spi.config.table.TabletConfig;
 import org.apache.pinot.spi.config.table.TagOverrideConfig;
 import org.apache.pinot.spi.config.table.TenantConfig;
 import org.apache.pinot.spi.config.table.TierConfig;
@@ -3272,7 +3276,7 @@ public class TableConfigUtilsTest {
         new TableConfig("table", TableType.OFFLINE.name(), new SegmentsValidationAndRetentionConfig(),
             new TenantConfig("DefaultTenant", "DefaultTenant", null), new IndexingConfig(), new TableCustomConfig(null),
             null, null, null, null, Map.of("OFFLINE", config), null, null, null, null, null, null, false, null, null,
-            null, null);
+            null, null, null);
 
     // Should not throw
     TableConfigUtils.validateInstancePoolsAndReplicaGroups(tableConfig);
@@ -3288,7 +3292,7 @@ public class TableConfigUtilsTest {
         new TableConfig("table", TableType.REALTIME.name(), new SegmentsValidationAndRetentionConfig(),
             new TenantConfig("DefaultTenant", "DefaultTenant", null), new IndexingConfig(), new TableCustomConfig(null),
             null, null, null, null, Map.of("CONSUMING", config), null, null, null, null, null, null, false, null, null,
-            null, null);
+            null, null, null);
 
     // Should not throw
     TableConfigUtils.validateInstancePoolsAndReplicaGroups(tableConfig);
@@ -3299,7 +3303,7 @@ public class TableConfigUtilsTest {
     TableConfig tableConfig =
         new TableConfig("table", TableType.OFFLINE.name(), new SegmentsValidationAndRetentionConfig(),
             new TenantConfig("DefaultTenant", "DefaultTenant", null), new IndexingConfig(), new TableCustomConfig(null),
-            null, null, null, null, null, null, null, null, null, null, null, false, null, null, null, null);
+            null, null, null, null, null, null, null, null, null, null, null, false, null, null, null, null, null);
 
     assertThrows(IllegalStateException.class,
         () -> TableConfigUtils.validateInstancePoolsAndReplicaGroups(tableConfig));
@@ -3310,7 +3314,7 @@ public class TableConfigUtilsTest {
     TableConfig tableConfig =
         new TableConfig("table", TableType.REALTIME.name(), new SegmentsValidationAndRetentionConfig(),
             new TenantConfig("DefaultTenant", "DefaultTenant", null), new IndexingConfig(), new TableCustomConfig(null),
-            null, null, null, null, null, null, null, null, null, null, null, false, null, null, null, null);
+            null, null, null, null, null, null, null, null, null, null, null, false, null, null, null, null, null);
 
     assertThrows(IllegalStateException.class,
         () -> TableConfigUtils.validateInstancePoolsAndReplicaGroups(tableConfig));
@@ -3326,7 +3330,7 @@ public class TableConfigUtilsTest {
         new TableConfig("table", TableType.OFFLINE.name(), new SegmentsValidationAndRetentionConfig(),
             new TenantConfig("DefaultTenant", "DefaultTenant", null), new IndexingConfig(), new TableCustomConfig(null),
             null, null, null, null, Map.of("OFFLINE", config), null, null, null, null, null, null, false, null, null,
-            null, null);
+            null, null, null);
 
     assertThrows(IllegalStateException.class,
         () -> TableConfigUtils.validateInstancePoolsAndReplicaGroups(tableConfig));
@@ -3342,7 +3346,7 @@ public class TableConfigUtilsTest {
         new TableConfig("table", TableType.REALTIME.name(), new SegmentsValidationAndRetentionConfig(),
             new TenantConfig("DefaultTenant", "DefaultTenant", null), new IndexingConfig(), new TableCustomConfig(null),
             null, null, null, null, Map.of("CONSUMING", config), null, null, null, null, null, null, false, null, null,
-            null, null);
+            null, null, null);
 
     assertThrows(IllegalStateException.class,
         () -> TableConfigUtils.validateInstancePoolsAndReplicaGroups(tableConfig));
@@ -3358,7 +3362,7 @@ public class TableConfigUtilsTest {
         new TableConfig("table", TableType.OFFLINE.name(), new SegmentsValidationAndRetentionConfig(),
             new TenantConfig("DefaultTenant", "DefaultTenant", null), new IndexingConfig(), new TableCustomConfig(null),
             null, null, null, null, Map.of("OFFLINE", config), null, null, null, null, null, null, false, null, null,
-            null, null);
+            null, null, null);
 
     assertThrows(IllegalStateException.class,
         () -> TableConfigUtils.validateInstancePoolsAndReplicaGroups(tableConfig));
@@ -3374,7 +3378,7 @@ public class TableConfigUtilsTest {
         new TableConfig("table", TableType.REALTIME.name(), new SegmentsValidationAndRetentionConfig(),
             new TenantConfig("DefaultTenant", "DefaultTenant", null), new IndexingConfig(), new TableCustomConfig(null),
             null, null, null, null, Map.of("CONSUMING", config), null, null, null, null, null, null, false, null, null,
-            null, null);
+            null, null, null);
 
     assertThrows(IllegalStateException.class,
         () -> TableConfigUtils.validateInstancePoolsAndReplicaGroups(tableConfig));
@@ -3385,7 +3389,7 @@ public class TableConfigUtilsTest {
     TableConfig tableConfig =
         new TableConfig("table", TableType.OFFLINE.name(), new SegmentsValidationAndRetentionConfig(),
             new TenantConfig("DefaultTenant", "DefaultTenant", null), new IndexingConfig(), new TableCustomConfig(null),
-            null, null, null, null, null, null, null, null, null, null, null, true, null, null, null, null);
+            null, null, null, null, null, null, null, null, null, null, null, true, null, null, null, null, null);
 
     // Should not throw
     TableConfigUtils.validateInstancePoolsAndReplicaGroups(tableConfig);
@@ -3399,7 +3403,7 @@ public class TableConfigUtilsTest {
         new TableConfig("table", TableType.OFFLINE.name(), new SegmentsValidationAndRetentionConfig(),
             new TenantConfig("DefaultTenant", "DefaultTenant", null), new IndexingConfig(), new TableCustomConfig(null),
             null, null, null, null, null, null, null, null, null, null, null, true, null, instancePartitionsMap, null,
-            null);
+            null, null);
 
     // Should not throw
     TableConfigUtils.validateInstancePoolsAndReplicaGroups(tableConfig);
@@ -3964,6 +3968,113 @@ public class TableConfigUtilsTest {
       fail();
     } catch (IllegalStateException e) {
       assertTrue(e.getMessage().contains("out-of-order record column"));
+    }
+  }
+
+  @Test
+  public void testValidateLakehouseConfigValid() {
+    IcebergCatalogConfig catalogConfig =
+        new IcebergCatalogConfig(IcebergCatalogConfig.CatalogType.REST, "https://catalog.example.com",
+            "s3://warehouse", "analytics.events", null);
+    LakehouseConfig lakehouseConfig =
+        new LakehouseConfig(true, LakehouseConfig.Mode.ICEBERG_NATIVE, catalogConfig, null, null, null, null);
+    TableConfig tableConfig =
+        new TableConfigBuilder(TableType.OFFLINE).setTableName(TABLE_NAME).setLakehouseConfig(lakehouseConfig).build();
+    // Should not throw
+    TableConfigUtils.validateLakehouseConfig(tableConfig);
+  }
+
+  @Test
+  public void testValidateLakehouseConfigDisabled() {
+    IcebergCatalogConfig catalogConfig =
+        new IcebergCatalogConfig(IcebergCatalogConfig.CatalogType.REST, null, null, "db.table", null);
+    LakehouseConfig lakehouseConfig =
+        new LakehouseConfig(false, LakehouseConfig.Mode.ICEBERG_NATIVE, catalogConfig, null, null, null, null);
+    TableConfig tableConfig =
+        new TableConfigBuilder(TableType.OFFLINE).setTableName(TABLE_NAME).setLakehouseConfig(lakehouseConfig).build();
+    // Should not throw when disabled
+    TableConfigUtils.validateLakehouseConfig(tableConfig);
+  }
+
+  @Test
+  public void testValidateLakehouseConfigNoCatalog() {
+    LakehouseConfig lakehouseConfig = new LakehouseConfig(true, LakehouseConfig.Mode.ICEBERG_NATIVE, null, null,
+        null, null, null);
+    TableConfig tableConfig =
+        new TableConfigBuilder(TableType.OFFLINE).setTableName(TABLE_NAME).setLakehouseConfig(lakehouseConfig).build();
+    try {
+      TableConfigUtils.validateLakehouseConfig(tableConfig);
+      fail();
+    } catch (IllegalArgumentException e) {
+      assertTrue(e.getMessage().contains("catalog config must be specified"));
+    }
+  }
+
+  @Test
+  public void testValidateLakehouseConfigBlankTableIdentifier() {
+    IcebergCatalogConfig catalogConfig =
+        new IcebergCatalogConfig(IcebergCatalogConfig.CatalogType.REST, null, null, "", null);
+    LakehouseConfig lakehouseConfig =
+        new LakehouseConfig(true, LakehouseConfig.Mode.ICEBERG_NATIVE, catalogConfig, null, null, null, null);
+    TableConfig tableConfig =
+        new TableConfigBuilder(TableType.OFFLINE).setTableName(TABLE_NAME).setLakehouseConfig(lakehouseConfig).build();
+    try {
+      TableConfigUtils.validateLakehouseConfig(tableConfig);
+      fail();
+    } catch (IllegalArgumentException e) {
+      assertTrue(e.getMessage().contains("table identifier must be specified"));
+    }
+  }
+
+  @Test
+  public void testValidateLakehouseConfigInvalidTabletSizing() {
+    IcebergCatalogConfig catalogConfig =
+        new IcebergCatalogConfig(IcebergCatalogConfig.CatalogType.REST, null, null, "db.table", null);
+    TabletConfig tabletConfig = new TabletConfig(-1, null, null);
+    LakehouseConfig lakehouseConfig =
+        new LakehouseConfig(true, LakehouseConfig.Mode.ICEBERG_NATIVE, catalogConfig, null, null, tabletConfig, null);
+    TableConfig tableConfig =
+        new TableConfigBuilder(TableType.OFFLINE).setTableName(TABLE_NAME).setLakehouseConfig(lakehouseConfig).build();
+    try {
+      TableConfigUtils.validateLakehouseConfig(tableConfig);
+      fail();
+    } catch (IllegalArgumentException e) {
+      assertTrue(e.getMessage().contains("targetFilesPerTablet must be positive"));
+    }
+  }
+
+  @Test
+  public void testValidateLakehouseConfigWriteOnOfflineTable() {
+    IcebergCatalogConfig catalogConfig =
+        new IcebergCatalogConfig(IcebergCatalogConfig.CatalogType.REST, null, null, "db.table", null);
+    LakehouseWriteConfig writeConfig = new LakehouseWriteConfig(true, LakehouseConfig.WriteMode.APPEND, null);
+    LakehouseConfig lakehouseConfig =
+        new LakehouseConfig(true, LakehouseConfig.Mode.ICEBERG_NATIVE, catalogConfig, null, writeConfig, null, null);
+    TableConfig tableConfig =
+        new TableConfigBuilder(TableType.OFFLINE).setTableName(TABLE_NAME).setLakehouseConfig(lakehouseConfig).build();
+    try {
+      TableConfigUtils.validateLakehouseConfig(tableConfig);
+      fail();
+    } catch (IllegalArgumentException e) {
+      assertTrue(e.getMessage().contains("only supported for REALTIME"));
+    }
+  }
+
+  @Test
+  public void testValidateLakehouseConfigWithUpsertFails() {
+    IcebergCatalogConfig catalogConfig =
+        new IcebergCatalogConfig(IcebergCatalogConfig.CatalogType.REST, null, null, "db.table", null);
+    LakehouseConfig lakehouseConfig =
+        new LakehouseConfig(true, LakehouseConfig.Mode.ICEBERG_NATIVE, catalogConfig, null, null, null, null);
+    UpsertConfig upsertConfig = new UpsertConfig(UpsertConfig.Mode.FULL);
+    TableConfig tableConfig =
+        new TableConfigBuilder(TableType.OFFLINE).setTableName(TABLE_NAME).setLakehouseConfig(lakehouseConfig)
+            .setUpsertConfig(upsertConfig).build();
+    try {
+      TableConfigUtils.validateLakehouseConfig(tableConfig);
+      fail();
+    } catch (IllegalArgumentException e) {
+      assertTrue(e.getMessage().contains("Upsert is not supported for lakehouse"));
     }
   }
 }
