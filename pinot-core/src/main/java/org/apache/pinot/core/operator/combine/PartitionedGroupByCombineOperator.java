@@ -18,12 +18,16 @@
  */
 package org.apache.pinot.core.operator.combine;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.apache.pinot.core.common.Operator;
 import org.apache.pinot.core.data.table.IndexedTable;
 import org.apache.pinot.core.data.table.IntermediateRecord;
@@ -32,9 +36,11 @@ import org.apache.pinot.core.data.table.Record;
 import org.apache.pinot.core.operator.AcquireReleaseColumnsSegmentOperator;
 import org.apache.pinot.core.operator.blocks.results.BaseResultsBlock;
 import org.apache.pinot.core.operator.blocks.results.GroupByResultsBlock;
+import org.apache.pinot.core.operator.blocks.results.ResultsBlockUtils;
 import org.apache.pinot.core.query.aggregation.groupby.AggregationGroupByResult;
 import org.apache.pinot.core.query.aggregation.groupby.GroupKeyGenerator;
 import org.apache.pinot.core.query.request.context.QueryContext;
+import org.apache.pinot.core.util.trace.TraceCallable;
 import org.apache.pinot.spi.query.QueryThreadContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,6 +59,7 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
   private static final String EXPLAIN_NAME = "PARTITIONED_COMBINE_GROUP_BY";
 
   protected final IndexedTable[] _indexedTables;
+  private final Object[] _partitionLocks;
   private final int _partitionMask;
 
   public PartitionedGroupByCombineOperator(List<Operator> operators, QueryContext queryContext,
@@ -60,6 +67,8 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
     super(operators, queryContext, executorService);
     int numGroupByPartitions = Math.max(1, _queryContext.getNumGroupByPartitions());
     _indexedTables = new IndexedTable[numGroupByPartitions];
+    _partitionLocks = new Object[numGroupByPartitions];
+    Arrays.setAll(_partitionLocks, ignored -> new Object());
     _partitionMask = Integer.bitCount(numGroupByPartitions) == 1 ? numGroupByPartitions - 1 : -1;
     LOGGER.info("Using {} for group-by combine, with {} partitions and {} numTasks", EXPLAIN_NAME, numGroupByPartitions,
         _numTasks);
@@ -76,6 +85,7 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
   @Override
   protected void processSegments() {
     int operatorId;
+    IndexedTable[] localIndexedTables = null;
     while (_processingException.get() == null && (operatorId = _nextOperatorId.getAndIncrement()) < _numOperators) {
       Operator operator = _operators.get(operatorId);
       try {
@@ -83,47 +93,10 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
           ((AcquireReleaseColumnsSegmentOperator) operator).acquire();
         }
         GroupByResultsBlock resultsBlock = (GroupByResultsBlock) operator.nextBlock();
-        if (_indexedTables[0] == null) {
-          synchronized (this) {
-            if (_indexedTables[0] == null) {
-              for (int i = 0; i < _indexedTables.length; i++) {
-                _indexedTables[i] = createIndexedTable(resultsBlock, _numTasks);
-              }
-            }
-          }
+        if (localIndexedTables == null) {
+          localIndexedTables = new IndexedTable[_indexedTables.length];
         }
-
-        updateCombineResultsStats(resultsBlock);
-        Collection<IntermediateRecord> intermediateRecords = resultsBlock.getIntermediateRecords();
-        int mergedKeys = 0;
-        if (intermediateRecords == null) {
-          AggregationGroupByResult aggregationGroupByResult = resultsBlock.getAggregationGroupByResult();
-          if (aggregationGroupByResult != null) {
-            try {
-              Iterator<GroupKeyGenerator.GroupKey> dicGroupKeyIterator = aggregationGroupByResult.getGroupKeyIterator();
-              while (dicGroupKeyIterator.hasNext()) {
-                QueryThreadContext.checkTerminationAndSampleUsagePeriodically(mergedKeys++, EXPLAIN_NAME);
-                GroupKeyGenerator.GroupKey groupKey = dicGroupKeyIterator.next();
-                Object[] keys = groupKey._keys;
-                Object[] values = Arrays.copyOf(keys, _numColumns);
-                int groupId = groupKey._groupId;
-                for (int i = 0; i < _numAggregationFunctions; i++) {
-                  values[_numGroupByExpressions + i] = aggregationGroupByResult.getResultForGroupId(i, groupId);
-                }
-                Key key = new Key(keys);
-                _indexedTables[getPartitionId(key)].upsert(key, new Record(values));
-              }
-            } finally {
-              aggregationGroupByResult.closeGroupKeyGenerator();
-            }
-          }
-        } else {
-          for (IntermediateRecord intermediateResult : intermediateRecords) {
-            QueryThreadContext.checkTerminationAndSampleUsagePeriodically(mergedKeys++, EXPLAIN_NAME);
-            _indexedTables[getPartitionId(intermediateResult._key)].upsert(intermediateResult._key,
-                intermediateResult._record);
-          }
-        }
+        mergeResultsBlockIntoLocalPartitions(localIndexedTables, resultsBlock);
       } catch (RuntimeException e) {
         throw wrapOperatorException(operator, e);
       } finally {
@@ -132,6 +105,7 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
         }
       }
     }
+    publishLocalPartitions(localIndexedTables);
   }
 
   /**
@@ -161,16 +135,162 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
       return getExceptionResultsBlock(processingException);
     }
 
-    IndexedTable indexedTable = _indexedTables[0];
-    for (int i = 1; i < _indexedTables.length; i++) {
-      if (_indexedTables[i].size() > indexedTable.size()) {
-        indexedTable.mergePartitionTable(_indexedTables[i]);
-      } else {
-        _indexedTables[i].mergePartitionTable(indexedTable);
-        indexedTable = _indexedTables[i];
+    List<IndexedTable> partitionTables = new ArrayList<>(_indexedTables.length);
+    for (IndexedTable partitionTable : _indexedTables) {
+      if (partitionTable != null) {
+        partitionTables.add(partitionTable);
       }
     }
+    IndexedTable indexedTable;
+    try {
+      indexedTable = mergePartitionTables(partitionTables);
+    } catch (TimeoutException e) {
+      long remainingTimeMs = _queryContext.getEndTimeMs() - System.currentTimeMillis();
+      return getTimeoutResultsBlock(Math.max(0L, remainingTimeMs));
+    }
+    if (indexedTable == null) {
+      return ResultsBlockUtils.buildEmptyQueryResults(_queryContext);
+    }
     return getMergedResultsBlock(indexedTable);
+  }
+
+  private void mergeResultsBlockIntoLocalPartitions(IndexedTable[] localIndexedTables,
+      GroupByResultsBlock resultsBlock) {
+    updateCombineResultsStats(resultsBlock);
+
+    Collection<IntermediateRecord> intermediateRecords = resultsBlock.getIntermediateRecords();
+    int mergedKeys = 0;
+    if (intermediateRecords == null) {
+      AggregationGroupByResult aggregationGroupByResult = resultsBlock.getAggregationGroupByResult();
+      if (aggregationGroupByResult != null) {
+        try {
+          Iterator<GroupKeyGenerator.GroupKey> dicGroupKeyIterator = aggregationGroupByResult.getGroupKeyIterator();
+          while (dicGroupKeyIterator.hasNext()) {
+            QueryThreadContext.checkTerminationAndSampleUsagePeriodically(mergedKeys++, EXPLAIN_NAME);
+            GroupKeyGenerator.GroupKey groupKey = dicGroupKeyIterator.next();
+            Object[] keys = groupKey._keys;
+            Object[] values = Arrays.copyOf(keys, _numColumns);
+            int groupId = groupKey._groupId;
+            for (int i = 0; i < _numAggregationFunctions; i++) {
+              values[_numGroupByExpressions + i] = aggregationGroupByResult.getResultForGroupId(i, groupId);
+            }
+            Key key = new Key(keys);
+            getOrCreateLocalPartitionTable(localIndexedTables, getPartitionId(key), resultsBlock).upsert(key,
+                new Record(values));
+          }
+        } finally {
+          aggregationGroupByResult.closeGroupKeyGenerator();
+        }
+      }
+    } else {
+      for (IntermediateRecord intermediateResult : intermediateRecords) {
+        QueryThreadContext.checkTerminationAndSampleUsagePeriodically(mergedKeys++, EXPLAIN_NAME);
+        getOrCreateLocalPartitionTable(localIndexedTables, getPartitionId(intermediateResult._key), resultsBlock)
+            .upsert(intermediateResult._key, intermediateResult._record);
+      }
+    }
+  }
+
+  private IndexedTable getOrCreateLocalPartitionTable(IndexedTable[] localIndexedTables, int partitionId,
+      GroupByResultsBlock resultsBlock) {
+    IndexedTable indexedTable = localIndexedTables[partitionId];
+    if (indexedTable == null) {
+      indexedTable = createIndexedTable(resultsBlock, 1);
+      localIndexedTables[partitionId] = indexedTable;
+    }
+    return indexedTable;
+  }
+
+  private void publishLocalPartitions(IndexedTable[] localIndexedTables) {
+    if (localIndexedTables == null) {
+      return;
+    }
+    for (int partitionId = 0; partitionId < localIndexedTables.length; partitionId++) {
+      IndexedTable localIndexedTable = localIndexedTables[partitionId];
+      if (localIndexedTable == null) {
+        continue;
+      }
+      synchronized (_partitionLocks[partitionId]) {
+        IndexedTable indexedTable = _indexedTables[partitionId];
+        if (indexedTable == null) {
+          _indexedTables[partitionId] = localIndexedTable;
+        } else if (localIndexedTable.size() > indexedTable.size()) {
+          localIndexedTable.merge(indexedTable);
+          _indexedTables[partitionId] = localIndexedTable;
+        } else {
+          indexedTable.merge(localIndexedTable);
+        }
+      }
+    }
+  }
+
+  private IndexedTable mergePartitionTables(List<IndexedTable> partitionTables)
+      throws Exception {
+    int numPartitionTables = partitionTables.size();
+    if (numPartitionTables == 0) {
+      return null;
+    }
+    if (numPartitionTables == 1) {
+      return partitionTables.get(0);
+    }
+
+    List<IndexedTable> tablesToMerge = partitionTables;
+    if (tablesToMerge.size() <= 2 || _numTasks <= 1) {
+      return mergePartitionTablesSequentially(tablesToMerge);
+    }
+
+    while (tablesToMerge.size() > 1) {
+      if (_queryContext.getEndTimeMs() - System.currentTimeMillis() <= 0) {
+        throw new TimeoutException("Timed out while reducing partitioned group-by results");
+      }
+
+      int numPairs = tablesToMerge.size() / 2;
+      List<Future<IndexedTable>> futures = new ArrayList<>(numPairs);
+      List<IndexedTable> nextRoundTables = new ArrayList<>((tablesToMerge.size() + 1) / 2);
+      for (int i = 0; i < numPairs; i++) {
+        IndexedTable leftTable = tablesToMerge.get(i * 2);
+        IndexedTable rightTable = tablesToMerge.get(i * 2 + 1);
+        futures.add(_executorService.submit(new TraceCallable<IndexedTable>() {
+          @Override
+          public IndexedTable callJob() {
+            return mergePartitionTables(leftTable, rightTable);
+          }
+        }));
+      }
+      if ((tablesToMerge.size() & 1) == 1) {
+        nextRoundTables.add(tablesToMerge.get(tablesToMerge.size() - 1));
+      }
+      try {
+        for (Future<IndexedTable> future : futures) {
+          long timeoutMs = _queryContext.getEndTimeMs() - System.currentTimeMillis();
+          if (timeoutMs <= 0) {
+            throw new TimeoutException("Timed out while reducing partitioned group-by results");
+          }
+          nextRoundTables.add(future.get(timeoutMs, TimeUnit.MILLISECONDS));
+        }
+      } catch (ExecutionException e) {
+        throw new RuntimeException("Error while reducing partitioned group-by results", e.getCause());
+      }
+      tablesToMerge = nextRoundTables;
+    }
+    return tablesToMerge.get(0);
+  }
+
+  private IndexedTable mergePartitionTablesSequentially(List<IndexedTable> partitionTables) {
+    IndexedTable indexedTable = partitionTables.get(0);
+    for (int i = 1; i < partitionTables.size(); i++) {
+      indexedTable = mergePartitionTables(indexedTable, partitionTables.get(i));
+    }
+    return indexedTable;
+  }
+
+  private static IndexedTable mergePartitionTables(IndexedTable leftTable, IndexedTable rightTable) {
+    if (leftTable.size() >= rightTable.size()) {
+      leftTable.mergePartitionTable(rightTable);
+      return leftTable;
+    }
+    rightTable.mergePartitionTable(leftTable);
+    return rightTable;
   }
 
   private int getPartitionId(Key key) {
