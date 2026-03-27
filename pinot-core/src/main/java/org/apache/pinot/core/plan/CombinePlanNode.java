@@ -20,11 +20,12 @@ package org.apache.pinot.core.plan;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import javax.annotation.Nullable;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.common.request.context.OrderByExpressionContext;
+import org.apache.pinot.common.utils.config.QueryOptionsUtils;
 import org.apache.pinot.core.common.Operator;
 import org.apache.pinot.core.operator.combine.AggregationCombineOperator;
 import org.apache.pinot.core.operator.combine.BaseCombineOperator;
@@ -162,8 +163,10 @@ public class CombinePlanNode implements PlanNode {
 
   private BaseCombineOperator getGroupByCombineOperator(List<Operator> operators) {
     String groupByAlgorithm = _queryContext.getGroupByAlgorithm();
-    String normalizedGroupByAlgorithm = groupByAlgorithm != null ? groupByAlgorithm.trim().toUpperCase(Locale.ROOT)
-        : GroupByCombineOperator.ALGORITHM;
+    String normalizedGroupByAlgorithm = QueryOptionsUtils.normalizeGroupByAlgorithm(groupByAlgorithm);
+    if (StringUtils.isEmpty(normalizedGroupByAlgorithm)) {
+      normalizedGroupByAlgorithm = GroupByCombineOperator.ALGORITHM;
+    }
 
     if (GroupByCombineOperator.ALGORITHM.equals(normalizedGroupByAlgorithm)
         && _queryContext.shouldSortAggregateUnderSafeTrim()) {

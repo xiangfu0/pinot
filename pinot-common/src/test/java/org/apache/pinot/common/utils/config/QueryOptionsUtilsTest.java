@@ -194,6 +194,13 @@ public class QueryOptionsUtilsTest {
     assertEquals(actualHash, "");
   }
 
+  @Test
+  public void shouldNormalizeGroupByAlgorithm() {
+    assertEquals(QueryOptionsUtils.normalizeGroupByAlgorithm(" partitioned "), "PARTITIONED");
+    assertNull(QueryOptionsUtils.normalizeGroupByAlgorithm("   "));
+    assertNull(QueryOptionsUtils.normalizeGroupByAlgorithm(null));
+  }
+
   private static Object getValue(Map<String, String> map, String key) {
     switch (key) {
       // Positive ints

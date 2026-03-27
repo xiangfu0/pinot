@@ -25,6 +25,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -412,6 +413,12 @@ public class QueryOptionsUtils {
   @Nullable
   public static String getGroupByAlgorithm(Map<String, String> queryOptions) {
     return queryOptions.get(QueryOptionKey.GROUP_BY_ALGORITHM);
+  }
+
+  @Nullable
+  public static String normalizeGroupByAlgorithm(@Nullable String groupByAlgorithm) {
+    String normalizedGroupByAlgorithm = StringUtils.trimToNull(groupByAlgorithm);
+    return normalizedGroupByAlgorithm != null ? normalizedGroupByAlgorithm.toUpperCase(Locale.ROOT) : null;
   }
 
   @Nullable

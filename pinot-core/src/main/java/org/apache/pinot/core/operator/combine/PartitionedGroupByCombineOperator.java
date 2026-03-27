@@ -70,7 +70,8 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
     _partitionLocks = new Object[numGroupByPartitions];
     Arrays.setAll(_partitionLocks, ignored -> new Object());
     _partitionMask = Integer.bitCount(numGroupByPartitions) == 1 ? numGroupByPartitions - 1 : -1;
-    LOGGER.info("Using {} for group-by combine, with {} partitions and {} numTasks", EXPLAIN_NAME, numGroupByPartitions,
+    LOGGER.debug("Using {} for group-by combine, with {} partitions and {} numTasks", EXPLAIN_NAME,
+        numGroupByPartitions,
         _numTasks);
   }
 
@@ -268,7 +269,15 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
           }
           nextRoundTables.add(future.get(timeoutMs, TimeUnit.MILLISECONDS));
         }
+      } catch (InterruptedException e) {
+        cancelFutures(futures);
+        Thread.currentThread().interrupt();
+        throw e;
+      } catch (TimeoutException e) {
+        cancelFutures(futures);
+        throw e;
       } catch (ExecutionException e) {
+        cancelFutures(futures);
         throw new RuntimeException("Error while reducing partitioned group-by results", e.getCause());
       }
       tablesToMerge = nextRoundTables;
@@ -291,6 +300,12 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
     }
     rightTable.mergePartitionTable(leftTable);
     return rightTable;
+  }
+
+  private static void cancelFutures(List<Future<IndexedTable>> futures) {
+    for (Future<IndexedTable> future : futures) {
+      future.cancel(true);
+    }
   }
 
   private int getPartitionId(Key key) {

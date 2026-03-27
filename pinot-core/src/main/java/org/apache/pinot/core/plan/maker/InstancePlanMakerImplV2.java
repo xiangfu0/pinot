@@ -23,11 +23,11 @@ import com.google.common.base.Preconditions;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.common.request.context.FilterContext;
@@ -262,9 +262,9 @@ public class InstancePlanMakerImplV2 implements PlanMaker {
       } else {
         queryContext.setMinInitialIndexedTableCapacity(_minInitialIndexedTableCapacity);
       }
-      String groupByAlgorithm = QueryOptionsUtils.getGroupByAlgorithm(queryOptions);
-      if (groupByAlgorithm != null) {
-        groupByAlgorithm = groupByAlgorithm.trim().toUpperCase(Locale.ROOT);
+      String groupByAlgorithm =
+          QueryOptionsUtils.normalizeGroupByAlgorithm(QueryOptionsUtils.getGroupByAlgorithm(queryOptions));
+      if (StringUtils.isNotEmpty(groupByAlgorithm)) {
         queryContext.setGroupByAlgorithm(groupByAlgorithm);
       } else {
         groupByAlgorithm = DEFAULT_GROUP_BY_ALGORITHM;

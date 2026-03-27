@@ -44,7 +44,7 @@ public class NonblockingGroupByCombineOperator extends GroupByCombineOperator {
   public NonblockingGroupByCombineOperator(List<Operator> operators, QueryContext queryContext,
       ExecutorService executorService) {
     super(operators, queryContext, executorService);
-    LOGGER.info("Using {} for group-by combine with {} tasks", ALGORITHM, _numTasks);
+    LOGGER.debug("Using {} for group-by combine with {} tasks", ALGORITHM, _numTasks);
   }
 
   @Override

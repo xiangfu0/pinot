@@ -390,7 +390,7 @@ public class ServerPlanRequestUtils {
         for (int rowIdx = 0; rowIdx < numRows; rowIdx++) {
           arrString[rowIdx] = (String) dataContainer.get(rowIdx)[colIdx];
         }
-        Arrays.parallelSort(arrString);
+        Arrays.sort(arrString);
         for (int rowIdx = 0; rowIdx < numRows; rowIdx++) {
           expressions.add(RequestUtils.getLiteralExpression(arrString[rowIdx]));
         }
