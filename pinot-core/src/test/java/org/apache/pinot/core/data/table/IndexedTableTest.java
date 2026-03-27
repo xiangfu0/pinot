@@ -299,4 +299,37 @@ public class IndexedTableTest {
 
     checkEvicted(indexedTable, "f", "g");
   }
+
+  @Test
+  public void testMergePartitionTableInvalidatesFinishedTopRecords() {
+    QueryContext queryContext = QueryContextConverterUtils.getQueryContext(
+        "SELECT SUM(m1) FROM testTable GROUP BY d1 ORDER BY SUM(m1) DESC");
+    DataSchema dataSchema = new DataSchema(new String[]{"d1", "sum(m1)"},
+        new ColumnDataType[]{ColumnDataType.STRING, ColumnDataType.DOUBLE});
+
+    IndexedTable indexedTable =
+        new SimpleIndexedTable(dataSchema, false, queryContext, 1, TRIM_SIZE, TRIM_THRESHOLD, INITIAL_CAPACITY,
+            Executors.newCachedThreadPool());
+    indexedTable.upsert(getRecord(new Object[]{"a", 10d}));
+    indexedTable.upsert(getRecord(new Object[]{"b", 20d}));
+    indexedTable.finish(true);
+    Assert.assertEquals(indexedTable.size(), 1);
+
+    IndexedTable mergeTable =
+        new SimpleIndexedTable(dataSchema, false, queryContext, 1, TRIM_SIZE, TRIM_THRESHOLD, INITIAL_CAPACITY,
+            Executors.newCachedThreadPool());
+    mergeTable.upsert(getRecord(new Object[]{"c", 30d}));
+
+    indexedTable.mergePartitionTable(mergeTable);
+
+    Assert.assertEquals(indexedTable.size(), 3);
+    List<String> mergedRecords = new ArrayList<>();
+    indexedTable.iterator().forEachRemaining(record -> mergedRecords.add((String) record.getValues()[0]));
+    Assert.assertEquals(mergedRecords.size(), 3);
+    Assert.assertTrue(mergedRecords.containsAll(Arrays.asList("a", "b", "c")));
+
+    indexedTable.finish(true);
+    Assert.assertEquals(indexedTable.size(), 1);
+    Assert.assertEquals(indexedTable.iterator().next().getValues()[0], "c");
+  }
 }

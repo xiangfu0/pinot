@@ -271,6 +271,7 @@ public abstract class IndexedTable extends BaseTable {
 
 
   public void mergePartitionTable(Table table) {
+    _topRecords = null;
     if (table instanceof IndexedTable) {
       _lookupMap.putAll(((IndexedTable) table)._lookupMap);
     } else {

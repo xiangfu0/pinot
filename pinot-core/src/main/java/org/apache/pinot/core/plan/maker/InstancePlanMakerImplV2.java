@@ -54,6 +54,7 @@ import org.apache.pinot.core.query.prefetch.FetchPlanner;
 import org.apache.pinot.core.query.prefetch.FetchPlannerRegistry;
 import org.apache.pinot.core.query.request.context.QueryContext;
 import org.apache.pinot.core.query.request.context.utils.QueryContextUtils;
+import org.apache.pinot.core.util.QueryMultiThreadingUtils;
 import org.apache.pinot.segment.spi.FetchContext;
 import org.apache.pinot.segment.spi.IndexSegment;
 import org.apache.pinot.segment.spi.SegmentContext;
@@ -274,8 +275,9 @@ public class InstancePlanMakerImplV2 implements PlanMaker {
       if (numGroupByPartitions != null) {
         queryContext.setNumGroupByPartitions(numGroupByPartitions);
       } else if (PartitionedGroupByCombineOperator.ALGORITHM.equals(groupByAlgorithm)) {
-        queryContext.setNumGroupByPartitions(Math.max(DEFAULT_NUM_GROUP_BY_PARTITIONS,
-            queryContext.getMaxExecutionThreads()));
+        int effectiveParallelism = queryContext.getMaxExecutionThreads() > 0 ? queryContext.getMaxExecutionThreads()
+            : QueryMultiThreadingUtils.MAX_NUM_THREADS_PER_QUERY;
+        queryContext.setNumGroupByPartitions(Math.max(DEFAULT_NUM_GROUP_BY_PARTITIONS, effectiveParallelism));
       } else {
         queryContext.setNumGroupByPartitions(DEFAULT_NUM_GROUP_BY_PARTITIONS);
       }
