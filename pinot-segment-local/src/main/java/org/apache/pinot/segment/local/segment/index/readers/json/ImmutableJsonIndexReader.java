@@ -567,15 +567,18 @@ public class ImmutableJsonIndexReader implements JsonIndexReader {
       }
     }
 
+    String originalJsonPathKey = jsonPathKey;
     Pair<String, ImmutableRoaringBitmap> pathKey = getKeyAndFlattenedDocIds(jsonPathKey);
     if (pathKey.getRight() != null && pathKey.getRight().isEmpty()) {
       return new HashSet<>();
     }
     jsonPathKey = pathKey.getLeft();
 
-    // Array index paths need bitmap intersection — fall back to the default implementation
+    // Array index paths need bitmap intersection — fall back to the default implementation.
+    // Use the original path key (before getKeyAndFlattenedDocIds strips array indices) so that
+    // collectValuesFromFlattenedDocsMap denormalizes the correct path (e.g. $.items[0].name).
     if (pathKey.getRight() != null) {
-      return collectValuesFromFlattenedDocsMap(jsonPathKey, filterString);
+      return collectValuesFromFlattenedDocsMap(originalJsonPathKey, filterString);
     }
 
     if (filterString == null) {

@@ -64,12 +64,16 @@ import org.roaringbitmap.RoaringBitmap;
 
 
 /**
- * Distinct operator for the scalar {@code jsonExtractIndex(column, path, type[, defaultValue])} form.
+ * Distinct operator for the scalar `jsonExtractIndex(column, path, type[, defaultValue])` form.
  *
- * <p>Execution flow:
- * 1. Push a same-path {@code JSON_MATCH} predicate into the JSON-index lookup when it cannot match missing paths.
- * 2. Convert matching flattened doc ids back to segment doc ids.
- * 3. Apply any remaining row-level filter and materialize DISTINCT results, including missing-path handling.
+ * ## Execution flow
+ *
+ * 1. Push a same-path `JSON_MATCH` predicate into the JSON-index lookup when it cannot match
+ *    missing paths (fast path: returns distinct value strings directly, no bitmap conversion).
+ * 2. Otherwise, retrieve per-value flattened doc-id bitmaps and convert them back to segment
+ *    doc ids.
+ * 3. Apply any remaining row-level filter and materialize DISTINCT results, including
+ *    missing-path handling (default value, null, or exception depending on the query).
  */
 public class JsonIndexDistinctOperator extends BaseOperator<DistinctResultsBlock> {
   private static final String EXPLAIN_NAME = "DISTINCT_JSON_INDEX";
@@ -288,10 +292,33 @@ public class JsonIndexDistinctOperator extends BaseOperator<DistinctResultsBlock
   private static boolean jsonMatchFilterCanMatchMissingPath(String filterJsonString) {
     try {
       FilterContext filter = RequestContextUtils.getFilter(CalciteSqlParser.compileToExpression(filterJsonString));
-      return filter.getType() == FilterContext.Type.PREDICATE
-          && filter.getPredicate().getType() == Predicate.Type.IS_NULL;
+      return canMatchMissingPath(filter);
     } catch (Exception e) {
-      return false;
+      // Conservative: assume it can match missing paths if we cannot parse
+      return true;
+    }
+  }
+
+  private static boolean canMatchMissingPath(FilterContext filter) {
+    switch (filter.getType()) {
+      case PREDICATE:
+        Predicate.Type predType = filter.getPredicate().getType();
+        // IS_NULL explicitly matches missing paths; NOT_EQ and NOT_IN use bitmap flipping
+        // which includes docs that don't have the path at all.
+        return predType == Predicate.Type.IS_NULL
+            || predType == Predicate.Type.NOT_EQ
+            || predType == Predicate.Type.NOT_IN;
+      case AND:
+      case OR:
+        for (FilterContext child : filter.getChildren()) {
+          if (canMatchMissingPath(child)) {
+            return true;
+          }
+        }
+        return false;
+      default:
+        // Conservative for unknown filter types
+        return true;
     }
   }
 
@@ -306,16 +333,31 @@ public class JsonIndexDistinctOperator extends BaseOperator<DistinctResultsBlock
       return null;
     }
     String filterJsonString = ((JsonMatchPredicate) predicate).getValue();
-    int start = filterJsonString.indexOf('"');
-    if (start < 0) {
-      return null;
+    // Check that ALL quoted paths in the filter reference the same path as the selected expression.
+    // A filter like '"$.k1" = ''x'' OR "$.k2" = ''y''' references two different paths and cannot
+    // be treated as a same-path filter even if the first path matches.
+    boolean foundMatchingPath = false;
+    int pos = 0;
+    while (pos < filterJsonString.length()) {
+      int start = filterJsonString.indexOf('"', pos);
+      if (start < 0) {
+        break;
+      }
+      int end = filterJsonString.indexOf('"', start + 1);
+      if (end < 0) {
+        break;
+      }
+      String quotedValue = filterJsonString.substring(start + 1, end);
+      // Only check values that look like JSON paths (start with $)
+      if (quotedValue.startsWith("$")) {
+        if (!parsed._jsonPathString.equals(quotedValue)) {
+          return null;
+        }
+        foundMatchingPath = true;
+      }
+      pos = end + 1;
     }
-    int end = filterJsonString.indexOf('"', start + 1);
-    if (end < 0) {
-      return null;
-    }
-    String filterPath = filterJsonString.substring(start + 1, end);
-    return parsed._jsonPathString.equals(filterPath) ? filterJsonString : null;
+    return foundMatchingPath ? filterJsonString : null;
   }
 
   private DistinctTable createDistinctTable(DataSchema dataSchema, FieldSpec.DataType dataType,
