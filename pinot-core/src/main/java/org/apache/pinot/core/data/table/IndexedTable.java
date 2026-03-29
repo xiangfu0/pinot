@@ -109,6 +109,23 @@ public abstract class IndexedTable extends BaseTable {
     return upsert(new Key(keyValues), record);
   }
 
+  @Override
+  public boolean merge(Table table) {
+    if (table instanceof IndexedTable) {
+      // Optimized path: iterate the source's entry set directly to reuse existing Key objects,
+      // avoiding per-record Arrays.copyOf + new Key + Arrays.hashCode overhead.
+      for (Map.Entry<Key, Record> entry : ((IndexedTable) table)._lookupMap.entrySet()) {
+        upsert(entry.getKey(), entry.getValue());
+      }
+    } else {
+      Iterator<Record> iterator = table.iterator();
+      while (iterator.hasNext()) {
+        upsert(iterator.next());
+      }
+    }
+    return true;
+  }
+
   /**
    * Adds a record with new key or updates a record with existing key.
    */

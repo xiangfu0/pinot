@@ -193,18 +193,17 @@ public final class GroupByUtils {
 
   private static IndexedTable getTrimDisabledIndexedTable(DataSchema dataSchema, boolean hasFinalInput,
       QueryContext queryContext, int resultSize, int initialCapacity, int numThreads, ExecutorService executorService) {
+    if (numThreads == 1) {
+      return new SimpleIndexedTable(dataSchema, hasFinalInput, queryContext, resultSize, Integer.MAX_VALUE,
+          Integer.MAX_VALUE, initialCapacity, executorService);
+    }
     if (queryContext.isAccurateGroupByWithoutOrderBy() && queryContext.getOrderByExpressions() == null
         && queryContext.getHavingFilter() == null) {
       return new DeterministicConcurrentIndexedTable(dataSchema, hasFinalInput, queryContext, resultSize,
           Integer.MAX_VALUE, Integer.MAX_VALUE, initialCapacity, executorService);
     }
-    if (numThreads == 1) {
-      return new SimpleIndexedTable(dataSchema, hasFinalInput, queryContext, resultSize, Integer.MAX_VALUE,
-          Integer.MAX_VALUE, initialCapacity, executorService);
-    } else {
-      return new UnboundedConcurrentIndexedTable(dataSchema, hasFinalInput, queryContext, resultSize, initialCapacity,
-          executorService);
-    }
+    return new UnboundedConcurrentIndexedTable(dataSchema, hasFinalInput, queryContext, resultSize, initialCapacity,
+        executorService);
   }
 
   private static IndexedTable getTrimEnabledIndexedTable(DataSchema dataSchema, boolean hasFinalInput,
