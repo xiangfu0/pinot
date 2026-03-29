@@ -70,8 +70,7 @@ public class BenchmarkGroupByCombineOperator {
   private static final String QUERY =
       "SELECT d1, d2, SUM(m1), MAX(m2) FROM testTable GROUP BY d1, d2 ORDER BY SUM(m1) DESC LIMIT 500";
   private static final int NUM_SEGMENTS = 32;
-  private static final int CARDINALITY_D1 = 512;
-  private static final int CARDINALITY_D2 = 256;
+  private static final int D2_CARDINALITY = 10;
   private static final long QUERY_TIMEOUT_MS = TimeUnit.MINUTES.toMillis(5);
 
   @Param({
@@ -81,14 +80,19 @@ public class BenchmarkGroupByCombineOperator {
   })
   private String _algorithm;
 
-  @Param({"2000", "10000"})
+  @Param({"10000"})
   private int _numRecordsPerSegment;
 
-  @Param({"4", "8"})
+  @Param({"8"})
   private int _numThreads;
 
-  private final String[] _d1Values = new String[CARDINALITY_D1];
-  private final Integer[] _d2Values = new Integer[CARDINALITY_D2];
+  /** Target number of unique group-by key combinations (d1 x d2). */
+  @Param({"500", "5000", "50000", "500000"})
+  private int _uniqueGroups;
+
+  private String[] _d1Values;
+  private Integer[] _d2Values;
+  private int _d1Cardinality;
 
   private DataSchema _dataSchema;
   private SegmentData[] _segmentData;
@@ -101,10 +105,13 @@ public class BenchmarkGroupByCombineOperator {
   @Setup(Level.Trial)
   public void setup()
       throws NoSuchMethodException {
-    for (int i = 0; i < CARDINALITY_D1; i++) {
+    _d1Cardinality = Math.max(1, _uniqueGroups / D2_CARDINALITY);
+    _d1Values = new String[_d1Cardinality];
+    _d2Values = new Integer[D2_CARDINALITY];
+    for (int i = 0; i < _d1Cardinality; i++) {
       _d1Values[i] = "d1_" + i;
     }
-    for (int i = 0; i < CARDINALITY_D2; i++) {
+    for (int i = 0; i < D2_CARDINALITY; i++) {
       _d2Values[i] = i;
     }
 
@@ -116,8 +123,8 @@ public class BenchmarkGroupByCombineOperator {
     for (int i = 0; i < NUM_SEGMENTS; i++) {
       _segmentData[i] = new SegmentData(_numRecordsPerSegment);
       for (int j = 0; j < _numRecordsPerSegment; j++) {
-        _segmentData[i]._d1Ids[j] = random.nextInt(CARDINALITY_D1);
-        _segmentData[i]._d2Ids[j] = random.nextInt(CARDINALITY_D2);
+        _segmentData[i]._d1Ids[j] = random.nextInt(_d1Cardinality);
+        _segmentData[i]._d2Ids[j] = random.nextInt(D2_CARDINALITY);
         _segmentData[i]._sumValues[j] = random.nextInt(1000);
         _segmentData[i]._maxValues[j] = random.nextInt(1000);
       }
