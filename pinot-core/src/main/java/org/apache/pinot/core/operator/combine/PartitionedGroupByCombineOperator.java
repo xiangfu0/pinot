@@ -217,9 +217,11 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
           _indexedTables[partitionId] = localIndexedTable;
         } else if (localIndexedTable.size() > indexedTable.size()) {
           localIndexedTable.merge(indexedTable);
+          localIndexedTable.absorbTrimStats(indexedTable);
           _indexedTables[partitionId] = localIndexedTable;
         } else {
           indexedTable.merge(localIndexedTable);
+          indexedTable.absorbTrimStats(localIndexedTable);
         }
       }
     }

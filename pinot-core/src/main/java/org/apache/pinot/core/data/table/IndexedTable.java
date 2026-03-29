@@ -161,6 +161,15 @@ public abstract class IndexedTable extends BaseTable {
       long resizeTimeNs = System.nanoTime() - startTimeNs;
       _numResizes++;
       _resizeTimeNs += resizeTimeNs;
+    } else if (_lookupMap.size() > _resultSize) {
+      // When there is no ORDER BY, cap the results to _resultSize. This can happen when partition tables
+      // are merged via mergePartitionTable(), which bypasses the per-upsert capacity check.
+      List<Record> limited = new ArrayList<>(_resultSize);
+      Iterator<Record> it = _lookupMap.values().iterator();
+      for (int i = 0; i < _resultSize && it.hasNext(); i++) {
+        limited.add(it.next());
+      }
+      _topRecords = limited;
     } else {
       _topRecords = _lookupMap.values();
     }
@@ -273,7 +282,12 @@ public abstract class IndexedTable extends BaseTable {
   public void mergePartitionTable(Table table) {
     _topRecords = null;
     if (table instanceof IndexedTable) {
-      _lookupMap.putAll(((IndexedTable) table)._lookupMap);
+      IndexedTable other = (IndexedTable) table;
+      _lookupMap.putAll(other._lookupMap);
+      // Propagate trim statistics from the absorbed table so that isTrimmed() reflects
+      // any trimming that occurred in any partition, not just the surviving table.
+      _numResizes += other._numResizes;
+      _resizeTimeNs += other._resizeTimeNs;
     } else {
       Iterator<Record> iterator = table.iterator();
       while (iterator.hasNext()) {
@@ -285,6 +299,14 @@ public abstract class IndexedTable extends BaseTable {
     if (_lookupMap.size() >= _trimThreshold) {
       resize();
     }
+  }
+
+  /**
+   * Absorbs trim statistics from another table that was merged into this one.
+   */
+  public void absorbTrimStats(IndexedTable other) {
+    _numResizes += other._numResizes;
+    _resizeTimeNs += other._resizeTimeNs;
   }
 
   public int getNumResizes() {
