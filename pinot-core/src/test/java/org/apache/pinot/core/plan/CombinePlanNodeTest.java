@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.pinot.core.operator.combine.BaseCombineOperator;
-import org.apache.pinot.core.operator.combine.SequentialSortedGroupByCombineOperator;
+import org.apache.pinot.core.operator.combine.PartitionedGroupByCombineOperator;
 import org.apache.pinot.core.plan.maker.InstancePlanMakerImplV2;
 import org.apache.pinot.core.query.request.context.QueryContext;
 import org.apache.pinot.core.query.request.context.utils.QueryContextConverterUtils;
@@ -178,7 +178,7 @@ public class CombinePlanNodeTest {
     BaseCombineOperator combineOperator =
         new CombinePlanNode(List.of(), queryContext, _executorService, null).run();
 
-    Assert.assertTrue(combineOperator instanceof SequentialSortedGroupByCombineOperator);
+    Assert.assertTrue(combineOperator instanceof PartitionedGroupByCombineOperator);
   }
 
   @Test
