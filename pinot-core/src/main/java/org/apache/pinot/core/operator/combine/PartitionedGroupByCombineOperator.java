@@ -23,19 +23,16 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import org.apache.pinot.common.utils.DataSchema;
 import org.apache.pinot.core.common.Operator;
 import org.apache.pinot.core.data.table.IndexedTable;
 import org.apache.pinot.core.data.table.IntermediateRecord;
 import org.apache.pinot.core.data.table.Key;
 import org.apache.pinot.core.data.table.Record;
-import org.apache.pinot.core.data.table.Table;
 import org.apache.pinot.core.operator.AcquireReleaseColumnsSegmentOperator;
 import org.apache.pinot.core.operator.blocks.results.BaseResultsBlock;
 import org.apache.pinot.core.operator.blocks.results.GroupByResultsBlock;
@@ -145,63 +142,17 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
         partitionTables.add(partitionTable);
       }
     }
-    if (partitionTables.isEmpty()) {
+    IndexedTable indexedTable;
+    try {
+      indexedTable = mergePartitionTables(partitionTables);
+    } catch (TimeoutException e) {
+      long remainingTimeMs = _queryContext.getEndTimeMs() - System.currentTimeMillis();
+      return getTimeoutResultsBlock(Math.max(0L, remainingTimeMs));
+    }
+    if (indexedTable == null) {
       return ResultsBlockUtils.buildEmptyQueryResults(_queryContext);
     }
-    // Single partition: use the standard merge path
-    if (partitionTables.size() == 1) {
-      return getMergedResultsBlock(partitionTables.get(0));
-    }
-
-    // Optimization: finish each partition independently instead of merging all entries into one
-    // large table first. This avoids the O(N) putAll cost of mergePartitionTables().
-    // Each partition's finish() selects its own top-K from N/P entries, which is much cheaper
-    // than selecting top-K from N entries after merging.
-
-    // Check trim status before finish
-    for (IndexedTable t : partitionTables) {
-      if (t.isTrimmed() && _queryContext.isUnsafeTrim()) {
-        _groupsTrimmed = true;
-      }
-    }
-
-    // Determine finish mode
-    boolean sort;
-    boolean storeFinalResult;
-    if (_queryContext.isServerReturnFinalResult()) {
-      sort = true;
-      storeFinalResult = true;
-    } else if (_queryContext.isServerReturnFinalResultKeyUnpartitioned()) {
-      sort = false;
-      storeFinalResult = true;
-    } else {
-      sort = false;
-      storeFinalResult = false;
-    }
-
-    // Finish all partitions in parallel. For high-cardinality ORDER BY queries, each partition's
-    // finish() does O(N/P * log K) heap selection. Running them in parallel reduces wall-clock
-    // from O(P * N/P * log K) = O(N * log K) to just O(N/P * log K).
-    finishPartitionsInParallel(partitionTables, sort, storeFinalResult);
-
-    // Collect resize stats across all finished partitions
-    int totalNumResizes = 0;
-    long totalResizeTimeMs = 0;
-    for (IndexedTable t : partitionTables) {
-      totalNumResizes += t.getNumResizes();
-      totalResizeTimeMs += t.getResizeTimeMs();
-    }
-
-    // Wrap the finished partition tables in a composite table that concatenates their iterators.
-    // Since partitions are key-disjoint, concatenation produces the complete result set.
-    Table compositeTable = new CompositePartitionTable(partitionTables);
-    GroupByResultsBlock mergedBlock = new GroupByResultsBlock(compositeTable, _queryContext);
-    mergedBlock.setGroupsTrimmed(_groupsTrimmed);
-    mergedBlock.setNumGroupsLimitReached(_numGroupsLimitReached);
-    mergedBlock.setNumGroupsWarningLimitReached(_numGroupsWarningLimitReached);
-    mergedBlock.setNumResizes(totalNumResizes);
-    mergedBlock.setResizeTimeMs(totalResizeTimeMs);
-    return mergedBlock;
+    return getMergedResultsBlock(indexedTable);
   }
 
   private void mergeResultsBlockIntoLocalPartitions(IndexedTable[] localIndexedTables,
@@ -353,48 +304,6 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
     return rightTable;
   }
 
-  private void finishPartitionsInParallel(List<IndexedTable> partitionTables, boolean sort,
-      boolean storeFinalResult) {
-    if (partitionTables.size() <= 1) {
-      for (IndexedTable t : partitionTables) {
-        t.finish(sort, storeFinalResult);
-      }
-      return;
-    }
-    List<Future<?>> futures = new ArrayList<>(partitionTables.size());
-    for (IndexedTable t : partitionTables) {
-      futures.add(_executorService.submit(new TraceCallable<Void>() {
-        @Override
-        public Void callJob() {
-          t.finish(sort, storeFinalResult);
-          return null;
-        }
-      }));
-    }
-    try {
-      for (Future<?> future : futures) {
-        long remainingMs = _queryContext.getEndTimeMs() - System.currentTimeMillis();
-        future.get(Math.max(1, remainingMs), TimeUnit.MILLISECONDS);
-      }
-    } catch (InterruptedException e) {
-      for (Future<?> f : futures) {
-        f.cancel(true);
-      }
-      Thread.currentThread().interrupt();
-      throw new RuntimeException("Interrupted during parallel partition finish", e);
-    } catch (TimeoutException e) {
-      for (Future<?> f : futures) {
-        f.cancel(true);
-      }
-      throw new RuntimeException("Timed out during parallel partition finish", e);
-    } catch (ExecutionException e) {
-      for (Future<?> f : futures) {
-        f.cancel(true);
-      }
-      throw new RuntimeException("Error during parallel partition finish", e.getCause());
-    }
-  }
-
   private static void cancelFutures(List<Future<IndexedTable>> futures) {
     for (Future<IndexedTable> future : futures) {
       future.cancel(true);
@@ -404,80 +313,5 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
   private int getPartitionId(Key key) {
     int hashCode = key.hashCode();
     return _partitionMask >= 0 ? (hashCode & _partitionMask) : Math.floorMod(hashCode, _indexedTables.length);
-  }
-
-  /**
-   * Lightweight read-only Table that concatenates the finished results from multiple disjoint partition tables.
-   * Since partitions are key-disjoint (each key hashes to exactly one partition), concatenating their
-   * finished record iterators produces the complete result set without any merging.
-   */
-  private static final class CompositePartitionTable implements Table {
-    private final List<IndexedTable> _partitionTables;
-    private final DataSchema _dataSchema;
-    private final int _totalSize;
-
-    CompositePartitionTable(List<IndexedTable> partitionTables) {
-      _partitionTables = partitionTables;
-      _dataSchema = partitionTables.get(0).getDataSchema();
-      int size = 0;
-      for (IndexedTable t : partitionTables) {
-        size += t.size();
-      }
-      _totalSize = size;
-    }
-
-    @Override
-    public boolean upsert(Record record) {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean upsert(Key key, Record record) {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean merge(Table table) {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int size() {
-      return _totalSize;
-    }
-
-    @Override
-    public Iterator<Record> iterator() {
-      return new Iterator<Record>() {
-        private int _tableIdx = 0;
-        private Iterator<Record> _current = _partitionTables.get(0).iterator();
-
-        @Override
-        public boolean hasNext() {
-          while (!_current.hasNext() && ++_tableIdx < _partitionTables.size()) {
-            _current = _partitionTables.get(_tableIdx).iterator();
-          }
-          return _current.hasNext();
-        }
-
-        @Override
-        public Record next() {
-          if (!hasNext()) {
-            throw new NoSuchElementException();
-          }
-          return _current.next();
-        }
-      };
-    }
-
-    @Override
-    public void finish(boolean sort, boolean storeFinalResult) {
-      // Already finished by the caller before wrapping
-    }
-
-    @Override
-    public DataSchema getDataSchema() {
-      return _dataSchema;
-    }
   }
 }

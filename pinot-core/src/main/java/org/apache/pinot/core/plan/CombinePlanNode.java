@@ -165,7 +165,7 @@ public class CombinePlanNode implements PlanNode {
     String groupByAlgorithm = _queryContext.getGroupByAlgorithm();
     String normalizedGroupByAlgorithm = QueryOptionsUtils.normalizeGroupByAlgorithm(groupByAlgorithm);
     if (StringUtils.isEmpty(normalizedGroupByAlgorithm)) {
-      normalizedGroupByAlgorithm = PartitionedGroupByCombineOperator.ALGORITHM;
+      normalizedGroupByAlgorithm = GroupByCombineOperator.ALGORITHM;
     }
 
     if (GroupByCombineOperator.ALGORITHM.equals(normalizedGroupByAlgorithm)
