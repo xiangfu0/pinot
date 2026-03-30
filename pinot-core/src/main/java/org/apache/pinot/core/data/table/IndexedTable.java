@@ -296,6 +296,13 @@ public abstract class IndexedTable extends BaseTable {
   }
 
 
+  /**
+   * Merges records from a disjoint partition table into this table using {@code putAll}.
+   * <p><b>Precondition:</b> the source table must have no overlapping keys with this table
+   * (i.e. they come from disjoint hash partitions). If keys overlap, {@code putAll} will
+   * silently overwrite existing entries instead of aggregating them. Use {@link #merge(Table)}
+   * for tables that may share keys.
+   */
   public void mergePartitionTable(Table table) {
     _topRecords = null;
     if (table instanceof IndexedTable) {

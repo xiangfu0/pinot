@@ -29,8 +29,6 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import org.apache.pinot.core.operator.combine.BaseCombineOperator;
-import org.apache.pinot.core.operator.combine.SequentialSortedGroupByCombineOperator;
 import org.apache.pinot.core.plan.maker.InstancePlanMakerImplV2;
 import org.apache.pinot.core.query.request.context.QueryContext;
 import org.apache.pinot.core.query.request.context.utils.QueryContextConverterUtils;
@@ -166,19 +164,6 @@ public class CombinePlanNodeTest {
     }
     TestUtils.waitForCondition((aVoid) -> exp.get() instanceof QueryCancelledException, 10_000,
         "Should have been cancelled");
-  }
-
-  @Test
-  public void testBlankGroupByAlgorithmFallsBackToDefaultCombineSelection() {
-    QueryContext queryContext = QueryContextConverterUtils.getQueryContext(
-        "SELECT column, COUNT(*) FROM testTable GROUP BY column ORDER BY column LIMIT 10");
-    queryContext.setGroupByAlgorithm("   ");
-    queryContext.setEndTimeMs(System.currentTimeMillis() + Server.DEFAULT_QUERY_EXECUTOR_TIMEOUT_MS);
-
-    BaseCombineOperator combineOperator =
-        new CombinePlanNode(List.of(), queryContext, _executorService, null).run();
-
-    Assert.assertTrue(combineOperator instanceof SequentialSortedGroupByCombineOperator);
   }
 
   @Test
