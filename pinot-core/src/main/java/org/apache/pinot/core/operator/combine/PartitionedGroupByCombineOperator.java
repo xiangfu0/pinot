@@ -179,10 +179,10 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
       storeFinalResult = false;
     }
 
-    // Finish each partition independently
-    for (IndexedTable t : partitionTables) {
-      t.finish(sort, storeFinalResult);
-    }
+    // Finish all partitions in parallel. For high-cardinality ORDER BY queries, each partition's
+    // finish() does O(N/P * log K) heap selection. Running them in parallel reduces wall-clock
+    // from O(P * N/P * log K) = O(N * log K) to just O(N/P * log K).
+    finishPartitionsInParallel(partitionTables, sort, storeFinalResult);
 
     // Collect resize stats across all finished partitions
     int totalNumResizes = 0;
@@ -351,6 +351,48 @@ public class PartitionedGroupByCombineOperator extends GroupByCombineOperator {
     }
     rightTable.mergePartitionTable(leftTable);
     return rightTable;
+  }
+
+  private void finishPartitionsInParallel(List<IndexedTable> partitionTables, boolean sort,
+      boolean storeFinalResult) {
+    if (partitionTables.size() <= 1) {
+      for (IndexedTable t : partitionTables) {
+        t.finish(sort, storeFinalResult);
+      }
+      return;
+    }
+    List<Future<?>> futures = new ArrayList<>(partitionTables.size());
+    for (IndexedTable t : partitionTables) {
+      futures.add(_executorService.submit(new TraceCallable<Void>() {
+        @Override
+        public Void callJob() {
+          t.finish(sort, storeFinalResult);
+          return null;
+        }
+      }));
+    }
+    try {
+      for (Future<?> future : futures) {
+        long remainingMs = _queryContext.getEndTimeMs() - System.currentTimeMillis();
+        future.get(Math.max(1, remainingMs), TimeUnit.MILLISECONDS);
+      }
+    } catch (InterruptedException e) {
+      for (Future<?> f : futures) {
+        f.cancel(true);
+      }
+      Thread.currentThread().interrupt();
+      throw new RuntimeException("Interrupted during parallel partition finish", e);
+    } catch (TimeoutException e) {
+      for (Future<?> f : futures) {
+        f.cancel(true);
+      }
+      throw new RuntimeException("Timed out during parallel partition finish", e);
+    } catch (ExecutionException e) {
+      for (Future<?> f : futures) {
+        f.cancel(true);
+      }
+      throw new RuntimeException("Error during parallel partition finish", e.getCause());
+    }
   }
 
   private static void cancelFutures(List<Future<IndexedTable>> futures) {

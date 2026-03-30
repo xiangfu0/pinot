@@ -80,14 +80,14 @@ public class BenchmarkGroupByCombineOperator {
   })
   private String _algorithm;
 
-  @Param({"10000"})
+  @Param({"10000", "100000"})
   private int _numRecordsPerSegment;
 
   @Param({"8"})
   private int _numThreads;
 
   /** Target number of unique group-by key combinations (d1 x d2). */
-  @Param({"500", "5000", "50000", "500000"})
+  @Param({"500", "5000", "50000", "500000", "5000000"})
   private int _uniqueGroups;
 
   private String[] _d1Values;
