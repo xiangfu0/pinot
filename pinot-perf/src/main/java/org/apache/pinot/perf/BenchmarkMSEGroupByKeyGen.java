@@ -207,23 +207,26 @@ public class BenchmarkMSEGroupByKeyGen {
   // ---- Benchmark: key-gen steady state ----
 
   /**
-   * Steady-state key generation: the generator is pre-populated with all distinct groups in
-   * {@link #setupSteadyStateGenerator()}, so every {@code getGroupId()} call is a lookup (no insert).
-   * This exercises the happy-path hash-map probe loop.
+   * Steady-state key generation: the generator is pre-populated with all distinct groups before any
+   * iteration runs, so every {@code getGroupId()} call is a pure lookup (no insert).
+   * This exercises the happy-path hash-map probe loop in isolation.
+   *
+   * <p>The {@link Setup} is on the {@link State} class itself so JMH calls it per-thread — required
+   * because {@link Scope#Thread} state must be initialised by a fixture that runs on each worker thread.
    */
   @State(Scope.Thread)
   public static class SteadyStateGenState {
     GroupIdGenerator _gen;
-  }
 
-  @Setup(Level.Trial)
-  public void setupSteadyStateGenerator(SteadyStateGenState state) {
-    // Create a generator for this scenario and pre-insert all distinct groups.
-    GroupIdGenerator gen = makeGenerator(_scenario, _distinctGroups + 1, _distinctGroups);
-    for (Object key : _keys) {
-      gen.getGroupId(key);
+    @Setup(Level.Trial)
+    public void setup(BenchmarkMSEGroupByKeyGen benchState) {
+      GroupIdGenerator gen =
+          makeGenerator(benchState._scenario, benchState._distinctGroups + 1, benchState._distinctGroups);
+      for (Object key : benchState._keys) {
+        gen.getGroupId(key);
+      }
+      _gen = gen;
     }
-    state._gen = gen;
   }
 
   @Benchmark
@@ -240,15 +243,17 @@ public class BenchmarkMSEGroupByKeyGen {
    * Insert-phase key generation: a fresh generator is created before each iteration.
    * Measures the cost of building the map from scratch with {@code NUM_ROWS} rows and
    * {@code distinctGroups} distinct groups.
+   *
+   * <p>The {@link Setup} is on the {@link State} class so JMH resets it per-thread per-iteration.
    */
   @State(Scope.Thread)
   public static class InsertGenState {
     GroupIdGenerator _gen;
-  }
 
-  @Setup(Level.Iteration)
-  public void setupInsertGenerator(InsertGenState state) {
-    state._gen = makeGenerator(_scenario, NUM_GROUPS_LIMIT, _distinctGroups);
+    @Setup(Level.Iteration)
+    public void setup(BenchmarkMSEGroupByKeyGen benchState) {
+      _gen = makeGenerator(benchState._scenario, NUM_GROUPS_LIMIT, benchState._distinctGroups);
+    }
   }
 
   @Benchmark
