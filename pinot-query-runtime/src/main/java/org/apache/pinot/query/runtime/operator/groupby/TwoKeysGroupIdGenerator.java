@@ -28,14 +28,24 @@ import org.apache.pinot.core.query.aggregation.groupby.utils.ValueToIdMap;
 import org.apache.pinot.core.query.aggregation.groupby.utils.ValueToIdMapFactory;
 
 
+/**
+ * {@link GroupIdGenerator} for queries with exactly two group-by keys of any type.
+ *
+ * <p>Each key column is mapped to a per-column integer ID via a {@link ValueToIdMap}. The two IDs are packed into a
+ * single {@code long} (high 32 bits = first key ID, low 32 bits = second key ID) which is used as the hash-map key,
+ * avoiding object allocation on the hot path.
+ *
+ * <p>A dedicated {@code _numGroups} counter (mirroring the map size) is used for the per-row group-limit check so
+ * that the JIT can inline the comparison without a virtual call.
+ */
 public class TwoKeysGroupIdGenerator implements GroupIdGenerator {
   private final Long2IntOpenHashMap _groupIdMap;
   private final ValueToIdMap _firstKeyToIdMap;
   private final ValueToIdMap _secondKeyToIdMap;
   private final int _numGroupsLimit;
-  /// A function to generate the next group ID based on the current size of the map.
-  /// We use this instead of a simple lambda to avoid capturing `this` and therefore allocate on each getGroupId call
+  /// A function to generate the next group ID; captures the counter field to avoid per-call `this` capture overhead.
   private final Long2IntFunction _groupIdGenerator;
+  private int _numGroups = 0;
 
   public TwoKeysGroupIdGenerator(ColumnDataType firstKeyType,
       ColumnDataType secondKeyType, int numGroupsLimit, int initialCapacity) {
@@ -44,7 +54,7 @@ public class TwoKeysGroupIdGenerator implements GroupIdGenerator {
     _firstKeyToIdMap = ValueToIdMapFactory.get(firstKeyType.toDataType());
     _secondKeyToIdMap = ValueToIdMapFactory.get(secondKeyType.toDataType());
     _numGroupsLimit = numGroupsLimit;
-    _groupIdGenerator = k -> _groupIdMap.size();
+    _groupIdGenerator = k -> _numGroups;
   }
 
   @Override
@@ -52,11 +62,15 @@ public class TwoKeysGroupIdGenerator implements GroupIdGenerator {
     Object[] keyValues = (Object[]) key;
     Object firstKey = keyValues[0];
     Object secondKey = keyValues[1];
-    if (_groupIdMap.size() < _numGroupsLimit) {
+    if (_numGroups < _numGroupsLimit) {
       int firstKeyId = firstKey != null ? _firstKeyToIdMap.put(firstKey) : NULL_ID;
       int secondKeyId = secondKey != null ? _secondKeyToIdMap.put(secondKey) : NULL_ID;
       long longKey = ((long) firstKeyId << 32) | (secondKeyId & 0xFFFFFFFFL);
-      return _groupIdMap.computeIfAbsent(longKey, _groupIdGenerator);
+      int groupId = _groupIdMap.computeIfAbsent(longKey, _groupIdGenerator);
+      if (groupId == _numGroups) {
+        _numGroups++;
+      }
+      return groupId;
     } else {
       int firstKeyId;
       if (firstKey != null) {
@@ -83,7 +97,7 @@ public class TwoKeysGroupIdGenerator implements GroupIdGenerator {
 
   @Override
   public int getNumGroups() {
-    return _groupIdMap.size();
+    return _numGroups;
   }
 
   @Override

@@ -21,65 +21,84 @@ package org.apache.pinot.query.runtime.operator.groupby;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import java.util.Iterator;
-import java.util.function.ToIntFunction;
 import org.apache.pinot.common.utils.DataSchema.ColumnDataType;
 import org.apache.pinot.core.query.aggregation.groupby.utils.ValueToIdMap;
 import org.apache.pinot.core.query.aggregation.groupby.utils.ValueToIdMapFactory;
 import org.apache.pinot.spi.utils.FixedIntArray;
 
 
+/**
+ * {@link GroupIdGenerator} for queries with three or more group-by keys of arbitrary types.
+ *
+ * <p>Each distinct combination of key values is mapped to a compact integer group ID. Internally the generator
+ * maintains per-column {@link ValueToIdMap}s (one int per key column per row) and stores the packed ID-tuple as a
+ * {@link FixedIntArray} key in a fastutil {@code Object2IntOpenHashMap}.
+ *
+ * <p><b>Zero-allocation steady-state</b>: a single reusable {@link FixedIntArray} ({@code _probeKey}) backed by a
+ * pre-allocated {@code int[]} array is used for every look-up. A fresh {@link FixedIntArray} is allocated only when a
+ * genuinely new group is inserted, so the common case (group already seen) is allocation-free.
+ */
 public class MultiKeysGroupIdGenerator implements GroupIdGenerator {
   private final Object2IntOpenHashMap<FixedIntArray> _groupIdMap;
-  /// A function to generate the next group ID based on the current size of the map.
-  /// We use this instead of a simple lambda to avoid capturing `this` and therefore allocate on each getGroupId call
-  private final ToIntFunction<FixedIntArray> _groupIdGenerator;
   private final ValueToIdMap[] _keyToIdMaps;
   private final int _numGroupsLimit;
+  private final int _numKeyColumns;
+  /// Reusable probe key: backing array is overwritten on every getGroupId call; cloned only on new-group insertion.
+  private final int[] _probeKeyArray;
+  private final FixedIntArray _probeKey;
+  private int _numGroups = 0;
 
   public MultiKeysGroupIdGenerator(ColumnDataType[] keyTypes, int numKeyColumns,
       int numGroupsLimit, int initialCapacity) {
     _groupIdMap = new Object2IntOpenHashMap<>(initialCapacity);
     _groupIdMap.defaultReturnValue(INVALID_ID);
-    _groupIdGenerator = k -> _groupIdMap.size();
-
+    _numGroupsLimit = numGroupsLimit;
+    _numKeyColumns = numKeyColumns;
+    _probeKeyArray = new int[numKeyColumns];
+    _probeKey = new FixedIntArray(_probeKeyArray);
     _keyToIdMaps = new ValueToIdMap[numKeyColumns];
     for (int i = 0; i < numKeyColumns; i++) {
       _keyToIdMaps[i] = ValueToIdMapFactory.get(keyTypes[i].toDataType());
     }
-    _numGroupsLimit = numGroupsLimit;
   }
 
   @Override
   public int getGroupId(Object key) {
     Object[] keyValues = (Object[]) key;
-    int numKeyColumns = keyValues.length;
-    int[] keyIds = new int[numKeyColumns];
-    if (_groupIdMap.size() < _numGroupsLimit) {
-      for (int i = 0; i < numKeyColumns; i++) {
+    if (_numGroups < _numGroupsLimit) {
+      // Below group limit: resolve (or insert) each key's integer ID, then look up the group.
+      for (int i = 0; i < _numKeyColumns; i++) {
         Object keyValue = keyValues[i];
-        keyIds[i] = keyValue != null ? _keyToIdMaps[i].put(keyValue) : NULL_ID;
+        _probeKeyArray[i] = keyValue != null ? _keyToIdMaps[i].put(keyValue) : NULL_ID;
       }
-      return _groupIdMap.computeIfAbsent(new FixedIntArray(keyIds), _groupIdGenerator);
+      int groupId = _groupIdMap.getInt(_probeKey);
+      if (groupId == INVALID_ID) {
+        // New group: clone the probe array so the map key is stable, then insert.
+        groupId = _numGroups++;
+        _groupIdMap.put(_probeKey.clone(), groupId);
+      }
+      return groupId;
     } else {
-      for (int i = 0; i < numKeyColumns; i++) {
+      // Above group limit: look up only, return INVALID_ID for any unknown key.
+      for (int i = 0; i < _numKeyColumns; i++) {
         Object keyValue = keyValues[i];
         if (keyValue == null) {
-          keyIds[i] = NULL_ID;
+          _probeKeyArray[i] = NULL_ID;
         } else {
           int keyId = _keyToIdMaps[i].getId(keyValue);
           if (keyId == INVALID_ID) {
             return INVALID_ID;
           }
-          keyIds[i] = keyId;
+          _probeKeyArray[i] = keyId;
         }
       }
-      return _groupIdMap.getInt(new FixedIntArray(keyIds));
+      return _groupIdMap.getInt(_probeKey);
     }
   }
 
   @Override
   public int getNumGroups() {
-    return _groupIdMap.size();
+    return _numGroups;
   }
 
   @Override
@@ -98,8 +117,7 @@ public class MultiKeysGroupIdGenerator implements GroupIdGenerator {
         Object2IntOpenHashMap.Entry<FixedIntArray> entry = _entryIterator.next();
         int[] keyIds = entry.getKey().elements();
         Object[] row = new Object[numColumns];
-        int numKeyColumns = keyIds.length;
-        for (int i = 0; i < numKeyColumns; i++) {
+        for (int i = 0; i < _numKeyColumns; i++) {
           int keyId = keyIds[i];
           if (keyId != NULL_ID) {
             row[i] = _keyToIdMaps[i].get(keyId);
