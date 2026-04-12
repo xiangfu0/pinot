@@ -45,6 +45,7 @@ import org.apache.pinot.segment.local.segment.readers.PinotSegmentColumnReader;
 import org.apache.pinot.segment.local.segment.store.SegmentLocalFSDirectory;
 import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.V1Constants;
+import org.apache.pinot.segment.spi.codec.ChunkCodecPipeline;
 import org.apache.pinot.segment.spi.compression.ChunkCompressionType;
 import org.apache.pinot.segment.spi.compression.DictIdCompressionType;
 import org.apache.pinot.segment.spi.creator.SegmentGeneratorConfig;
@@ -591,6 +592,21 @@ public class ForwardIndexHandlerTest {
 
       // TEST1: Validate with zero changes. ForwardIndexHandler should be a No-Op.
       assertTrue(computeOperations().isEmpty());
+    }
+  }
+
+  @Test
+  public void testShouldChangeRawCompressionTypeNoOpForClpCodecs() {
+    ChunkCodecPipeline lz4Pipeline = ChunkCodecPipeline.fromCompressionType(ChunkCompressionType.LZ4);
+    List<CompressionCodec> clpCodecs =
+        List.of(CompressionCodec.CLP, CompressionCodec.CLPV2, CompressionCodec.CLPV2_ZSTD,
+            CompressionCodec.CLPV2_LZ4);
+    for (CompressionCodec codec : clpCodecs) {
+      ForwardIndexConfig newConfig = new ForwardIndexConfig.Builder().withCompressionCodec(codec).build();
+      assertFalse(
+          ForwardIndexHandler.shouldChangeRawCompressionType(ChunkCompressionType.PASS_THROUGH, null, newConfig));
+      assertFalse(
+          ForwardIndexHandler.shouldChangeRawCompressionType(ChunkCompressionType.LZ4, lz4Pipeline, newConfig));
     }
   }
 

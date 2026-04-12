@@ -69,6 +69,7 @@ import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReaderContext;
 import org.apache.pinot.segment.spi.store.SegmentDirectory;
 import org.apache.pinot.segment.spi.utils.SegmentMetadataUtils;
+import org.apache.pinot.spi.config.table.FieldConfig.CompressionCodec;
 import org.apache.pinot.spi.config.table.IndexingConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.data.FieldSpec;
@@ -393,6 +394,20 @@ public class ForwardIndexHandler extends BaseIndexHandler {
     }
 
     ForwardIndexConfig newConfig = _fieldIndexConfigs.get(column).getConfig(StandardIndexes.forward());
+    return shouldChangeRawCompressionType(existingCompressionType, existingPipeline, newConfig);
+  }
+
+  @VisibleForTesting
+  static boolean shouldChangeRawCompressionType(ChunkCompressionType existingCompressionType,
+      @Nullable ChunkCodecPipeline existingPipeline, ForwardIndexConfig newConfig) {
+    CompressionCodec newCompressionCodec = newConfig.getCompressionCodec();
+
+    // Reload-time forward index rewrites do not have CLP stats in the creation context, so converting an existing
+    // raw forward index into any CLP variant is not supported here. Preserve the existing segment as-is.
+    if (isCLPCodec(newCompressionCodec)) {
+      return false;
+    }
+
     ChunkCodecPipeline newPipeline = newConfig.getCodecPipeline();
 
     // newPipeline is non-null for all non-CLP RAW codecs (auto-derived from compressionCodec).
@@ -418,7 +433,7 @@ public class ForwardIndexHandler extends BaseIndexHandler {
     if (existingCompressionType != newCompressionType) {
       return true;
     }
-    if (newConfig.getCompressionCodec() == null) {
+    if (newCompressionCodec == null) {
       return false;
     }
 
@@ -427,6 +442,11 @@ public class ForwardIndexHandler extends BaseIndexHandler {
     // encoding is ambiguous (plain raw PASS_THROUGH or some CLP variant), so rewrite to ensure the requested codec is
     // applied.
     return existingPipeline != null || existingCompressionType == ChunkCompressionType.PASS_THROUGH;
+  }
+
+  private static boolean isCLPCodec(@Nullable CompressionCodec codec) {
+    return codec == CompressionCodec.CLP || codec == CompressionCodec.CLPV2
+        || codec == CompressionCodec.CLPV2_ZSTD || codec == CompressionCodec.CLPV2_LZ4;
   }
 
   private boolean shouldChangeDictIdCompressionType(String column, SegmentDirectory.Reader segmentReader)
