@@ -94,11 +94,6 @@ public class VarByteChunkForwardIndexWriterV4 implements VarByteChunkWriter {
   private int _metadataSize = 0;
   private long _chunkOffset = 0;
 
-  public VarByteChunkForwardIndexWriterV4(File file, ChunkCompressionType compressionType, int chunkSize)
-      throws IOException {
-    this(file, compressionType, null, chunkSize);
-  }
-
   public VarByteChunkForwardIndexWriterV4(File file, ChunkCompressionType compressionType,
       @Nullable Integer compressionLevel, int chunkSize)
       throws IOException {

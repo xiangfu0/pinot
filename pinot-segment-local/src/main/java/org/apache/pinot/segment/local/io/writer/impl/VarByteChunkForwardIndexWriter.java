@@ -64,12 +64,6 @@ public class VarByteChunkForwardIndexWriter extends BaseChunkForwardIndexWriter 
    * @throws FileNotFoundException Throws {@link FileNotFoundException} if the specified file is
    *     not found.
    */
-  public VarByteChunkForwardIndexWriter(File file, ChunkCompressionType compressionType, int totalDocs,
-      int numDocsPerChunk, int lengthOfLongestEntry, int writerVersion)
-      throws IOException {
-    this(file, compressionType, null, totalDocs, numDocsPerChunk, lengthOfLongestEntry, writerVersion);
-  }
-
   public VarByteChunkForwardIndexWriter(File file, ChunkCompressionType compressionType,
       @Nullable Integer compressionLevel, int totalDocs, int numDocsPerChunk, int lengthOfLongestEntry,
       int writerVersion)

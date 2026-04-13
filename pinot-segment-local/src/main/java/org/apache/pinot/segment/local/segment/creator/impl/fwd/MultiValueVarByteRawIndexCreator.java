@@ -28,7 +28,6 @@ import org.apache.pinot.segment.local.io.writer.impl.VarByteChunkForwardIndexWri
 import org.apache.pinot.segment.local.io.writer.impl.VarByteChunkWriter;
 import org.apache.pinot.segment.spi.V1Constants.Indexes;
 import org.apache.pinot.segment.spi.compression.ChunkCompressionType;
-import org.apache.pinot.segment.spi.index.ForwardIndexConfig;
 import org.apache.pinot.segment.spi.index.creator.ForwardIndexCreator;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 
@@ -41,45 +40,6 @@ public class MultiValueVarByteRawIndexCreator implements ForwardIndexCreator {
 
   private final VarByteChunkWriter _indexWriter;
   private final DataType _valueType;
-
-  /**
-   * Create a var-byte raw index creator for the given column
-   *
-   * @param baseIndexDir Index directory
-   * @param compressionType Type of compression to use
-   * @param column Name of column to index
-   * @param totalDocs Total number of documents to index
-   * @param valueType Type of the values
-   * @param maxRowLengthInBytes the length in bytes of the largest row
-   * @param maxNumberOfElements the maximum number of elements in a row
-   */
-  public MultiValueVarByteRawIndexCreator(File baseIndexDir, ChunkCompressionType compressionType, String column,
-      int totalDocs, DataType valueType, int maxRowLengthInBytes, int maxNumberOfElements)
-      throws IOException {
-    this(baseIndexDir, compressionType, null, column, totalDocs, valueType,
-        ForwardIndexConfig.getDefaultRawWriterVersion(), maxRowLengthInBytes, maxNumberOfElements,
-        ForwardIndexConfig.getDefaultTargetMaxChunkSizeBytes(), ForwardIndexConfig.getDefaultTargetDocsPerChunk());
-  }
-
-  /**
-   * Create a var-byte raw index creator for the given column
-   *
-   * @param baseIndexDir Index directory
-   * @param compressionType Type of compression to use
-   * @param column Name of column to index
-   * @param totalDocs Total number of documents to index
-   * @param valueType Type of the values
-   * @param maxRowLengthInBytes the size in bytes of the largest row, the chunk size cannot be smaller than this
-   * @param maxNumberOfElements the maximum number of elements in a row
-   * @param writerVersion writer format version
-   */
-  public MultiValueVarByteRawIndexCreator(File baseIndexDir, ChunkCompressionType compressionType, String column,
-      int totalDocs, DataType valueType, int writerVersion, int maxRowLengthInBytes, int maxNumberOfElements,
-      int targetMaxChunkSizeBytes, int targetDocsPerChunk)
-      throws IOException {
-    this(baseIndexDir, compressionType, null, column, totalDocs, valueType, writerVersion, maxRowLengthInBytes,
-        maxNumberOfElements, targetMaxChunkSizeBytes, targetDocsPerChunk);
-  }
 
   public MultiValueVarByteRawIndexCreator(File baseIndexDir, ChunkCompressionType compressionType,
       @Nullable Integer compressionLevel, String column, int totalDocs, DataType valueType, int writerVersion,

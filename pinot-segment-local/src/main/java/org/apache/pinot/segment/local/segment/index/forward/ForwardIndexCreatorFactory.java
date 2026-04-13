@@ -32,6 +32,7 @@ import org.apache.pinot.segment.local.segment.creator.impl.fwd.SingleValueFixedB
 import org.apache.pinot.segment.local.segment.creator.impl.fwd.SingleValueSortedForwardIndexCreator;
 import org.apache.pinot.segment.local.segment.creator.impl.fwd.SingleValueUnsortedForwardIndexCreator;
 import org.apache.pinot.segment.local.segment.creator.impl.fwd.SingleValueVarByteRawIndexCreator;
+import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.compression.ChunkCompressionType;
 import org.apache.pinot.segment.spi.compression.DictIdCompressionType;
 import org.apache.pinot.segment.spi.creator.IndexCreationContext;
@@ -170,9 +171,10 @@ public class ForwardIndexCreatorFactory {
       case LONG:
       case FLOAT:
       case DOUBLE:
-        return new MultiValueFixedByteRawIndexCreator(indexDir, compressionType, compressionLevel, column,
-            numTotalDocs, storedType, maxNumberOfMultiValueElements, deriveNumDocsPerChunk, writerVersion,
-            targetMaxChunkSize, targetDocsPerChunk);
+        return new MultiValueFixedByteRawIndexCreator(
+            new File(indexDir, column + V1Constants.Indexes.RAW_MV_FORWARD_INDEX_FILE_EXTENSION), compressionType,
+            compressionLevel, numTotalDocs, storedType, maxNumberOfMultiValueElements, deriveNumDocsPerChunk,
+            writerVersion, targetMaxChunkSize, targetDocsPerChunk);
       case STRING:
       case BYTES:
         return new MultiValueVarByteRawIndexCreator(indexDir, compressionType, compressionLevel, column, numTotalDocs,

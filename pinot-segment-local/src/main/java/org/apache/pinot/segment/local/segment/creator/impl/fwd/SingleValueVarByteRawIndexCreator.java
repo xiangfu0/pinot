@@ -29,7 +29,6 @@ import org.apache.pinot.segment.local.io.writer.impl.VarByteChunkForwardIndexWri
 import org.apache.pinot.segment.local.io.writer.impl.VarByteChunkWriter;
 import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.compression.ChunkCompressionType;
-import org.apache.pinot.segment.spi.index.ForwardIndexConfig;
 import org.apache.pinot.segment.spi.index.creator.ForwardIndexCreator;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 
@@ -41,47 +40,6 @@ public class SingleValueVarByteRawIndexCreator implements ForwardIndexCreator {
 
   private final VarByteChunkWriter _indexWriter;
   private final DataType _valueType;
-
-  /**
-   * Create a var-byte raw index creator for the given column
-   * @param baseIndexDir Index directory
-   * @param compressionType Type of compression to use
-   * @param column Name of column to index
-   * @param totalDocs Total number of documents to index
-   * @param valueType Type of the values
-   * @param maxLength length of longest entry (in bytes)
-   * @throws IOException
-   */
-  public SingleValueVarByteRawIndexCreator(File baseIndexDir, ChunkCompressionType compressionType, String column,
-      int totalDocs, DataType valueType, int maxLength)
-      throws IOException {
-    this(baseIndexDir, compressionType, null, column, totalDocs, valueType, maxLength, false,
-        ForwardIndexConfig.getDefaultRawWriterVersion(), ForwardIndexConfig.getDefaultTargetMaxChunkSizeBytes(),
-        ForwardIndexConfig.getDefaultTargetDocsPerChunk());
-  }
-
-  /**
-   * Create a var-byte raw index creator for the given column
-   * @param baseIndexDir Index directory
-   * @param compressionType Type of compression to use
-   * @param column Name of column to index
-   * @param totalDocs Total number of documents to index
-   * @param valueType Type of the values
-   * @param maxLength length of longest entry (in bytes)
-   * @param deriveNumDocsPerChunk true if writer should auto-derive the number of rows per chunk
-   * @param writerVersion writer format version
-   * @param targetMaxChunkSizeBytes target max chunk size in bytes, applicable only for V4 or when
-   *                                deriveNumDocsPerChunk is true
-   * @param targetDocsPerChunk target number of docs per chunk
-   * @throws IOException
-   */
-  public SingleValueVarByteRawIndexCreator(File baseIndexDir, ChunkCompressionType compressionType, String column,
-      int totalDocs, DataType valueType, int maxLength, boolean deriveNumDocsPerChunk, int writerVersion,
-      int targetMaxChunkSizeBytes, int targetDocsPerChunk)
-      throws IOException {
-    this(baseIndexDir, compressionType, null, column, totalDocs, valueType, maxLength, deriveNumDocsPerChunk,
-        writerVersion, targetMaxChunkSizeBytes, targetDocsPerChunk);
-  }
 
   public SingleValueVarByteRawIndexCreator(File baseIndexDir, ChunkCompressionType compressionType,
       @Nullable Integer compressionLevel, String column, int totalDocs, DataType valueType, int maxLength,

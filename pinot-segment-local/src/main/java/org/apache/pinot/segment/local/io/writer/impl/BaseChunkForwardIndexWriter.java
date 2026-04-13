@@ -86,12 +86,6 @@ public abstract class BaseChunkForwardIndexWriter implements Closeable {
    * @param fixed if the data type is fixed width (required for version validation)
    * @throws IOException if the file isn't found or can't be mapped
    */
-  protected BaseChunkForwardIndexWriter(File file, ChunkCompressionType compressionType, int totalDocs,
-      int numDocsPerChunk, long chunkSize, int sizeOfEntry, int version, boolean fixed)
-      throws IOException {
-    this(file, compressionType, null, totalDocs, numDocsPerChunk, chunkSize, sizeOfEntry, version, fixed);
-  }
-
   protected BaseChunkForwardIndexWriter(File file, ChunkCompressionType compressionType,
       @Nullable Integer compressionLevel, int totalDocs, int numDocsPerChunk, long chunkSize, int sizeOfEntry,
       int version, boolean fixed)

@@ -85,11 +85,6 @@ import org.apache.pinot.segment.spi.compression.ChunkCompressionType;
 public class VarByteChunkForwardIndexWriterV5 extends VarByteChunkForwardIndexWriterV4 {
   public static final int VERSION = 5;
 
-  public VarByteChunkForwardIndexWriterV5(File file, ChunkCompressionType compressionType, int chunkSize)
-      throws IOException {
-    this(file, compressionType, null, chunkSize);
-  }
-
   public VarByteChunkForwardIndexWriterV5(File file, ChunkCompressionType compressionType,
       @Nullable Integer compressionLevel, int chunkSize)
       throws IOException {

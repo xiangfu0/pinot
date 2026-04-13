@@ -44,11 +44,6 @@ public class VarByteChunkForwardIndexWriterV6 extends VarByteChunkForwardIndexWr
 
   private final boolean _deltaEncoding;
 
-  public VarByteChunkForwardIndexWriterV6(File file, ChunkCompressionType compressionType, int chunkSize)
-      throws IOException {
-    this(file, compressionType, null, chunkSize);
-  }
-
   public VarByteChunkForwardIndexWriterV6(File file, ChunkCompressionType compressionType,
       @Nullable Integer compressionLevel, int chunkSize)
       throws IOException {

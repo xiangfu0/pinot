@@ -46,12 +46,6 @@ public class FixedByteChunkForwardIndexWriter extends BaseChunkForwardIndexWrite
    * @throws FileNotFoundException Throws {@link FileNotFoundException} if the specified file is not found.
    * @throws IOException Throws {@link IOException} if there are any errors mapping the underlying ByteBuffer.
    */
-  public FixedByteChunkForwardIndexWriter(File file, ChunkCompressionType compressionType, int totalDocs,
-      int numDocsPerChunk, int sizeOfEntry, int writerVersion)
-      throws IOException {
-    this(file, compressionType, null, totalDocs, numDocsPerChunk, sizeOfEntry, writerVersion);
-  }
-
   public FixedByteChunkForwardIndexWriter(File file, ChunkCompressionType compressionType,
       @Nullable Integer compressionLevel, int totalDocs, int numDocsPerChunk, int sizeOfEntry, int writerVersion)
       throws IOException {
