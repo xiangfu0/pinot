@@ -18,6 +18,7 @@
  */
 package org.apache.pinot.core.operator.filter;
 
+import java.math.BigDecimal;
 import java.util.Arrays;
 import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.common.request.context.predicate.EqPredicate;
@@ -453,6 +454,66 @@ public class RawSortedIndexBasedFilterOperatorTest {
 
     int[] matchingDocIds = getMatchingDocIds(operator);
     assertEquals(matchingDocIds, new int[]{2, 3});
+  }
+
+  // --- BigDecimal data type tests ---
+
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  private static DataSource createBigDecimalDataSource(BigDecimal[] data) {
+    ForwardIndexReader reader = mock(ForwardIndexReader.class);
+    when(reader.isDictionaryEncoded()).thenReturn(false);
+    when(reader.isSingleValue()).thenReturn(true);
+    when(reader.getStoredType()).thenReturn(DataType.BIG_DECIMAL);
+    when(reader.getNumDocsPerChunk()).thenReturn(0);
+    when(reader.createContext()).thenReturn(null);
+    for (int i = 0; i < data.length; i++) {
+      when(reader.getBigDecimal(i, null)).thenReturn(data[i]);
+    }
+
+    DataSourceMetadata metadata = mock(DataSourceMetadata.class);
+    when(metadata.isSorted()).thenReturn(true);
+    when(metadata.isSingleValue()).thenReturn(true);
+    when(metadata.getDataType()).thenReturn(DataType.BIG_DECIMAL);
+
+    DataSource dataSource = mock(DataSource.class);
+    when(dataSource.getForwardIndex()).thenReturn(reader);
+    when(dataSource.getDataSourceMetadata()).thenReturn(metadata);
+    when(dataSource.getDictionary()).thenReturn(null);
+    when(dataSource.getNullValueVector()).thenReturn(null);
+
+    return dataSource;
+  }
+
+  @Test
+  public void testBigDecimalInPredicate() {
+    BigDecimal[] data = {new BigDecimal("2"), new BigDecimal("10")};
+    DataSource dataSource = createBigDecimalDataSource(data);
+    QueryContext queryContext = createQueryContext();
+    InPredicate predicate = new InPredicate(COL_EXPR, Arrays.asList("2", "10"));
+    PredicateEvaluator evaluator =
+        InPredicateEvaluatorFactory.newRawValueBasedEvaluator(predicate, DataType.BIG_DECIMAL);
+
+    RawSortedIndexBasedFilterOperator operator =
+        new RawSortedIndexBasedFilterOperator(queryContext, evaluator, dataSource, data.length);
+
+    int[] matchingDocIds = getMatchingDocIds(operator);
+    assertEquals(matchingDocIds, new int[]{0, 1});
+  }
+
+  @Test
+  public void testBigDecimalNotInPredicate() {
+    BigDecimal[] data = {new BigDecimal("2"), new BigDecimal("10")};
+    DataSource dataSource = createBigDecimalDataSource(data);
+    QueryContext queryContext = createQueryContext();
+    NotInPredicate predicate = new NotInPredicate(COL_EXPR, Arrays.asList("2", "10"));
+    PredicateEvaluator evaluator =
+        NotInPredicateEvaluatorFactory.newRawValueBasedEvaluator(predicate, DataType.BIG_DECIMAL);
+
+    RawSortedIndexBasedFilterOperator operator =
+        new RawSortedIndexBasedFilterOperator(queryContext, evaluator, dataSource, data.length);
+
+    int[] matchingDocIds = getMatchingDocIds(operator);
+    assertEquals(matchingDocIds.length, 0);
   }
 
   // --- String data type test ---

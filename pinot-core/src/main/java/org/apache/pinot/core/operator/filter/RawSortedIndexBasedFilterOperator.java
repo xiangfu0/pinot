@@ -453,8 +453,18 @@ public class RawSortedIndexBasedFilterOperator extends BaseColumnFilterOperator 
           sorted[i] = Double.toString(doubleVals[i]);
         }
         break;
+      case BIG_DECIMAL:
+        BigDecimal[] bigDecimalVals = new BigDecimal[sorted.length];
+        for (int i = 0; i < sorted.length; i++) {
+          bigDecimalVals[i] = new BigDecimal(sorted[i]);
+        }
+        Arrays.sort(bigDecimalVals);
+        for (int i = 0; i < sorted.length; i++) {
+          sorted[i] = bigDecimalVals[i].toPlainString();
+        }
+        break;
       default:
-        // String and others: natural string sort
+        // String and bytes: natural string sort
         Arrays.sort(sorted);
         break;
     }
