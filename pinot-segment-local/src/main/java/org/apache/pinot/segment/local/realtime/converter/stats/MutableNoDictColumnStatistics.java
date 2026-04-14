@@ -33,6 +33,7 @@ import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.apache.pinot.spi.utils.ByteArray;
+import org.apache.pinot.spi.utils.UuidUtils;
 
 import static org.apache.pinot.segment.spi.Constants.UNKNOWN_CARDINALITY;
 
@@ -114,7 +115,9 @@ public class MutableNoDictColumnStatistics implements ColumnStatistics, CLPStats
     int numDocs = _dataSourceMetadata.getNumDocs();
 
     // Verify that values are non-decreasing when iterated in the given order
-    DataType valueType = getValueType();
+    DataType logicalType = _fieldSpec.getDataType();
+    DataType valueType = logicalType.getStoredType();
+    boolean useUuidComparison = logicalType == DataType.UUID;
     if (_sortedDocIds != null) {
       switch (valueType) {
         case INT: {
@@ -187,7 +190,7 @@ public class MutableNoDictColumnStatistics implements ColumnStatistics, CLPStats
           byte[] prev = _forwardIndex.getBytes(_sortedDocIds[0]);
           for (int i = 1; i < numDocs; i++) {
             byte[] curr = _forwardIndex.getBytes(_sortedDocIds[i]);
-            if (ByteArray.compare(curr, prev) < 0) {
+            if ((useUuidComparison ? UuidUtils.compare(curr, prev) : ByteArray.compare(curr, prev)) < 0) {
               return false;
             }
             prev = curr;
@@ -269,7 +272,7 @@ public class MutableNoDictColumnStatistics implements ColumnStatistics, CLPStats
           byte[] prev = _forwardIndex.getBytes(0);
           for (int i = 1; i < numDocs; i++) {
             byte[] curr = _forwardIndex.getBytes(i);
-            if (ByteArray.compare(curr, prev) < 0) {
+            if ((useUuidComparison ? UuidUtils.compare(curr, prev) : ByteArray.compare(curr, prev)) < 0) {
               return false;
             }
             prev = curr;
