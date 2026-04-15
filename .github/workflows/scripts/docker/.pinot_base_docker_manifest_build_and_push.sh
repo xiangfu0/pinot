@@ -18,26 +18,16 @@
 # under the License.
 #
 
-if [ -z "${DOCKER_IMAGE_NAME}" ]; then
-  DOCKER_IMAGE_NAME="apachepinot/pinot"
-fi
-if [ -z "${PINOT_GIT_REF}" ]; then
-  PINOT_GIT_REF="master"
-fi
+set -e
 
-cd ${DOCKER_FILE_BASE_DIR}
+MANIFEST_TAG="apachepinot/pinot-base-${BASE_IMAGE_TYPE}:${TAG}"
 
-docker image prune --all --filter "until=1h" -f
+# Remove any existing local manifest so re-runs of a failed workflow don't fail
+# with "manifest already exists".
+docker manifest rm "${MANIFEST_TAG}" 2>/dev/null || true
 
-docker build \
-    --no-cache \
-    --file Dockerfile \
-    --build-arg PINOT_GIT_REF=${PINOT_GIT_REF} \
-    --tag ${DOCKER_IMAGE_NAME}:${PINOT_SHA} \
-    .
+docker manifest create "${MANIFEST_TAG}" \
+    --amend "apachepinot/pinot-base-${BASE_IMAGE_TYPE}:${TAG}-amd64" \
+    --amend "apachepinot/pinot-base-${BASE_IMAGE_TYPE}:${TAG}-arm64"
 
-docker builder prune -a -f
-
-docker image prune -f
-
-docker image ls
+docker manifest push "${MANIFEST_TAG}"
