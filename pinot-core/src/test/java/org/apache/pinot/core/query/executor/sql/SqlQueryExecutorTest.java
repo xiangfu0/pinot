@@ -38,6 +38,7 @@ import org.apache.pinot.sql.parsers.SqlNodeAndOptions;
 import org.testng.Assert;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 
@@ -191,6 +192,51 @@ public class SqlQueryExecutorTest {
     Object[] row = response.getResultTable().getRows().get(0);
     Assert.assertEquals(row[0], "myTable");
     Assert.assertEquals(row[1], "task_001");
+  }
+
+  @DataProvider(name = "likePatternCases")
+  public Object[][] likePatternCases() {
+    return new Object[][]{
+        // {pattern, input, shouldMatch}
+        // % wildcard
+        {"sales%", "salesSchema", true},
+        {"sales%", "inventory", false},
+        {"sales%", "sales", true},
+        // _ wildcard (single char)
+        {"sale_", "sales", true},
+        {"sale_", "sale", false},
+        {"sale_", "saleXX", false},
+        // Match everything
+        {"%", "anything", true},
+        {"%", "", true},
+        // Escaped percent (literal %)
+        {"100\\%", "100%", true},
+        {"100\\%", "100x", false},
+        // Escaped underscore (literal _)
+        {"a\\_b", "a_b", true},
+        {"a\\_b", "axb", false},
+        // Regex metacharacters treated as literals
+        {"a[b", "a[b", true},
+        {"a[b", "ab", false},
+        {"a(b)", "a(b)", true},
+        {"a(b)", "ab", false},
+        {"a.b", "a.b", true},
+        {"a.b", "axb", false},
+        // Case-insensitive matching
+        {"SALES%", "salesSchema", true},
+        {"sales%", "SALESSCHEMA", true},
+        // Mixed wildcards
+        {"%_schema", "salesSchema", true},
+        {"%_schema", "schema", false},
+    };
+  }
+
+  @Test(dataProvider = "likePatternCases")
+  public void testBuildLikeRegex(String pattern, String input, boolean expectedMatch) {
+    SqlQueryExecutor executor = new SqlQueryExecutor("http://localhost:" + _port);
+    boolean matches = executor.buildLikeRegex(pattern).matcher(input).matches();
+    Assert.assertEquals(matches, expectedMatch,
+        "Pattern '" + pattern + "' against '" + input + "': expected " + expectedMatch + " but got " + matches);
   }
 
   private void registerHandlers() {

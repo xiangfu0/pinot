@@ -809,6 +809,9 @@ public abstract class BaseBrokerStarter implements ServiceStartable {
     _threadAccountant.stopWatcherTask();
     _brokerAdminApplication.stop();
 
+    LOGGER.info("Closing SQL query executor");
+    _sqlQueryExecutor.close();
+
     LOGGER.info("Stopping the broker routing manager");
     _routingManager.stop();
 

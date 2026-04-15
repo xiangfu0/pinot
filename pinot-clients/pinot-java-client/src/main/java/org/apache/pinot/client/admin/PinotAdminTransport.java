@@ -451,7 +451,10 @@ public class PinotAdminTransport implements AutoCloseable {
     if (response.isArray()) {
       List<String> result = new ArrayList<>();
       for (JsonNode element : response) {
-        result.add(element.asText());
+        if (!element.isTextual()) {
+          throw new PinotAdminException("Unexpected non-string element in array response: " + element);
+        }
+        result.add(element.textValue());
       }
       return result;
     }

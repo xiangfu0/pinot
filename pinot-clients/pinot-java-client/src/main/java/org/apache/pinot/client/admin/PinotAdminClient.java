@@ -42,9 +42,12 @@ public class PinotAdminClient implements AutoCloseable {
   // False when a shared transport is injected from outside (e.g. SqlQueryExecutor).
   private final boolean _ownsTransport;
 
-  // Service clients
-  private TableAdminClient _tableClient;
-  private PinotDatabaseAdminClient _databaseClient;
+  // Service clients — declared volatile so that unsynchronized lazy-init (check-then-assign)
+  // is safe for read-after-write visibility. Two threads racing to initialize the same field
+  // may both create an instance, but only one will be visible afterwards; this is acceptable
+  // because all sub-clients are stateless and immutable after construction.
+  private volatile TableAdminClient _tableClient;
+  private volatile PinotDatabaseAdminClient _databaseClient;
   private SchemaAdminClient _schemaClient;
   private InstanceAdminClient _instanceClient;
   private SegmentAdminClient _segmentClient;
@@ -331,7 +334,12 @@ public class PinotAdminClient implements AutoCloseable {
   public void close()
       throws IOException {
     if (_ownsTransport) {
-      _transport.close();
+      try {
+        _transport.close();
+      } catch (IOException e) {
+        LOGGER.warn("Failed to close admin transport for controller at {}", _controllerAddress, e);
+        throw e;
+      }
     }
   }
 

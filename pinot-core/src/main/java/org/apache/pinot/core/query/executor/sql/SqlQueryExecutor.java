@@ -24,7 +24,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.TreeMap;
 import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 import org.apache.calcite.sql.SqlIdentifier;
@@ -59,9 +58,14 @@ import org.apache.pinot.sql.parsers.parser.SqlShowTables;
 
 
 /**
- * SqlQueryExecutor executes all SQL queries including DQL, DML, DCL, DDL.
+ * SqlQueryExecutor executes all SQL queries including DQL, DML, DCL, DDL, and metadata (SHOW) statements.
+ *
+ * <p>Thread-safety: all mutable state ({@code _cachedControllerUrl}, {@code _sharedAdminTransport}) is guarded by
+ * {@code synchronized(this)}. Public query methods are safe to call from multiple threads concurrently.
+ *
+ * <p>Lifecycle: call {@link #close()} when the executor is no longer needed to release the shared HTTP transport.
  */
-public class SqlQueryExecutor {
+public class SqlQueryExecutor implements AutoCloseable {
   // Controller URL cached to avoid ZK reads on every metadata query.
   // Refreshed after TTL expires or after a failed request.
   private static final long CONTROLLER_URL_CACHE_TTL_MS = 30_000L;
@@ -231,7 +235,8 @@ public class SqlQueryExecutor {
   private String resolveDatabase(@Nullable SqlIdentifier explicitDatabase, Map<String, String> options,
       Map<String, String> headers)
       throws DatabaseConflictException {
-    String databaseFromSql = explicitDatabase != null ? explicitDatabase.toString() : null;
+    // Use getSimple() to get the unquoted identifier name; toString() may include Calcite backtick quoting.
+    String databaseFromSql = explicitDatabase != null ? explicitDatabase.getSimple() : null;
     String databaseFromOptions = options.get(CommonConstants.DATABASE);
     String databaseFromHeaders = getHeaderValue(headers, CommonConstants.DATABASE);
 
@@ -294,7 +299,8 @@ public class SqlQueryExecutor {
     return result;
   }
 
-  private Pattern buildLikeRegex(String likePattern) {
+  // Package-private for unit testing.
+  Pattern buildLikeRegex(String likePattern) {
     StringBuilder regex = new StringBuilder();
     boolean escaped = false;
     for (char c : likePattern.toCharArray()) {
@@ -320,38 +326,47 @@ public class SqlQueryExecutor {
 
   private List<String> fetchDatabases(Map<String, String> headers)
       throws IOException {
-    try (PinotAdminClient adminClient = createAdminClient(new TreeMap<>(headers))) {
+    PinotAdminClient adminClient = createAdminClient(copyHeaders(headers));
+    try {
       return adminClient.getDatabaseClient().listDatabaseNames();
     } catch (Exception e) {
       invalidateControllerUrlCache();
       throw e instanceof IOException ? (IOException) e
           : new IOException("Failed to fetch databases from controller", e);
+    } finally {
+      adminClient.close();
     }
   }
 
   private List<String> fetchTables(String database, Map<String, String> headers)
       throws IOException {
-    // headers is already a filtered TreeMap; create a mutable copy to add the database key.
-    Map<String, String> requestHeaders = new TreeMap<>(headers);
+    // headers is a filtered case-insensitive TreeMap; add the resolved database key for the controller call.
+    Map<String, String> requestHeaders = copyHeaders(headers);
     requestHeaders.put(CommonConstants.DATABASE, database);
-    try (PinotAdminClient adminClient = createAdminClient(requestHeaders)) {
+    PinotAdminClient adminClient = createAdminClient(requestHeaders);
+    try {
       return adminClient.getTableClient().listTables(null, null, null);
     } catch (Exception e) {
       invalidateControllerUrlCache();
       throw e instanceof IOException ? (IOException) e : new IOException("Failed to fetch tables from controller", e);
+    } finally {
+      adminClient.close();
     }
   }
 
   private List<String> fetchSchemas(String database, Map<String, String> headers)
       throws IOException {
-    // headers is already a filtered TreeMap; create a mutable copy to add the database key.
-    Map<String, String> requestHeaders = new TreeMap<>(headers);
+    // headers is a filtered case-insensitive TreeMap; add the resolved database key for the controller call.
+    Map<String, String> requestHeaders = copyHeaders(headers);
     requestHeaders.put(CommonConstants.DATABASE, database);
-    try (PinotAdminClient adminClient = createAdminClient(requestHeaders)) {
+    PinotAdminClient adminClient = createAdminClient(requestHeaders);
+    try {
       return adminClient.getSchemaClient().listSchemaNames();
     } catch (Exception e) {
       invalidateControllerUrlCache();
       throw e instanceof IOException ? (IOException) e : new IOException("Failed to fetch schemas from controller", e);
+    } finally {
+      adminClient.close();
     }
   }
 
@@ -413,6 +428,23 @@ public class SqlQueryExecutor {
       _sharedAdminTransportScheme = scheme;
     }
     return _sharedAdminTransport;
+  }
+
+  /**
+   * Releases the shared HTTP transport. Must be called when this executor is no longer needed
+   * (e.g., on broker/controller shutdown) to avoid leaking Netty thread pools and connections.
+   */
+  @Override
+  public synchronized void close() {
+    if (_sharedAdminTransport != null) {
+      try {
+        _sharedAdminTransport.close();
+      } catch (IOException e) {
+        // Best-effort close on shutdown; no recovery needed.
+      }
+      _sharedAdminTransport = null;
+      _sharedAdminTransportScheme = null;
+    }
   }
 
   /**
