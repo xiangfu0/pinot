@@ -23,8 +23,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.time.Duration;
-import java.util.Collections;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import org.apache.avro.file.DataFileStream;
@@ -247,6 +248,13 @@ public class ExactlyOnceKafkaRealtimeClusterIntegrationTest extends BaseRealtime
 
   /**
    * Count records visible in the topic with the given isolation level.
+   *
+   * <p>For {@code read_committed}, {@link KafkaConsumer#endOffsets(java.util.Collection, Duration)}
+   * returns the LSO (Last Stable Offset) per partition; for {@code read_uncommitted} it returns the
+   * log-end-offset. We poll until every partition's position catches up to that snapshot rather than
+   * breaking on the first empty poll. On a freshly assigned consumer the first poll often returns
+   * empty while metadata/fetch sessions are being established, and breaking on it produced false
+   * zero counts and spurious {@code markers were not propagated} failures.
    */
   private int countRecords(String brokerList, String isolationLevel) {
     Properties props = new Properties();
@@ -265,25 +273,51 @@ public class ExactlyOnceKafkaRealtimeClusterIntegrationTest extends BaseRealtime
         LOGGER.warn("No partitions found for topic {}", getKafkaTopic());
         return 0;
       }
+      List<TopicPartition> topicPartitions = new ArrayList<>(partitions.size());
       for (PartitionInfo pi : partitions) {
-        TopicPartition tp = new TopicPartition(pi.topic(), pi.partition());
-        consumer.assign(Collections.singletonList(tp));
-        consumer.seekToBeginning(Collections.singletonList(tp));
-        long deadline = System.currentTimeMillis() + 30_000L;
-        int partitionRecords = 0;
-        while (System.currentTimeMillis() < deadline) {
-          ConsumerRecords<byte[], byte[]> records = consumer.poll(Duration.ofSeconds(5));
-          if (records.isEmpty()) {
-            break;
-          }
-          partitionRecords += records.count();
+        topicPartitions.add(new TopicPartition(pi.topic(), pi.partition()));
+      }
+      consumer.assign(topicPartitions);
+      consumer.seekToBeginning(topicPartitions);
+      // Prime the consumer's metadata/fetch session with a short poll so the subsequent
+      // endOffsets() and position() calls do not block on cold metadata resolution.
+      consumer.poll(Duration.ofMillis(200));
+      Map<TopicPartition, Long> endOffsets = consumer.endOffsets(topicPartitions, Duration.ofSeconds(10));
+      long expectedTotal = 0L;
+      for (Long offset : endOffsets.values()) {
+        expectedTotal += offset;
+      }
+      if (expectedTotal == 0L) {
+        // Two distinct cases, both correctly returning 0:
+        //  - read_committed: LSO is at 0 on every partition, i.e. no transaction has been finalized yet.
+        //  - read_uncommitted: the topic is genuinely empty.
+        // A transient endOffsets timeout would also land here; log so it is distinguishable in CI output.
+        LOGGER.info("countRecords({}): endOffsets returned 0 for all partitions ({})", isolationLevel, endOffsets);
+        return 0;
+      }
+      long deadline = System.currentTimeMillis() + 60_000L;
+      while (System.currentTimeMillis() < deadline) {
+        if (allPartitionsCaughtUp(consumer, topicPartitions, endOffsets)) {
+          break;
         }
-        totalRecords += partitionRecords;
+        ConsumerRecords<byte[], byte[]> records = consumer.poll(Duration.ofSeconds(2));
+        totalRecords += records.count();
       }
     } catch (Exception e) {
-      LOGGER.error("Error counting records with {}: {}", isolationLevel, e.getMessage());
+      LOGGER.error("Error counting records with {}", isolationLevel, e);
     }
     return totalRecords;
+  }
+
+  private boolean allPartitionsCaughtUp(KafkaConsumer<byte[], byte[]> consumer, List<TopicPartition> topicPartitions,
+      Map<TopicPartition, Long> endOffsets) {
+    for (TopicPartition tp : topicPartitions) {
+      Long endOffset = endOffsets.get(tp);
+      if (endOffset == null || consumer.position(tp) < endOffset) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private boolean isRetryableRealtimePartitionMetadataError(Throwable throwable) {
