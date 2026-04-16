@@ -280,20 +280,24 @@ public class ExactlyOnceKafkaRealtimeClusterIntegrationTest extends BaseRealtime
       consumer.assign(topicPartitions);
       consumer.seekToBeginning(topicPartitions);
       // Prime the consumer's metadata/fetch session with a short poll so the subsequent
-      // endOffsets() and position() calls do not block on cold metadata resolution.
-      consumer.poll(Duration.ofMillis(200));
+      // endOffsets() and position() calls do not block on cold metadata resolution. Any records
+      // returned here advance the consumer position and must be counted, otherwise we could return
+      // a caught-up position with totalRecords==0.
+      ConsumerRecords<byte[], byte[]> primingRecords = consumer.poll(Duration.ofMillis(200));
+      totalRecords += primingRecords.count();
       Map<TopicPartition, Long> endOffsets = consumer.endOffsets(topicPartitions, Duration.ofSeconds(10));
-      long expectedTotal = 0L;
+      long totalEndOffset = 0L;
       for (Long offset : endOffsets.values()) {
-        expectedTotal += offset;
+        totalEndOffset += offset;
       }
-      if (expectedTotal == 0L) {
-        // Two distinct cases, both correctly returning 0:
+      if (totalEndOffset == 0L) {
+        // Two cases, both correctly returning 0:
         //  - read_committed: LSO is at 0 on every partition, i.e. no transaction has been finalized yet.
         //  - read_uncommitted: the topic is genuinely empty.
-        // A transient endOffsets timeout would also land here; log so it is distinguishable in CI output.
+        // A timeout from endOffsets() throws TimeoutException and goes to the catch block below,
+        // so reaching here means the broker returned 0 for every partition.
         LOGGER.info("countRecords({}): endOffsets returned 0 for all partitions ({})", isolationLevel, endOffsets);
-        return 0;
+        return totalRecords;
       }
       long deadline = System.currentTimeMillis() + 60_000L;
       while (System.currentTimeMillis() < deadline) {
