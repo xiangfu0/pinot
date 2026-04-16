@@ -16,23 +16,21 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.local.function;
+package org.apache.pinot.common.function.test;
+
+import org.apache.pinot.spi.annotations.ScalarFunction;
 
 
 /**
- * Deprecated forwarding wrapper for the legacy inbuilt evaluator type name.
- *
- * <p>Instances inherit the thread-safety characteristics of
- * {@link org.apache.pinot.common.evaluator.InbuiltFunctionEvaluator}.
- *
- * <p>TODO: Delete this shim after Pinot 1.6.0 is released.
- *
- * @deprecated Use {@link org.apache.pinot.common.evaluator.InbuiltFunctionEvaluator} instead.
+ * Test-only scalar function used to verify that stateful function instances are reused across evaluations.
  */
-@Deprecated
-public class InbuiltFunctionEvaluator extends org.apache.pinot.common.evaluator.InbuiltFunctionEvaluator
-    implements FunctionEvaluator {
-  public InbuiltFunctionEvaluator(String functionExpression) {
-    super(functionExpression);
+@SuppressWarnings("unused")
+public class MutableStringTestFunction {
+  private String _baseString = "";
+
+  @ScalarFunction
+  public String appendToStringAndReturn(String addedString) {
+    _baseString += addedString;
+    return _baseString;
   }
 }

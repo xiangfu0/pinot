@@ -16,23 +16,32 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.segment.local.function;
+package org.apache.pinot.spi.function;
+
+import java.util.List;
+import org.apache.pinot.spi.data.readers.GenericRow;
 
 
 /**
- * Deprecated forwarding wrapper for the legacy inbuilt evaluator type name.
+ * Interface for evaluators of transform function expressions of schema field specs.
  *
- * <p>Instances inherit the thread-safety characteristics of
- * {@link org.apache.pinot.common.evaluator.InbuiltFunctionEvaluator}.
- *
- * <p>TODO: Delete this shim after Pinot 1.6.0 is released.
- *
- * @deprecated Use {@link org.apache.pinot.common.evaluator.InbuiltFunctionEvaluator} instead.
+ * <p>Implementations are not required to be thread-safe. A single instance should be used
+ * from one thread at a time, or callers must provide their own synchronization.
  */
-@Deprecated
-public class InbuiltFunctionEvaluator extends org.apache.pinot.common.evaluator.InbuiltFunctionEvaluator
-    implements FunctionEvaluator {
-  public InbuiltFunctionEvaluator(String functionExpression) {
-    super(functionExpression);
-  }
+public interface FunctionEvaluator {
+
+  /**
+   * Get the arguments of the function
+   */
+  List<String> getArguments();
+
+  /**
+   * Evaluate the function on the generic row and return the result
+   */
+  Object evaluate(GenericRow genericRow);
+
+  /**
+   * Evaluates the function on the given values (same order as the arguments) and returns the result.
+   */
+  Object evaluate(Object[] values);
 }
