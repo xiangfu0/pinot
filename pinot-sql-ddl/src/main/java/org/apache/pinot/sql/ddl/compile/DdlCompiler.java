@@ -207,7 +207,7 @@ public final class DdlCompiler {
       case "METRIC":
         if (!isMetricCompatible(dt)) {
           throw new DdlCompilationException(
-              "METRIC role requires a numeric data type; column '" + col.getColumnName().getSimple()
+              "METRIC role requires a numeric or sketch data type; column '" + col.getColumnName().getSimple()
                   + "' is " + dt + ".");
         }
         return ColumnRole.METRIC;
@@ -225,6 +225,9 @@ public final class DdlCompiler {
       case FLOAT:
       case DOUBLE:
       case BIG_DECIMAL:
+      case BYTES:
+      case HLL:
+      case HLL_PLUS:
         return true;
       default:
         return false;

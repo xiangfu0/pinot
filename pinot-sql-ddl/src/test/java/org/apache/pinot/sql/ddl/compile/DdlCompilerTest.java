@@ -132,6 +132,25 @@ public class DdlCompilerTest {
     assertEquals(s.getFieldSpecFor("c_ts").getDataType(), DataType.TIMESTAMP);
   }
 
+  @Test
+  public void hllDataTypeMappingInDdl() {
+    CompiledCreateTable c = compileCreate(
+        "CREATE TABLE t ("
+            + "  hll_col HLL METRIC,"
+            + "  hll_col2 HYPERLOGLOG METRIC,"
+            + "  hllp_col HLL_PLUS METRIC,"
+            + "  hllp_col2 HYPERLOGLOGPLUS METRIC"
+            + ") TABLE_TYPE = OFFLINE");
+    Schema s = c.getSchema();
+    assertEquals(s.getFieldSpecFor("hll_col").getDataType(), DataType.HLL);
+    assertEquals(s.getFieldSpecFor("hll_col2").getDataType(), DataType.HLL);
+    assertEquals(s.getFieldSpecFor("hllp_col").getDataType(), DataType.HLL_PLUS);
+    assertEquals(s.getFieldSpecFor("hllp_col2").getDataType(), DataType.HLL_PLUS);
+    // Physical storage type must be BYTES
+    assertEquals(s.getFieldSpecFor("hll_col").getDataType().getStoredType(), DataType.BYTES);
+    assertEquals(s.getFieldSpecFor("hllp_col").getDataType().getStoredType(), DataType.BYTES);
+  }
+
   // -------------------------------------------------------------------------------------------
   // CREATE TABLE: property mapping
   // -------------------------------------------------------------------------------------------

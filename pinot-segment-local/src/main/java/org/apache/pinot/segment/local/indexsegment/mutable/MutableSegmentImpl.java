@@ -911,6 +911,8 @@ public class MutableSegmentImpl implements MutableSegment {
             break;
           case BIG_DECIMAL:
           case BYTES:
+          case HLL:
+          case HLL_PLUS:
             forwardIndex.add(valueAggregator.serializeAggregatedValue(value), -1, docId);
             break;
           default:
@@ -1144,6 +1146,8 @@ public class MutableSegmentImpl implements MutableSegment {
           }
           break;
         case BYTES:
+        case HLL:
+        case HLL_PLUS:
           Object oldValue = valueAggregator.deserializeAggregatedValue(forwardIndex.getBytes(docId));
           Object newValue = valueAggregator.applyRawValue(oldValue, value);
           forwardIndex.setBytes(docId, valueAggregator.serializeAggregatedValue(newValue));
