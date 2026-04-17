@@ -60,6 +60,8 @@ public class FieldSpecTest {
     Assert.assertEquals(STRING.getStoredType(), STRING);
     Assert.assertEquals(JSON.getStoredType(), STRING);
     Assert.assertEquals(BYTES.getStoredType(), BYTES);
+    Assert.assertEquals(HLL.getStoredType(), BYTES);
+    Assert.assertEquals(HLL_PLUS.getStoredType(), BYTES);
 
     Assert.assertEquals(INT.size(), Integer.BYTES);
     Assert.assertEquals(LONG.size(), Long.BYTES);
@@ -581,6 +583,43 @@ public class FieldSpecTest {
     spec1.setTags(Arrays.asList("tag1"));
     assertThat(spec1).isEqualTo(spec2);
     assertThat(spec1.hashCode()).isEqualTo(spec2.hashCode());
+  }
+
+  @Test
+  public void testHllDataType() {
+    // HLL and HLL_PLUS should be stored as BYTES
+    Assert.assertEquals(HLL.getStoredType(), BYTES);
+    Assert.assertEquals(HLL_PLUS.getStoredType(), BYTES);
+    Assert.assertFalse(HLL.isFixedWidth());
+    Assert.assertFalse(HLL_PLUS.isFixedWidth());
+    Assert.assertFalse(HLL.isNumeric());
+    Assert.assertFalse(HLL_PLUS.isNumeric());
+
+    // HLL metric field spec round-trips through JSON
+    MetricFieldSpec hllSpec = new MetricFieldSpec("hllColumn", HLL);
+    Assert.assertEquals(hllSpec.getDataType(), HLL);
+    Assert.assertEquals(hllSpec.getDataType().getStoredType(), BYTES);
+    Assert.assertEquals((byte[]) hllSpec.getDefaultNullValue(), new byte[0]);
+
+    MetricFieldSpec hllPlusSpec = new MetricFieldSpec("hllPlusColumn", HLL_PLUS);
+    Assert.assertEquals(hllPlusSpec.getDataType(), HLL_PLUS);
+    Assert.assertEquals(hllPlusSpec.getDataType().getStoredType(), BYTES);
+    Assert.assertEquals((byte[]) hllPlusSpec.getDefaultNullValue(), new byte[0]);
+  }
+
+  @Test
+  public void testHllSchemaValidation() {
+    // HLL and HLL_PLUS are valid METRIC types
+    Schema.validate(FieldSpec.FieldType.METRIC, HLL);
+    Schema.validate(FieldSpec.FieldType.METRIC, HLL_PLUS);
+
+    // HLL is not valid for DIMENSION
+    try {
+      Schema.validate(FieldSpec.FieldType.DIMENSION, HLL);
+      Assert.fail("Expected IllegalStateException for HLL as DIMENSION");
+    } catch (IllegalStateException e) {
+      // expected
+    }
   }
 
   @Test

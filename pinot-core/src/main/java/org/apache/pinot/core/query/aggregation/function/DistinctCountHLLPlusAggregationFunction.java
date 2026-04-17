@@ -93,7 +93,8 @@ public class DistinctCountHLLPlusAggregationFunction extends BaseSingleInputAggr
       Map<ExpressionContext, BlockValSet> blockValSetMap) {
     BlockValSet blockValSet = blockValSetMap.get(_expression);
 
-    // Treat BYTES value as serialized HyperLogLogPlus
+    // Treat BYTES / HLL_PLUS column value as serialized HyperLogLogPlus.
+    // HLL_PLUS is a logical type with stored type BYTES, so both cases are handled here.
     DataType storedType = blockValSet.getValueType().getStoredType();
     if (storedType == DataType.BYTES) {
       byte[][] bytesValues = blockValSet.getBytesValuesSV();
@@ -237,7 +238,8 @@ public class DistinctCountHLLPlusAggregationFunction extends BaseSingleInputAggr
       Map<ExpressionContext, BlockValSet> blockValSetMap) {
     BlockValSet blockValSet = blockValSetMap.get(_expression);
 
-    // Treat BYTES value as serialized HyperLogLogPlus
+    // Treat BYTES / HLL_PLUS column value as serialized HyperLogLogPlus.
+    // HLL_PLUS is a logical type with stored type BYTES, so both cases are handled here.
     DataType storedType = blockValSet.getValueType().getStoredType();
     if (storedType == DataType.BYTES) {
       byte[][] bytesValues = blockValSet.getBytesValuesSV();
@@ -385,7 +387,8 @@ public class DistinctCountHLLPlusAggregationFunction extends BaseSingleInputAggr
       Map<ExpressionContext, BlockValSet> blockValSetMap) {
     BlockValSet blockValSet = blockValSetMap.get(_expression);
 
-    // Treat BYTES value as serialized HyperLogLogPlus
+    // Treat BYTES / HLL_PLUS column value as serialized HyperLogLogPlus.
+    // HLL_PLUS is a logical type with stored type BYTES, so both cases are handled here.
     DataType storedType = blockValSet.getValueType().getStoredType();
     if (storedType == DataType.BYTES) {
       byte[][] bytesValues = blockValSet.getBytesValuesSV();
