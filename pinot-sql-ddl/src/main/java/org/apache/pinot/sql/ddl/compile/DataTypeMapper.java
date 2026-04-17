@@ -55,6 +55,10 @@ public final class DataTypeMapper {
     map.put("BINARY", DataType.BYTES);
     map.put("BYTES", DataType.BYTES);
     map.put("JSON", DataType.JSON);
+    map.put("HLL", DataType.HLL);
+    map.put("HYPERLOGLOG", DataType.HLL);
+    map.put("HLL_PLUS", DataType.HLL_PLUS);
+    map.put("HYPERLOGLOGPLUS", DataType.HLL_PLUS);
     NAME_TO_DATATYPE = map;
   }
 

@@ -434,6 +434,8 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
             case STRING:
               return DEFAULT_METRIC_NULL_VALUE_OF_STRING;
             case BYTES:
+            case HLL:
+            case HLL_PLUS:
               return DEFAULT_METRIC_NULL_VALUE_OF_BYTES;
             default:
               throw new IllegalStateException("Unsupported metric data type: " + dataType);
@@ -459,6 +461,8 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
             case JSON:
               return DEFAULT_DIMENSION_NULL_VALUE_OF_JSON;
             case BYTES:
+            case HLL:
+            case HLL_PLUS:
               return DEFAULT_DIMENSION_NULL_VALUE_OF_BYTES;
             case BIG_DECIMAL:
               return DEFAULT_DIMENSION_NULL_VALUE_OF_BIG_DECIMAL;
@@ -592,6 +596,8 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
           jsonNode.put(key, (String) _defaultNullValue);
           break;
         case BYTES:
+        case HLL:
+        case HLL_PLUS:
           jsonNode.put(key, BytesUtils.toHexString((byte[]) _defaultNullValue));
           break;
         case MAP:
@@ -670,6 +676,11 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
     STRING(false, true),
     JSON(STRING, false, false),
     BYTES(false, false),
+    // HLL and HLL_PLUS are sketch types stored physically as BYTES.
+    // Declaring columns as HLL / HLL_PLUS lets the engine skip the BYTES→deserialize step
+    // in DISTINCTCOUNTHLL / DISTINCTCOUNTHLLPLUS aggregations.
+    HLL(BYTES, false, false),
+    HLL_PLUS(BYTES, false, false),
     STRUCT(false, false),
     MAP(false, false),
     LIST(false, false),
@@ -768,6 +779,8 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
           case JSON:
             return value;
           case BYTES:
+          case HLL:
+          case HLL_PLUS:
             return BytesUtils.toBytes(value);
           case MAP:
             return JsonUtils.stringToObject(value, Map.class);
@@ -782,11 +795,11 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
     }
 
     public boolean equals(Object value1, Object value2) {
-      return this == BYTES ? Arrays.equals((byte[]) value1, (byte[]) value2) : value1.equals(value2);
+      return _storedType == BYTES ? Arrays.equals((byte[]) value1, (byte[]) value2) : value1.equals(value2);
     }
 
     public int hashCode(Object value) {
-      return this == BYTES ? Arrays.hashCode((byte[]) value) : value.hashCode();
+      return _storedType == BYTES ? Arrays.hashCode((byte[]) value) : value.hashCode();
     }
 
     /**
@@ -816,6 +829,8 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
         case JSON:
           return ((String) value1).compareTo((String) value2);
         case BYTES:
+        case HLL:
+        case HLL_PLUS:
           return ByteArray.compare((byte[]) value1, (byte[]) value2);
         case MAP:
         case LIST:
@@ -832,7 +847,7 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
       if (this == BIG_DECIMAL) {
         return ((BigDecimal) value).toPlainString();
       }
-      if (this == BYTES) {
+      if (this == BYTES || this == HLL || this == HLL_PLUS) {
         return BytesUtils.toHexString((byte[]) value);
       }
       if (this == MAP || this == LIST) {
@@ -869,6 +884,8 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
           case JSON:
             return value;
           case BYTES:
+          case HLL:
+          case HLL_PLUS:
             return BytesUtils.toByteArray(value);
           case MAP:
           case LIST:

@@ -302,6 +302,18 @@ public class DataSchema {
         return typeFactory.createSqlType(SqlTypeName.VARBINARY);
       }
     },
+    HLL(BYTES, NullValuePlaceHolder.INTERNAL_BYTES) {
+      @Override
+      public RelDataType toType(RelDataTypeFactory typeFactory) {
+        return typeFactory.createSqlType(SqlTypeName.VARBINARY);
+      }
+    },
+    HLL_PLUS(BYTES, NullValuePlaceHolder.INTERNAL_BYTES) {
+      @Override
+      public RelDataType toType(RelDataTypeFactory typeFactory) {
+        return typeFactory.createSqlType(SqlTypeName.VARBINARY);
+      }
+    },
     OBJECT(null) {
       @Override
       public RelDataType toType(RelDataTypeFactory typeFactory) {
@@ -455,6 +467,10 @@ public class DataSchema {
         case BYTES:
         case BYTES_ARRAY:
           return DataType.BYTES;
+        case HLL:
+          return DataType.HLL;
+        case HLL_PLUS:
+          return DataType.HLL_PLUS;
         case UNKNOWN:
           return DataType.UNKNOWN;
         default:
@@ -846,6 +862,10 @@ public class DataSchema {
           return JSON;
         case BYTES:
           return BYTES;
+        case HLL:
+          return HLL;
+        case HLL_PLUS:
+          return HLL_PLUS;
         case MAP:
           return MAP;
         case UNKNOWN:

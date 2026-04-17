@@ -340,6 +340,8 @@ public class JsonUtils {
       case JSON:
         return jsonValue.asText();
       case BYTES:
+      case HLL:
+      case HLL_PLUS:
         try {
           return jsonValue.binaryValue();
         } catch (IOException e) {
