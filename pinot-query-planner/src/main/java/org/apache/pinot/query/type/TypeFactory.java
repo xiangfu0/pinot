@@ -103,6 +103,8 @@ public class TypeFactory extends JavaTypeFactoryImpl {
       case JSON:
         return SqlTypeName.VARCHAR;
       case BYTES:
+      case HLL:
+      case HLL_PLUS:
         return SqlTypeName.VARBINARY;
       case BIG_DECIMAL:
         return SqlTypeName.DECIMAL;

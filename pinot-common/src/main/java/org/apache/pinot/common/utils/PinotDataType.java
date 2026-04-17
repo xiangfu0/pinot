@@ -1509,6 +1509,8 @@ public enum PinotDataType {
       case STRING:
         return fieldSpec.isSingleValueField() ? STRING : STRING_ARRAY;
       case BYTES:
+      case HLL:
+      case HLL_PLUS:
         return fieldSpec.isSingleValueField() ? BYTES : BYTES_ARRAY;
       case MAP:
         if (fieldSpec.isSingleValueField()) {
