@@ -27,7 +27,7 @@ import java.util.List;
 import org.apache.avro.file.DataFileWriter;
 import org.apache.avro.generic.GenericData;
 import org.apache.commons.codec.binary.Hex;
-import org.apache.pinot.segment.local.utils.CustomSerDeUtils;
+import org.apache.pinot.core.common.ObjectSerDeUtils;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
 import org.testng.annotations.Test;
@@ -103,7 +103,7 @@ public class HllTypeTest extends CustomDataQueryClusterIntegrationTest {
     try {
       HyperLogLog hll = new HyperLogLog(LOG2M);
       hll.offer(value);
-      return CustomSerDeUtils.HYPER_LOG_LOG_SER_DE.serialize(hll);
+      return ObjectSerDeUtils.HYPER_LOG_LOG_SER_DE.serialize(hll);
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
@@ -114,7 +114,7 @@ public class HllTypeTest extends CustomDataQueryClusterIntegrationTest {
       // sp=0 means no sparse representation (same default as Pinot aggregation functions)
       HyperLogLogPlus hllPlus = new HyperLogLogPlus(LOG2M, 0);
       hllPlus.offer(value);
-      return CustomSerDeUtils.HYPER_LOG_LOG_PLUS_SER_DE.serialize(hllPlus);
+      return ObjectSerDeUtils.HYPER_LOG_LOG_PLUS_SER_DE.serialize(hllPlus);
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
@@ -128,8 +128,8 @@ public class HllTypeTest extends CustomDataQueryClusterIntegrationTest {
     JsonNode result = postQuery(query);
     long count = result.get("resultTable").get("rows").get(0).get(0).asLong();
     // 1000 rows each carrying one of 100 distinct values — merged HLL should report ~100
-    assertTrue(count > 0, "distinctCountHLL should return a positive estimate");
-    assertTrue(count <= 200, "distinctCountHLL estimate should be in a reasonable range, got " + count);
+    assertTrue(count >= 50 && count <= 200,
+        "distinctCountHLL estimate should be between 50 and 200 for 100 distinct values, got " + count);
   }
 
   @Test(dataProvider = "useBothQueryEngines")
@@ -139,8 +139,8 @@ public class HllTypeTest extends CustomDataQueryClusterIntegrationTest {
     String query = String.format("SELECT distinctCountHLLPlus(%s) FROM %s", HLL_PLUS_COL, getTableName());
     JsonNode result = postQuery(query);
     long count = result.get("resultTable").get("rows").get(0).get(0).asLong();
-    assertTrue(count > 0, "distinctCountHLLPlus should return a positive estimate");
-    assertTrue(count <= 200, "distinctCountHLLPlus estimate should be in a reasonable range, got " + count);
+    assertTrue(count >= 50 && count <= 200,
+        "distinctCountHLLPlus estimate should be between 50 and 200 for 100 distinct values, got " + count);
   }
 
   @Test(dataProvider = "useV1QueryEngine")
@@ -154,7 +154,7 @@ public class HllTypeTest extends CustomDataQueryClusterIntegrationTest {
     // Raw result is a hex-encoded serialized HLL
     String rawHex = result.get("resultTable").get("rows").get(0).get(1).asText();
     byte[] rawBytes = Hex.decodeHex(rawHex);
-    HyperLogLog mergedHll = CustomSerDeUtils.HYPER_LOG_LOG_SER_DE.deserialize(rawBytes);
+    HyperLogLog mergedHll = ObjectSerDeUtils.HYPER_LOG_LOG_SER_DE.deserialize(rawBytes);
     assertEquals((long) mergedHll.cardinality(), distinctCount,
         "Raw HLL cardinality should match distinctCountHLL result");
   }
@@ -170,7 +170,7 @@ public class HllTypeTest extends CustomDataQueryClusterIntegrationTest {
     // Raw result is a hex-encoded serialized HLL+
     String rawHex = result.get("resultTable").get("rows").get(0).get(1).asText();
     byte[] rawBytes = Hex.decodeHex(rawHex);
-    HyperLogLogPlus mergedHllPlus = CustomSerDeUtils.HYPER_LOG_LOG_PLUS_SER_DE.deserialize(rawBytes);
+    HyperLogLogPlus mergedHllPlus = ObjectSerDeUtils.HYPER_LOG_LOG_PLUS_SER_DE.deserialize(rawBytes);
     assertEquals((long) mergedHllPlus.cardinality(), distinctCount,
         "Raw HLL+ cardinality should match distinctCountHLLPlus result");
   }
