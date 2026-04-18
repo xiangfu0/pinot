@@ -613,10 +613,16 @@ public class FieldSpecTest {
     Schema.validate(FieldSpec.FieldType.METRIC, HLL);
     Schema.validate(FieldSpec.FieldType.METRIC, HLL_PLUS);
 
-    // HLL is not valid for DIMENSION
+    // HLL and HLL_PLUS are not valid for DIMENSION
     try {
       Schema.validate(FieldSpec.FieldType.DIMENSION, HLL);
       Assert.fail("Expected IllegalStateException for HLL as DIMENSION");
+    } catch (IllegalStateException e) {
+      // expected
+    }
+    try {
+      Schema.validate(FieldSpec.FieldType.DIMENSION, HLL_PLUS);
+      Assert.fail("Expected IllegalStateException for HLL_PLUS as DIMENSION");
     } catch (IllegalStateException e) {
       // expected
     }

@@ -676,15 +676,15 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
     STRING(false, true),
     JSON(STRING, false, false),
     BYTES(false, false),
-    // HLL and HLL_PLUS are sketch types stored physically as BYTES.
-    // Declaring columns as HLL / HLL_PLUS lets the engine skip the BYTES→deserialize step
-    // in DISTINCTCOUNTHLL / DISTINCTCOUNTHLLPLUS aggregations.
-    HLL(BYTES, false, false),
-    HLL_PLUS(BYTES, false, false),
     STRUCT(false, false),
     MAP(false, false),
     LIST(false, false),
-    UNKNOWN(false, true);
+    UNKNOWN(false, true),
+    // HLL and HLL_PLUS are sketch types stored physically as BYTES.
+    // Appended at the end to preserve the ordinals of all prior enum constants
+    // (ordinals are serialized in AnyValueAggregationFunction inter-node transfers).
+    HLL(BYTES, false, false),
+    HLL_PLUS(BYTES, false, false);
 
     private final DataType _storedType;
     private final int _size;
@@ -760,6 +760,9 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
      */
     public Object convert(String value) {
       try {
+        if (_storedType == BYTES) {
+          return BytesUtils.toBytes(value);
+        }
         switch (this) {
           case INT:
             return Integer.valueOf(value);
@@ -778,10 +781,6 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
           case STRING:
           case JSON:
             return value;
-          case BYTES:
-          case HLL:
-          case HLL_PLUS:
-            return BytesUtils.toBytes(value);
           case MAP:
             return JsonUtils.stringToObject(value, Map.class);
           case LIST:
@@ -810,6 +809,9 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
      * return 1 if value1 is greater than value2
      */
     public int compare(Object value1, Object value2) {
+      if (_storedType == BYTES) {
+        return ByteArray.compare((byte[]) value1, (byte[]) value2);
+      }
       switch (this) {
         case INT:
           return Integer.compare((int) value1, (int) value2);
@@ -828,10 +830,6 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
         case STRING:
         case JSON:
           return ((String) value1).compareTo((String) value2);
-        case BYTES:
-        case HLL:
-        case HLL_PLUS:
-          return ByteArray.compare((byte[]) value1, (byte[]) value2);
         case MAP:
         case LIST:
           throw new UnsupportedOperationException("Cannot compare complex data types: " + this);
@@ -847,7 +845,7 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
       if (this == BIG_DECIMAL) {
         return ((BigDecimal) value).toPlainString();
       }
-      if (this == BYTES || this == HLL || this == HLL_PLUS) {
+      if (_storedType == BYTES) {
         return BytesUtils.toHexString((byte[]) value);
       }
       if (this == MAP || this == LIST) {
@@ -865,6 +863,9 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
      */
     public Comparable convertInternal(String value) {
       try {
+        if (_storedType == BYTES) {
+          return BytesUtils.toByteArray(value);
+        }
         switch (this) {
           case INT:
             return Integer.valueOf(value);
@@ -883,10 +884,6 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
           case STRING:
           case JSON:
             return value;
-          case BYTES:
-          case HLL:
-          case HLL_PLUS:
-            return BytesUtils.toByteArray(value);
           case MAP:
           case LIST:
             throw new UnsupportedOperationException("Cannot convert complex data types: " + this);
