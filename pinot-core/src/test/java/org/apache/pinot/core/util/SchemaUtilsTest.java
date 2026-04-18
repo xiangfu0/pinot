@@ -294,28 +294,37 @@ public class SchemaUtilsTest {
   public void testValidateMultiValueFieldSpec() {
     Schema pinotSchema;
 
+    // JSON MV: caught by SchemaUtils.validate (Schema.build allows it)
     pinotSchema = new Schema.SchemaBuilder().setSchemaName(TABLE_NAME)
         .addSingleValueDimension("myCol", FieldSpec.DataType.STRING)
         .addMultiValueDimension("myJsonCol", FieldSpec.DataType.JSON).build();
-
     checkValidationFails(pinotSchema);
 
+    // BIG_DECIMAL MV: caught by SchemaUtils.validate (Schema.build allows it; restriction lives in
+    // SchemaUtils.validateMultiValueCompatibility, not Schema.validate)
     pinotSchema = new Schema.SchemaBuilder().setSchemaName(TABLE_NAME)
         .addSingleValueDimension("myCol", FieldSpec.DataType.STRING)
         .addMultiValueDimension("myBigDecimalCol", FieldSpec.DataType.BIG_DECIMAL).build();
-
     checkValidationFails(pinotSchema);
+
+    // UUID MV: caught at Schema.build() time (Schema.validate rejects it)
+    Assert.assertThrows(RuntimeException.class, () -> new Schema.SchemaBuilder().setSchemaName(TABLE_NAME)
+        .addSingleValueDimension("myCol", FieldSpec.DataType.STRING)
+        .addMultiValueDimension("myUuidCol", FieldSpec.DataType.UUID).build());
 
     pinotSchema = new Schema.SchemaBuilder().setSchemaName(TABLE_NAME)
         .addSingleValueDimension("myCol", FieldSpec.DataType.STRING)
         .addSingleValueDimension("myJsonCol", FieldSpec.DataType.JSON).build();
-
     SchemaUtils.validate(pinotSchema);
 
     pinotSchema = new Schema.SchemaBuilder().setSchemaName(TABLE_NAME)
         .addSingleValueDimension("myCol", FieldSpec.DataType.STRING)
         .addSingleValueDimension("myBigDecimalCol", FieldSpec.DataType.BIG_DECIMAL).build();
+    SchemaUtils.validate(pinotSchema);
 
+    pinotSchema = new Schema.SchemaBuilder().setSchemaName(TABLE_NAME)
+        .addSingleValueDimension("myCol", FieldSpec.DataType.STRING)
+        .addSingleValueDimension("myUuidCol", FieldSpec.DataType.UUID).build();
     SchemaUtils.validate(pinotSchema);
   }
 
