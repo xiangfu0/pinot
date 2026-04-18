@@ -210,10 +210,27 @@ public class HllTypeTest extends CustomDataQueryClusterIntegrationTest {
     // that can be round-tripped back to a valid HyperLogLog sketch.
     String query = String.format("SELECT %s FROM %s LIMIT 1", HLL_COL, getTableName());
     JsonNode result = postQuery(query);
-    String hexValue = result.get("resultTable").get("rows").get(0).get(0).asText();
-    assertTrue(hexValue != null && !hexValue.isEmpty(), "Selected HLL column should be a non-empty hex string");
+    JsonNode cell = result.get("resultTable").get("rows").get(0).get(0);
+    assertFalse(cell.isNull(), "Selected HLL column node should not be null");
+    String hexValue = cell.asText();
+    assertFalse(hexValue.isEmpty(), "Selected HLL column should be a non-empty hex string");
     byte[] bytes = Hex.decodeHex(hexValue);
     HyperLogLog hll = ObjectSerDeUtils.HYPER_LOG_LOG_SER_DE.deserialize(bytes);
     assertTrue(hll.cardinality() > 0, "Deserialized HLL sketch should have positive cardinality");
+  }
+
+  @Test(dataProvider = "useV1QueryEngine")
+  public void testSelectHllPlusColumn(boolean useMultiStageQueryEngine)
+      throws Exception {
+    setUseMultiStageQueryEngine(useMultiStageQueryEngine);
+    String query = String.format("SELECT %s FROM %s LIMIT 1", HLL_PLUS_COL, getTableName());
+    JsonNode result = postQuery(query);
+    JsonNode cell = result.get("resultTable").get("rows").get(0).get(0);
+    assertFalse(cell.isNull(), "Selected HLL_PLUS column node should not be null");
+    String hexValue = cell.asText();
+    assertFalse(hexValue.isEmpty(), "Selected HLL_PLUS column should be a non-empty hex string");
+    byte[] bytes = Hex.decodeHex(hexValue);
+    HyperLogLogPlus hllPlus = ObjectSerDeUtils.HYPER_LOG_LOG_PLUS_SER_DE.deserialize(bytes);
+    assertTrue(hllPlus.cardinality() > 0, "Deserialized HLL+ sketch should have positive cardinality");
   }
 }

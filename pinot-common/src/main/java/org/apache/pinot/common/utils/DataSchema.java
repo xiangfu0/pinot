@@ -495,7 +495,7 @@ public class DataSchema {
      * <ul>
      *   <li>BOOLEAN: boolean -> int</li>
      *   <li>TIMESTAMP: Timestamp -> long</li>
-     *   <li>BYTES: byte[] -> ByteArray</li>
+     *   <li>BYTES/HLL/HLL_PLUS: byte[] -> ByteArray</li>
      *   <li>BOOLEAN_ARRAY: boolean[] -> int[]</li>
      *   <li>TIMESTAMP_ARRAY: Timestamp[] -> long[]</li>
      * </ul>
@@ -545,7 +545,7 @@ public class DataSchema {
      * <ul>
      *   <li>BOOLEAN: int -> boolean</li>
      *   <li>TIMESTAMP: long -> Timestamp</li>
-     *   <li>BYTES: ByteArray -> byte[]</li>
+     *   <li>BYTES/HLL/HLL_PLUS: ByteArray -> byte[]</li>
      *   <li>BOOLEAN_ARRAY: int[] -> boolean[]</li>
      *   <li>TIMESTAMP_ARRAY: long[] -> Timestamp[]</li>
      * </ul>
