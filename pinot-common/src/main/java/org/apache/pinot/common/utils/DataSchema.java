@@ -507,6 +507,8 @@ public class DataSchema {
         case TIMESTAMP:
           return ((Timestamp) value).getTime();
         case BYTES:
+        case HLL:
+        case HLL_PLUS:
           return new ByteArray((byte[]) value);
         case BOOLEAN_ARRAY:
           return fromBooleanArray((boolean[]) value);
@@ -555,6 +557,8 @@ public class DataSchema {
         case TIMESTAMP:
           return new Timestamp((long) value);
         case BYTES:
+        case HLL:
+        case HLL_PLUS:
           return ((ByteArray) value).getBytes();
         case BOOLEAN_ARRAY:
           return toBooleanArray((int[]) value);
@@ -589,6 +593,8 @@ public class DataSchema {
         case JSON:
           return value.toString();
         case BYTES:
+        case HLL:
+        case HLL_PLUS:
           return ((ByteArray) value).getBytes();
         case INT_ARRAY:
           return toIntArray(value);
@@ -626,6 +632,8 @@ public class DataSchema {
           assert value instanceof Timestamp;
           return value.toString();
         case BYTES:
+        case HLL:
+        case HLL_PLUS:
           return BytesUtils.toHexString((byte[]) value);
         case TIMESTAMP_ARRAY:
           return formatTimestampArray((Timestamp[]) value);
@@ -659,6 +667,8 @@ public class DataSchema {
         case JSON:
           return value.toString();
         case BYTES:
+        case HLL:
+        case HLL_PLUS:
           return ((ByteArray) value).toHexString();
         case MAP:
           return toMap(value);

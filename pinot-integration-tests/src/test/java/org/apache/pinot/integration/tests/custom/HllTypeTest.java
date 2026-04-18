@@ -201,4 +201,19 @@ public class HllTypeTest extends CustomDataQueryClusterIntegrationTest {
     long count = result.get("resultTable").get("rows").get(0).get(0).asLong();
     assertEquals(count, NUM_DOCS, "COUNT(*) should equal number of ingested docs");
   }
+
+  @Test(dataProvider = "useV1QueryEngine")
+  public void testSelectHllColumn(boolean useMultiStageQueryEngine)
+      throws Exception {
+    setUseMultiStageQueryEngine(useMultiStageQueryEngine);
+    // Selecting an HLL column directly exercises convertAndFormat(); the result should be a non-empty hex string
+    // that can be round-tripped back to a valid HyperLogLog sketch.
+    String query = String.format("SELECT %s FROM %s LIMIT 1", HLL_COL, getTableName());
+    JsonNode result = postQuery(query);
+    String hexValue = result.get("resultTable").get("rows").get(0).get(0).asText();
+    assertTrue(hexValue != null && !hexValue.isEmpty(), "Selected HLL column should be a non-empty hex string");
+    byte[] bytes = Hex.decodeHex(hexValue);
+    HyperLogLog hll = ObjectSerDeUtils.HYPER_LOG_LOG_SER_DE.deserialize(bytes);
+    assertTrue(hll.cardinality() > 0, "Deserialized HLL sketch should have positive cardinality");
+  }
 }

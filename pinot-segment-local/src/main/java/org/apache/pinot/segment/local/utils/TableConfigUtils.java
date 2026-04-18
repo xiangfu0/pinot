@@ -526,8 +526,9 @@ public final class TableConfigUtils {
               Preconditions.checkState(StringUtils.isNumeric(literal),
                   "Second argument of DISTINCT_COUNT_HLL must be a number: %s", aggregationConfig);
             }
-            Preconditions.checkState(dataType == DataType.BYTES || dataType == DataType.HLL,
-                "Result type for DISTINCT_COUNT_HLL must be BYTES or HLL: %s", aggregationConfig);
+            Preconditions.checkState(dataType.getStoredType() == DataType.BYTES,
+                "Result type for DISTINCT_COUNT_HLL must be BYTES or a sketch type stored as BYTES: %s",
+                aggregationConfig);
           } else if (functionType == DISTINCTCOUNTHLLPLUS) {
             Preconditions.checkState(numArguments >= 1 && numArguments <= 3,
                 "DISTINCT_COUNT_HLL_PLUS can have at most three arguments: %s", aggregationConfig);
@@ -547,8 +548,9 @@ public final class TableConfigUtils {
               Preconditions.checkState(StringUtils.isNumeric(literal),
                   "Third argument of DISTINCT_COUNT_HLL_PLUS must be a number: %s", aggregationConfig);
             }
-            Preconditions.checkState(dataType == DataType.BYTES || dataType == DataType.HLL_PLUS,
-                "Result type for DISTINCT_COUNT_HLL_PLUS must be BYTES or HLL_PLUS: %s", aggregationConfig);
+            Preconditions.checkState(dataType.getStoredType() == DataType.BYTES,
+                "Result type for DISTINCT_COUNT_HLL_PLUS must be BYTES or a sketch type stored as BYTES: %s",
+                aggregationConfig);
           } else if (functionType == SUMPRECISION) {
             Preconditions.checkState(numArguments >= 2 && numArguments <= 3,
                 "SUM_PRECISION must specify precision (required), scale (optional): %s", aggregationConfig);
