@@ -18,10 +18,12 @@
  */
 package org.apache.pinot.core.segment.processing.partitioner;
 
+import javax.annotation.Nullable;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.segment.spi.partition.PartitionFunctionFactory;
 import org.apache.pinot.spi.config.table.ColumnPartitionConfig;
 import org.apache.pinot.spi.data.FieldSpec;
+import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.readers.GenericRow;
 
 
@@ -31,15 +33,29 @@ import org.apache.pinot.spi.data.readers.GenericRow;
 public class TableConfigPartitioner implements Partitioner {
   private final String _column;
   private final PartitionFunction _partitionFunction;
+  /** True when the partition function was compiled with BYTES input; raw byte[] values are passed directly. */
+  private final boolean _isBytesMode;
 
   public TableConfigPartitioner(String columnName, ColumnPartitionConfig columnPartitionConfig) {
+    this(columnName, columnPartitionConfig, null);
+  }
+
+  public TableConfigPartitioner(String columnName, ColumnPartitionConfig columnPartitionConfig,
+      @Nullable Schema schema) {
     _column = columnName;
-    _partitionFunction = PartitionFunctionFactory.getPartitionFunction(columnPartitionConfig);
+    FieldSpec fieldSpec = schema != null ? schema.getFieldSpecFor(columnName) : null;
+    _isBytesMode = columnPartitionConfig.getFunctionExpr() != null && fieldSpec != null
+        && fieldSpec.getDataType().getStoredType() == FieldSpec.DataType.BYTES;
+    _partitionFunction = PartitionFunctionFactory.getPartitionFunction(columnName, columnPartitionConfig, fieldSpec);
   }
 
   @Override
   public String getPartition(GenericRow genericRow) {
-    return String.valueOf(_partitionFunction.getPartition(FieldSpec.getStringValue(genericRow.getValue(_column))));
+    Object value = genericRow.getValue(_column);
+    if (_isBytesMode && value instanceof byte[]) {
+      return String.valueOf(_partitionFunction.getPartition((byte[]) value));
+    }
+    return String.valueOf(_partitionFunction.getPartition(FieldSpec.getStringValue(value)));
   }
 
   @Override
@@ -53,6 +69,10 @@ public class TableConfigPartitioner implements Partitioner {
       throw new IllegalArgumentException(
           "TableConfigPartitioner expects exactly 1 column value, got " + columnValues.length);
     }
-    return String.valueOf(_partitionFunction.getPartition(FieldSpec.getStringValue(columnValues[0])));
+    Object value = columnValues[0];
+    if (_isBytesMode && value instanceof byte[]) {
+      return String.valueOf(_partitionFunction.getPartition((byte[]) value));
+    }
+    return String.valueOf(_partitionFunction.getPartition(FieldSpec.getStringValue(value)));
   }
 }

@@ -604,8 +604,41 @@ public abstract class BaseSegmentCreator implements SegmentCreator {
       properties.setProperty(getKeyFor(column, IS_AUTO_GENERATED), "true");
     }
 
-    // Min/max value
-    if (fieldSpec.getFieldType() != FieldType.COMPLEX) {
+    PartitionFunction partitionFunction = columnStatistics.getPartitionFunction();
+    if (partitionFunction != null) {
+      // Expression-mode functions are identified by the presence of PARTITION_FUNCTION_EXPR in segment metadata.
+      // The legacy PARTITION_FUNCTION name key is omitted for expression-mode to avoid writing a sentinel value
+      // ("FunctionExpr") that pre-feature readers would reject as an unknown function name. Note: segments written
+      // with expression-mode metadata use v7 format and are not readable by older servers regardless of this key.
+      if (partitionFunction.getFunctionExpr() == null) {
+        properties.setProperty(getKeyFor(column, PARTITION_FUNCTION), partitionFunction.getName());
+      }
+      properties.setProperty(getKeyFor(column, NUM_PARTITIONS), partitionFunction.getNumPartitions());
+      if (partitionFunction.getFunctionExpr() != null) {
+        properties.setProperty(getKeyFor(column, PARTITION_FUNCTION_EXPR), partitionFunction.getFunctionExpr());
+      }
+      if (partitionFunction.getPartitionIdNormalizer() != null) {
+        properties.setProperty(getKeyFor(column, PARTITION_ID_NORMALIZER),
+            partitionFunction.getPartitionIdNormalizer());
+      }
+      properties.setProperty(getKeyFor(column, PARTITION_VALUES), columnStatistics.getPartitions());
+      Map<String, String> partitionFunctionConfig = partitionFunction.getFunctionConfig();
+      if (partitionFunctionConfig != null) {
+        for (Map.Entry<String, String> entry : partitionFunctionConfig.entrySet()) {
+          properties.setProperty(getKeyFor(column, String.format("%s.%s", PARTITION_FUNCTION_CONFIG, entry.getKey())),
+              entry.getValue());
+        }
+      }
+    }
+
+    // Datetime field
+    if (fieldType == FieldType.DATE_TIME) {
+      DateTimeFieldSpec dateTimeFieldSpec = (DateTimeFieldSpec) fieldSpec;
+      properties.setProperty(getKeyFor(column, DATETIME_FORMAT), dateTimeFieldSpec.getFormat());
+      properties.setProperty(getKeyFor(column, DATETIME_GRANULARITY), dateTimeFieldSpec.getGranularity());
+    }
+
+    if (fieldType != FieldType.COMPLEX) {
       // Regular (non-complex) field
       if (totalDocs > 0) {
         Object min = columnStatistics.getMinValue();
@@ -616,21 +649,6 @@ public abstract class BaseSegmentCreator implements SegmentCreator {
         // when loading the segment.
         if (min != null && max != null) {
           addColumnMinMaxValueInfo(properties, column, min, max, storedType);
-        }
-      }
-    }
-
-    // Partition function
-    PartitionFunction partitionFunction = columnStatistics.getPartitionFunction();
-    if (partitionFunction != null) {
-      properties.setProperty(getKeyFor(column, PARTITION_FUNCTION), partitionFunction.getName());
-      properties.setProperty(getKeyFor(column, NUM_PARTITIONS), partitionFunction.getNumPartitions());
-      properties.setProperty(getKeyFor(column, PARTITION_VALUES), columnStatistics.getPartitions());
-      Map<String, String> partitionFunctionConfig = partitionFunction.getFunctionConfig();
-      if (partitionFunctionConfig != null) {
-        for (Map.Entry<String, String> entry : partitionFunctionConfig.entrySet()) {
-          properties.setProperty(getKeyFor(column, String.format("%s.%s", PARTITION_FUNCTION_CONFIG, entry.getKey())),
-              entry.getValue());
         }
       }
     }

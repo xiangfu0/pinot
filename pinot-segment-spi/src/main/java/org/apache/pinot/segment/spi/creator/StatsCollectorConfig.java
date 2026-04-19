@@ -24,6 +24,7 @@ import java.util.Map;
 import javax.annotation.Nullable;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.segment.spi.partition.PartitionFunctionFactory;
+import org.apache.pinot.segment.spi.partition.pipeline.PartitionValueType;
 import org.apache.pinot.spi.config.table.ColumnPartitionConfig;
 import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.SegmentPartitionConfig;
@@ -85,7 +86,16 @@ public class StatsCollectorConfig {
     if (_segmentPartitionConfig != null) {
       ColumnPartitionConfig columnPartitionConfig = _segmentPartitionConfig.getColumnPartitionConfig(column);
       if (columnPartitionConfig != null) {
-        return PartitionFunctionFactory.getPartitionFunction(columnPartitionConfig);
+        if (columnPartitionConfig.getFunctionExpr() != null) {
+          // For expression-mode, determine input type from the column schema so BYTES columns are hashed as raw
+          // bytes rather than hex-encoded strings.
+          FieldSpec fieldSpec = _schema.getFieldSpecFor(column);
+          PartitionValueType inputType =
+              fieldSpec != null && fieldSpec.getDataType().getStoredType() == FieldSpec.DataType.BYTES
+                  ? PartitionValueType.BYTES : PartitionValueType.STRING;
+          return PartitionFunctionFactory.getPartitionFunction(column, columnPartitionConfig, inputType);
+        }
+        return PartitionFunctionFactory.getPartitionFunction(column, columnPartitionConfig);
       }
     }
     return null;
@@ -109,7 +119,17 @@ public class StatsCollectorConfig {
 
   @Deprecated
   @Nullable
+  public String getPartitionFunctionExpr(String column) {
+    return (_segmentPartitionConfig != null) ? _segmentPartitionConfig.getFunctionExpr(column) : null;
+  }
+
+  @Nullable
   public Map<String, String> getPartitionFunctionConfig(String column) {
     return (_segmentPartitionConfig != null) ? _segmentPartitionConfig.getFunctionConfig(column) : null;
+  }
+
+  @Nullable
+  public String getPartitionIdNormalizer(String column) {
+    return (_segmentPartitionConfig != null) ? _segmentPartitionConfig.getPartitionIdNormalizer(column) : null;
   }
 }

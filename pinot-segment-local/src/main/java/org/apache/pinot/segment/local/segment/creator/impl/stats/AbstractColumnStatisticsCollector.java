@@ -164,4 +164,12 @@ public abstract class AbstractColumnStatisticsCollector implements ColumnStatist
   protected void updatePartition(String value) {
     _partitions.add(_partitionFunction.getPartition(value));
   }
+
+  /**
+   * Updates the partition set using raw bytes. Expression-mode pipelines compiled with BYTES input type will hash
+   * the raw bytes directly; legacy partition functions fall back to hex-encoding via the default interface method.
+   */
+  protected void updatePartition(byte[] bytes) {
+    _partitions.add(_partitionFunction.getPartition(bytes));
+  }
 }

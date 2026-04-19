@@ -34,6 +34,9 @@ import java.util.Objects;
 import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.pinot.segment.spi.partition.PartitionFunction;
+import org.apache.pinot.segment.spi.partition.pipeline.PartitionPipelineFunction;
+import org.apache.pinot.segment.spi.partition.pipeline.PartitionValueType;
 import org.apache.pinot.spi.utils.JsonUtils;
 
 
@@ -49,6 +52,15 @@ import org.apache.pinot.spi.utils.JsonUtils;
 @JsonDeserialize(using = ColumnPartitionMetadata.ColumnPartitionMetadataDeserializer.class)
 public class ColumnPartitionMetadata {
   private final String _functionName;
+  private final String _functionExpr;
+  private final String _partitionIdNormalizer;
+  /**
+   * Pipeline input type for expression-mode partition functions. {@code null} means STRING (the default and legacy
+   * behavior). Currently only {@code "BYTES"} is stored for BYTES-typed partition columns so that the broker can
+   * compile the same BYTES-input pipeline and produce consistent partition assignments with ingestion.
+   */
+  @Nullable
+  private final String _inputType;
   private final int _numPartitions;
   private final Map<String, String> _functionConfig;
   private final Set<Integer> _partitions;
@@ -60,21 +72,76 @@ public class ColumnPartitionMetadata {
    * @param numPartitions Number of total partitions for this column
    * @param partitions Set of partitions the column contains
    * @param functionConfig Configuration required by partition function.
+   * @deprecated Use {@link #ColumnPartitionMetadata(PartitionFunction, Set)} instead, which derives all fields
+   *             directly from the {@link PartitionFunction} contract and keeps them consistent.
    */
+  @Deprecated
   public ColumnPartitionMetadata(String functionName, int numPartitions, Set<Integer> partitions,
       @Nullable Map<String, String> functionConfig) {
     _functionName = functionName;
+    _functionExpr = null;
+    _partitionIdNormalizer = null;
+    _inputType = null;
     _numPartitions = numPartitions;
     _partitions = partitions;
     _functionConfig = functionConfig;
   }
 
+  private ColumnPartitionMetadata(@Nullable String functionName, int numPartitions, Set<Integer> partitions,
+      @Nullable Map<String, String> functionConfig, @Nullable String functionExpr,
+      @Nullable String partitionIdNormalizer, @Nullable String inputType) {
+    _functionName = functionName;
+    _functionExpr = normalizeOptionalText(functionExpr);
+    _partitionIdNormalizer = normalizeOptionalText(partitionIdNormalizer);
+    _inputType = normalizeOptionalText(inputType);
+    _numPartitions = numPartitions;
+    _partitions = partitions;
+    _functionConfig = functionConfig;
+  }
+
+  public ColumnPartitionMetadata(PartitionFunction partitionFunction, Set<Integer> partitions) {
+    this(
+        // Expression-mode uses "FunctionExpr" as a stable sentinel for the function name field.
+        // This ensures old brokers (which call jsonMetadata.get("functionName").asText() without
+        // a null guard) receive a non-null string rather than NPE-ing on a missing JSON key.
+        // Old brokers fail gracefully with IllegalArgumentException ("No enum constant for: FunctionExpr")
+        // and fall back to querying all segments rather than corrupting routing state.
+        partitionFunction.getFunctionExpr() != null ? PartitionPipelineFunction.NAME
+            : partitionFunction.getName(),
+        partitionFunction.getNumPartitions(), partitions, partitionFunction.getFunctionConfig(),
+        partitionFunction.getFunctionExpr(), partitionFunction.getPartitionIdNormalizer(),
+        // Store the pipeline input type only when it is non-default (BYTES) to avoid bloating the metadata.
+        partitionFunction instanceof PartitionPipelineFunction
+            && ((PartitionPipelineFunction) partitionFunction).getPartitionPipeline().getInputType()
+            == PartitionValueType.BYTES ? PartitionValueType.BYTES.name() : null);
+  }
+
+  @Nullable
   public String getFunctionName() {
     return _functionName;
   }
 
+  /**
+   * Returns the pipeline input type for expression-mode partition functions, or {@code null} if the default
+   * ({@link PartitionValueType#STRING}) input type applies.
+   */
+  @Nullable
+  public String getInputType() {
+    return _inputType;
+  }
+
   public int getNumPartitions() {
     return _numPartitions;
+  }
+
+  @Nullable
+  public String getFunctionExpr() {
+    return _functionExpr;
+  }
+
+  @Nullable
+  public String getPartitionIdNormalizer() {
+    return _partitionIdNormalizer;
   }
 
   public Set<Integer> getPartitions() {
@@ -92,16 +159,18 @@ public class ColumnPartitionMetadata {
     }
     if (obj instanceof ColumnPartitionMetadata) {
       ColumnPartitionMetadata that = (ColumnPartitionMetadata) obj;
-      return _functionName.equals(that._functionName) && _numPartitions == that._numPartitions && _partitions.equals(
-          that._partitions) && Objects.equals(_functionConfig, that._functionConfig);
+      return Objects.equals(_functionName, that._functionName) && _numPartitions == that._numPartitions
+          && _partitions.equals(that._partitions) && Objects.equals(_functionConfig, that._functionConfig)
+          && Objects.equals(_functionExpr, that._functionExpr) && Objects.equals(_partitionIdNormalizer,
+          that._partitionIdNormalizer) && Objects.equals(_inputType, that._inputType);
     }
     return false;
   }
 
   @Override
   public int hashCode() {
-    return 37 * 37 * _functionName.hashCode() + 37 * _numPartitions + _partitions.hashCode()
-        + Objects.hashCode(_functionConfig);
+    return Objects.hash(_functionName, _numPartitions, _functionConfig, _functionExpr, _partitionIdNormalizer,
+        _inputType) + 31 * _partitions.hashCode();
   }
 
   /**
@@ -140,6 +209,11 @@ public class ColumnPartitionMetadata {
     }
   }
 
+  @Nullable
+  private static String normalizeOptionalText(@Nullable String value) {
+    return StringUtils.isBlank(value) || "null".equals(value) ? null : value;
+  }
+
   /**
    * Custom deserializer for {@link ColumnPartitionMetadata}.
    * <p>
@@ -150,6 +224,9 @@ public class ColumnPartitionMetadata {
     private static final String FUNCTION_NAME_KEY = "functionName";
     private static final String NUM_PARTITIONS_KEY = "numPartitions";
     private static final String FUNCTION_CONFIG_KEY = "functionConfig";
+    private static final String FUNCTION_EXPR_KEY = "functionExpr";
+    private static final String PARTITION_ID_NORMALIZER_KEY = "partitionIdNormalizer";
+    private static final String INPUT_TYPE_KEY = "inputType";
     private static final String PARTITIONS_KEY = "partitions";
 
     // DO NOT CHANGE: for backward-compatibility
@@ -181,8 +258,20 @@ public class ColumnPartitionMetadata {
         functionConfig = JsonUtils.jsonNodeToObject(jsonMetadata.get(FUNCTION_CONFIG_KEY), new TypeReference<>() {
         });
       }
-      return new ColumnPartitionMetadata(jsonMetadata.get(FUNCTION_NAME_KEY).asText(),
-          jsonMetadata.get(NUM_PARTITIONS_KEY).asInt(), partitions, functionConfig);
+
+      JsonNode functionNameNode = jsonMetadata.get(FUNCTION_NAME_KEY);
+      JsonNode functionExprNode = jsonMetadata.get(FUNCTION_EXPR_KEY);
+      JsonNode partitionIdNormalizerNode = jsonMetadata.get(PARTITION_ID_NORMALIZER_KEY);
+      JsonNode inputTypeNode = jsonMetadata.get(INPUT_TYPE_KEY);
+      return new ColumnPartitionMetadata(readOptionalText(functionNameNode),
+          jsonMetadata.get(NUM_PARTITIONS_KEY).asInt(), partitions, functionConfig,
+          readOptionalText(functionExprNode), readOptionalText(partitionIdNormalizerNode),
+          readOptionalText(inputTypeNode));
+    }
+
+    @Nullable
+    private static String readOptionalText(@Nullable JsonNode node) {
+      return node != null && !node.isNull() ? normalizeOptionalText(node.asText()) : null;
     }
   }
 }

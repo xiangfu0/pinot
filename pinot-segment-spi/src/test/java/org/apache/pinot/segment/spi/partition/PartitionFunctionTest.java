@@ -22,6 +22,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
+import org.apache.pinot.segment.spi.partition.pipeline.PartitionPipelineFunction;
+import org.apache.pinot.spi.data.readers.GenericRow;
+import org.apache.pinot.spi.function.FunctionEvaluator;
 import org.apache.pinot.spi.utils.BytesUtils;
 import org.apache.pinot.spi.utils.JsonUtils;
 import org.apache.pinot.spi.utils.hash.FnvHashFunctions;
@@ -30,6 +33,7 @@ import org.testng.annotations.Test;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotEquals;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
@@ -431,6 +435,87 @@ public class PartitionFunctionTest {
     assertEquals(partitionFunction.getPartition("English"), 2);
     assertEquals(partitionFunction.getPartition("Chemistry"), 3);
     assertEquals(partitionFunction.getPartition("Physics"), 0);
+  }
+
+  @Test
+  public void testLegacyPartitionFunctionsExposeDefaultPartitionIdNormalizer() {
+    assertEquals(PartitionFunctionFactory.getPartitionFunction("Modulo", 8, null).getPartitionIdNormalizer(),
+        "POSITIVE_MODULO");
+    assertEquals(PartitionFunctionFactory.getPartitionFunction("HashCode", 8, null).getPartitionIdNormalizer(),
+        "ABS");
+    assertEquals(PartitionFunctionFactory.getPartitionFunction("ByteArray", 8, null).getPartitionIdNormalizer(),
+        "ABS");
+    assertEquals(PartitionFunctionFactory.getPartitionFunction("Murmur2", 8, null).getPartitionIdNormalizer(),
+        "MASK");
+    assertEquals(PartitionFunctionFactory.getPartitionFunction("Murmur3", 8, null).getPartitionIdNormalizer(),
+        "MASK");
+    assertEquals(PartitionFunctionFactory.getPartitionFunction("Fnv", 8, null).getPartitionIdNormalizer(), "MASK");
+    assertEquals(PartitionFunctionFactory.getPartitionFunction("Fnv", 8,
+        Map.of("negativePartitionHandling", "abs")).getPartitionIdNormalizer(), "ABS");
+  }
+
+  @Test
+  public void testLegacyPartitionFunctionFactoryAcceptsMatchingPartitionIdNormalizer() {
+    PartitionFunction partitionFunction =
+        PartitionFunctionFactory.getPartitionFunction("id", "Murmur2", 8, null, null, "MASK");
+
+    assertEquals(partitionFunction.getName(), "Murmur");
+    assertEquals(partitionFunction.getPartitionIdNormalizer(), "MASK");
+  }
+
+  @Test
+  public void testLegacyPartitionFunctionFactoryRejectsMismatchedPartitionIdNormalizer() {
+    IllegalArgumentException exception = expectThrows(IllegalArgumentException.class,
+        () -> PartitionFunctionFactory.getPartitionFunction("id", "Murmur2", 8, null, null, "ABS"));
+
+    assertTrue(exception.getMessage().contains("incompatible with legacy partition function 'Murmur2'"));
+  }
+
+  @Test
+  public void testLegacyPartitionFunctionImplementsFunctionEvaluatorWhenBoundToColumn() {
+    PartitionFunction partitionFunction =
+        PartitionFunctionFactory.getPartitionFunction("id", "Murmur2", 8, null, null, "MASK");
+    assertTrue(partitionFunction instanceof FunctionEvaluator);
+    FunctionEvaluator evaluator = (FunctionEvaluator) partitionFunction;
+    GenericRow row = new GenericRow();
+    row.putValue("id", "Pinot");
+
+    assertEquals(evaluator.getArguments(), java.util.List.of("id"));
+    assertEquals(evaluator.evaluate(row), partitionFunction.getPartition("Pinot"));
+    assertEquals(evaluator.evaluate(new Object[]{"Pinot"}), partitionFunction.getPartition("Pinot"));
+  }
+
+  @Test
+  public void testUnboundLegacyPartitionFunctionDoesNotImplementFunctionEvaluator() {
+    PartitionFunction partitionFunction = PartitionFunctionFactory.getPartitionFunction("Murmur2", 8, null);
+    assertFalse(partitionFunction instanceof FunctionEvaluator);
+  }
+
+  @Test
+  public void testFunctionExprPartitionFunctionImplementsFunctionEvaluator() {
+    PartitionFunction partitionFunction =
+        PartitionFunctionFactory.getPartitionFunction("id", null, 128, null, "fnv1a_32(md5(id))", "MASK");
+    assertTrue(partitionFunction instanceof FunctionEvaluator);
+    FunctionEvaluator evaluator = (FunctionEvaluator) partitionFunction;
+    GenericRow row = new GenericRow();
+    row.putValue("id", "000016be-9d72-466c-9632-cfa680dc8fa3");
+
+    assertEquals(evaluator.getArguments(), java.util.List.of("id"));
+    assertEquals(evaluator.evaluate(row), 104);
+    assertEquals(evaluator.evaluate(new Object[]{"000016be-9d72-466c-9632-cfa680dc8fa3"}), 104);
+  }
+
+  @Test
+  public void testFunctionExprPartitionFunctionSerialization() {
+    PartitionFunction partitionFunction =
+        PartitionFunctionFactory.getPartitionFunction("id", null, 128, null, "fnv1a_32(md5(id))", "MASK");
+
+    JsonNode jsonNode = JsonUtils.objectToJsonNode(partitionFunction);
+    assertEquals(partitionFunction.getName(), PartitionPipelineFunction.NAME);
+    assertEquals(jsonNode.get("name").asText(), PartitionPipelineFunction.NAME);
+    assertEquals(jsonNode.get("numPartitions").asInt(), 128);
+    assertEquals(jsonNode.get("functionExpr").asText(), "fnv1a_32(md5(id))");
+    assertEquals(jsonNode.get("partitionIdNormalizer").asText(), "MASK");
   }
 
   private void testBasicProperties(PartitionFunction partitionFunction, String functionName, int numPartitions) {
