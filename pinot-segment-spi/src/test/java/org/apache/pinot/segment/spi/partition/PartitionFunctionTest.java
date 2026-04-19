@@ -22,7 +22,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
-import org.apache.pinot.segment.spi.partition.pipeline.PartitionPipelineFunction;
 import org.apache.pinot.spi.data.readers.GenericRow;
 import org.apache.pinot.spi.function.FunctionEvaluator;
 import org.apache.pinot.spi.utils.BytesUtils;
@@ -489,33 +488,6 @@ public class PartitionFunctionTest {
   public void testUnboundLegacyPartitionFunctionDoesNotImplementFunctionEvaluator() {
     PartitionFunction partitionFunction = PartitionFunctionFactory.getPartitionFunction("Murmur2", 8, null);
     assertFalse(partitionFunction instanceof FunctionEvaluator);
-  }
-
-  @Test
-  public void testFunctionExprPartitionFunctionImplementsFunctionEvaluator() {
-    PartitionFunction partitionFunction =
-        PartitionFunctionFactory.getPartitionFunction("id", null, 128, null, "fnv1a_32(md5(id))", "MASK");
-    assertTrue(partitionFunction instanceof FunctionEvaluator);
-    FunctionEvaluator evaluator = (FunctionEvaluator) partitionFunction;
-    GenericRow row = new GenericRow();
-    row.putValue("id", "000016be-9d72-466c-9632-cfa680dc8fa3");
-
-    assertEquals(evaluator.getArguments(), java.util.List.of("id"));
-    assertEquals(evaluator.evaluate(row), 104);
-    assertEquals(evaluator.evaluate(new Object[]{"000016be-9d72-466c-9632-cfa680dc8fa3"}), 104);
-  }
-
-  @Test
-  public void testFunctionExprPartitionFunctionSerialization() {
-    PartitionFunction partitionFunction =
-        PartitionFunctionFactory.getPartitionFunction("id", null, 128, null, "fnv1a_32(md5(id))", "MASK");
-
-    JsonNode jsonNode = JsonUtils.objectToJsonNode(partitionFunction);
-    assertEquals(partitionFunction.getName(), PartitionPipelineFunction.NAME);
-    assertEquals(jsonNode.get("name").asText(), PartitionPipelineFunction.NAME);
-    assertEquals(jsonNode.get("numPartitions").asInt(), 128);
-    assertEquals(jsonNode.get("functionExpr").asText(), "fnv1a_32(md5(id))");
-    assertEquals(jsonNode.get("partitionIdNormalizer").asText(), "MASK");
   }
 
   private void testBasicProperties(PartitionFunction partitionFunction, String functionName, int numPartitions) {

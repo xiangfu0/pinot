@@ -22,52 +22,46 @@ import com.google.common.base.Preconditions;
 import java.util.Collections;
 import java.util.List;
 import javax.annotation.Nullable;
-import org.apache.pinot.segment.spi.function.ExecutableFunctionEvaluator;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.readers.GenericRow;
+import org.apache.pinot.spi.function.FunctionEvaluator;
+import org.apache.pinot.spi.utils.BytesUtils;
 
 
 /**
- * Immutable compiled pipeline for one raw partition column.
+ * Immutable compiled pipeline for one raw partition column, backed by a {@link FunctionEvaluator}.
+ *
+ * <p>The underlying {@link FunctionEvaluator} is responsible for correct type coercion. For partition expressions,
+ * the evaluator uses UTF-8 encoding when converting {@code String} values to {@code byte[]} parameters, ensuring
+ * that hash functions ({@code md5}, {@code murmur2}, {@code fnv1a_32}, etc.) operate on raw string bytes rather
+ * than a hex-decoded representation.
  */
-public final class PartitionPipeline extends ExecutableFunctionEvaluator {
+public final class PartitionPipeline implements FunctionEvaluator {
   private final String _rawColumn;
-  private final PartitionValueType _inputType;
-  private final PartitionValueType _outputType;
+  private final boolean _isBytesInput;
   private final String _canonicalFunctionExpr;
   @Nullable
   private final PartitionIntNormalizer _intNormalizer;
-  private final List<PartitionStep> _steps;
+  private final FunctionEvaluator _evaluator;
 
-  public PartitionPipeline(String rawColumn, PartitionValueType inputType, PartitionValueType outputType,
-      String canonicalFunctionExpr, @Nullable PartitionIntNormalizer intNormalizer, List<PartitionStep> steps,
-      ExecutableNode rootNode) {
-    // super() guards rootNode (non-null) and canonicalFunctionExpr (non-null); rawColumn null is caught below
-    super(rootNode, Collections.singletonList(rawColumn), canonicalFunctionExpr);
+  PartitionPipeline(String rawColumn, boolean isBytesInput, String canonicalFunctionExpr,
+      @Nullable PartitionIntNormalizer intNormalizer, FunctionEvaluator evaluator) {
     Preconditions.checkNotNull(rawColumn, "Raw column must be configured");
-    Preconditions.checkNotNull(inputType, "Input type must be configured");
-    Preconditions.checkNotNull(outputType, "Output type must be configured");
-    Preconditions.checkNotNull(steps, "Pipeline steps must be configured");
-    Preconditions.checkArgument(!outputType.isIntegral() || intNormalizer != null,
-        "Integral-output pipelines must configure an INT normalizer");
+    Preconditions.checkNotNull(canonicalFunctionExpr, "Canonical function expression must be configured");
+    Preconditions.checkNotNull(evaluator, "Function evaluator must be configured");
     _rawColumn = rawColumn;
-    _inputType = inputType;
-    _outputType = outputType;
+    _isBytesInput = isBytesInput;
     _canonicalFunctionExpr = canonicalFunctionExpr;
     _intNormalizer = intNormalizer;
-    _steps = Collections.unmodifiableList(steps);
+    _evaluator = evaluator;
   }
 
   public String getRawColumn() {
     return _rawColumn;
   }
 
-  public PartitionValueType getInputType() {
-    return _inputType;
-  }
-
-  public PartitionValueType getOutputType() {
-    return _outputType;
+  public boolean isBytesInput() {
+    return _isBytesInput;
   }
 
   public String getCanonicalFunctionExpr() {
@@ -79,8 +73,9 @@ public final class PartitionPipeline extends ExecutableFunctionEvaluator {
     return _intNormalizer;
   }
 
-  public List<PartitionStep> getSteps() {
-    return _steps;
+  @Override
+  public List<String> getArguments() {
+    return Collections.singletonList(_rawColumn);
   }
 
   @Override
@@ -89,11 +84,18 @@ public final class PartitionPipeline extends ExecutableFunctionEvaluator {
     if (inputValue == null) {
       return null;
     }
-    // Pass raw bytes directly for BYTES-input pipelines to avoid hex-encoding the payload.
-    if (inputValue instanceof byte[] && _inputType == PartitionValueType.BYTES) {
-      return super.evaluate(new Object[]{inputValue});
+    if (_isBytesInput) {
+      // For BYTES-input pipelines pass raw byte[] directly; String values are hex-encoded representations.
+      if (inputValue instanceof byte[]) {
+        return _evaluator.evaluate(new Object[]{inputValue});
+      }
+      // Hex-encoded string representation of bytes (e.g. from broker routing) — decode before passing.
+      return _evaluator.evaluate(new Object[]{BytesUtils.toBytes(
+          FieldSpec.getStringValue(inputValue))});
     }
-    return super.evaluate(new Object[]{FieldSpec.getStringValue(inputValue)});
+    // For STRING-input pipelines pass the string value as-is. The underlying PartitionFunctionEvaluator converts
+    // String to byte[] using UTF-8 encoding when a function parameter requires byte[].
+    return _evaluator.evaluate(new Object[]{FieldSpec.getStringValue(inputValue)});
   }
 
   @Override
@@ -105,22 +107,13 @@ public final class PartitionPipeline extends ExecutableFunctionEvaluator {
     if (inputValue == null) {
       return null;
     }
-    // Pass raw bytes directly for BYTES-input pipelines to avoid hex-encoding the payload.
-    if (inputValue instanceof byte[] && _inputType == PartitionValueType.BYTES) {
-      return super.evaluate(new Object[]{inputValue});
+    if (_isBytesInput) {
+      if (inputValue instanceof byte[]) {
+        return _evaluator.evaluate(new Object[]{inputValue});
+      }
+      return _evaluator.evaluate(new Object[]{BytesUtils.toBytes(
+          FieldSpec.getStringValue(inputValue))});
     }
-    return super.evaluate(new Object[]{FieldSpec.getStringValue(inputValue)});
-  }
-
-  public PartitionValue evaluate(String rawValue) {
-    Preconditions.checkState(_inputType == PartitionValueType.STRING,
-        "evaluate(String) is only supported for STRING-input pipelines");
-    return PartitionValue.fromObject(super.evaluate(new Object[]{rawValue}));
-  }
-
-  public PartitionValue evaluate(PartitionValue input) {
-    Preconditions.checkArgument(input.getType() == _inputType,
-        "Pipeline for column '%s' expects %s input but got %s", _rawColumn, _inputType, input.getType());
-    return PartitionValue.fromObject(super.evaluate(new Object[]{input.toObject()}));
+    return _evaluator.evaluate(new Object[]{FieldSpec.getStringValue(inputValue)});
   }
 }

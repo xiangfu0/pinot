@@ -18,46 +18,20 @@
  */
 package org.apache.pinot.segment.spi.function.scalar;
 
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
 import org.apache.pinot.spi.annotations.ScalarFunction;
-import org.apache.pinot.spi.utils.BytesUtils;
-import org.apache.pinot.spi.utils.hash.FnvHashFunctions;
-import org.apache.pinot.spi.utils.hash.MurmurHashFunctions;
 
 
 /**
- * Test-only scalar functions used to exercise the partition-expression compiler inside the pinot-segment-spi module.
+ * Test-only scalar functions used to exercise the partition-expression compiler in {@code pinot-common} tests.
+ *
+ * <p>Only functions that are NOT already registered in Pinot's production
+ * {@link org.apache.pinot.common.function.FunctionRegistry} should be added here. Hash functions
+ * ({@code md5}, {@code murmur2}, {@code fnv1a_32}, etc.) are provided by {@code HashFunctions} and must not be
+ * re-registered.
  */
 public final class PartitionFunctionExprTestFunctions {
   private PartitionFunctionExprTestFunctions() {
-  }
-
-  @ScalarFunction
-  public static String lower(String input) {
-    return input.toLowerCase(Locale.ROOT);
-  }
-
-  @ScalarFunction
-  public static String md5(byte[] input) {
-    return BytesUtils.toHexString(md5Digest(input));
-  }
-
-  @ScalarFunction(names = {"md5_raw"})
-  public static byte[] md5Raw(byte[] input) {
-    return md5Digest(input);
-  }
-
-  @ScalarFunction(names = {"fnv1a_32"})
-  public static int fnv1a32(byte[] input) {
-    return FnvHashFunctions.fnv1aHash32(input);
-  }
-
-  @ScalarFunction
-  public static int murmur2(byte[] input) {
-    return MurmurHashFunctions.murmurHash2(input);
   }
 
   @ScalarFunction
@@ -70,21 +44,8 @@ public final class PartitionFunctionExprTestFunctions {
     return value / divisor;
   }
 
-  @ScalarFunction(names = {"cid"}, isDeterministic = false)
-  public static String nonDeterministicCid(String input) {
-    return input;
-  }
-
   @ScalarFunction(isDeterministic = false)
   public static long randomBucket(long value) {
     return value + ThreadLocalRandom.current().nextLong();
-  }
-
-  private static byte[] md5Digest(byte[] input) {
-    try {
-      return MessageDigest.getInstance("MD5").digest(input);
-    } catch (NoSuchAlgorithmException e) {
-      throw new IllegalStateException("MD5 digest is not available", e);
-    }
   }
 }

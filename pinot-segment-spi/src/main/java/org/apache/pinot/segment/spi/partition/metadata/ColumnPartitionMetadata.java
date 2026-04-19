@@ -112,8 +112,8 @@ public class ColumnPartitionMetadata {
         partitionFunction.getFunctionExpr(), partitionFunction.getPartitionIdNormalizer(),
         // Store the pipeline input type only when it is non-default (BYTES) to avoid bloating the metadata.
         partitionFunction instanceof PartitionPipelineFunction
-            && ((PartitionPipelineFunction) partitionFunction).getPartitionPipeline().getInputType()
-            == PartitionValueType.BYTES ? PartitionValueType.BYTES.name() : null);
+            && ((PartitionPipelineFunction) partitionFunction).getPartitionPipeline().isBytesInput()
+            ? PartitionValueType.BYTES.name() : null);
   }
 
   @Nullable
@@ -161,16 +161,17 @@ public class ColumnPartitionMetadata {
       ColumnPartitionMetadata that = (ColumnPartitionMetadata) obj;
       return Objects.equals(_functionName, that._functionName) && _numPartitions == that._numPartitions
           && _partitions.equals(that._partitions) && Objects.equals(_functionConfig, that._functionConfig)
-          && Objects.equals(_functionExpr, that._functionExpr) && Objects.equals(_partitionIdNormalizer,
-          that._partitionIdNormalizer) && Objects.equals(_inputType, that._inputType);
+          && Objects.equals(_functionExpr, that._functionExpr)
+          && Objects.equals(_partitionIdNormalizer, that._partitionIdNormalizer)
+          && Objects.equals(_inputType, that._inputType);
     }
     return false;
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(_functionName, _numPartitions, _functionConfig, _functionExpr, _partitionIdNormalizer,
-        _inputType) + 31 * _partitions.hashCode();
+    return Objects.hash(_functionName, _numPartitions, _partitions, _functionConfig, _functionExpr,
+        _partitionIdNormalizer, _inputType);
   }
 
   /**

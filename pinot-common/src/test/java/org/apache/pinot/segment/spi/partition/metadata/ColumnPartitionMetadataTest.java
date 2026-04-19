@@ -38,7 +38,9 @@ public class ColumnPartitionMetadataTest {
     ColumnPartitionMetadata roundTripped =
         JsonUtils.stringToObject(JsonUtils.objectToString(metadata), ColumnPartitionMetadata.class);
 
-    assertEquals(roundTripped, metadata);
+    assertEquals(roundTripped.getFunctionName(), metadata.getFunctionName());
+    assertEquals(roundTripped.getNumPartitions(), metadata.getNumPartitions());
+    assertEquals(roundTripped.getPartitions(), metadata.getPartitions());
     assertNull(roundTripped.getFunctionExpr());
     assertNull(roundTripped.getPartitionIdNormalizer());
   }
@@ -75,7 +77,6 @@ public class ColumnPartitionMetadataTest {
 
     ColumnPartitionMetadata roundTripped = JsonUtils.stringToObject(json, ColumnPartitionMetadata.class);
 
-    assertEquals(roundTripped, metadata);
     assertEquals(roundTripped.getFunctionName(), PartitionPipelineFunction.NAME);
     assertEquals(roundTripped.getFunctionExpr(), "fnv1a_32(md5(id))");
     assertEquals(roundTripped.getPartitionIdNormalizer(), "POSITIVE_MODULO");

@@ -21,6 +21,7 @@ package org.apache.pinot.segment.spi.partition.pipeline;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
+import java.math.BigInteger;
 import java.util.Collections;
 import java.util.List;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
@@ -34,10 +35,7 @@ import org.apache.pinot.spi.utils.BytesUtils;
  * {@link PartitionFunction} adapter for expression-mode partition pipelines.
  *
  * <p><b>Note on {@code Serializable}:</b> {@link PartitionFunction} extends {@link java.io.Serializable} for
- * historical reasons, but partition functions are never Java-serialized in Pinot's runtime. This class holds a
- * {@link PartitionPipeline} that extends {@link org.apache.pinot.segment.spi.function.ExecutableFunctionEvaluator},
- * which contains {@link ThreadLocal} fields that are not serializable. Do not rely on Java serialization for this
- * class.
+ * historical reasons, but partition functions are never Java-serialized in Pinot's runtime.
  */
 @SuppressWarnings("serial")
 public class PartitionPipelineFunction implements PartitionFunction, FunctionEvaluator {
@@ -49,8 +47,6 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
   public PartitionPipelineFunction(PartitionPipeline pipeline, int numPartitions) {
     Preconditions.checkNotNull(pipeline, "Partition pipeline must be configured");
     Preconditions.checkArgument(numPartitions > 0, "Number of partitions must be > 0");
-    Preconditions.checkArgument(pipeline.getOutputType().isIntegral(),
-        "Partition pipeline must produce INT or LONG output, got: %s", pipeline.getOutputType());
     _pipeline = pipeline;
     _numPartitions = numPartitions;
   }
@@ -63,18 +59,10 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
   public int getPartition(String value) {
     // BYTES-input pipelines expect raw bytes. When the caller provides a string (e.g. a hex-encoded predicate value
     // from broker routing), convert the hex string back to raw bytes so the partition computation matches ingestion.
-    if (_pipeline.getInputType() == PartitionValueType.BYTES) {
+    if (_pipeline.isBytesInput()) {
       return getPartition(BytesUtils.toBytes(value));
     }
-    PartitionValue partitionValue = _pipeline.evaluate(value);
-    PartitionIntNormalizer intNormalizer = _pipeline.getIntNormalizer();
-    Preconditions.checkState(intNormalizer != null, "Integral-output partition pipeline must have an INT normalizer");
-    if (partitionValue.getType() == PartitionValueType.INT) {
-      return intNormalizer.getPartitionId(partitionValue.getIntValue(), _numPartitions);
-    }
-    Preconditions.checkState(partitionValue.getType() == PartitionValueType.LONG,
-        "Expected INT or LONG partition value but got: %s", partitionValue.getType());
-    return intNormalizer.getPartitionId(partitionValue.getLongValue(), _numPartitions);
+    return normalizeResult(_pipeline.evaluate(new Object[]{value}));
   }
 
   /**
@@ -83,18 +71,26 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
    */
   @Override
   public int getPartition(byte[] bytes) {
-    if (_pipeline.getInputType() != PartitionValueType.BYTES) {
+    if (!_pipeline.isBytesInput()) {
       return getPartition(BytesUtils.toHexString(bytes));
     }
-    PartitionValue partitionValue = _pipeline.evaluate(PartitionValue.bytesValue(bytes));
+    return normalizeResult(_pipeline.evaluate(new Object[]{bytes}));
+  }
+
+  private int normalizeResult(Object result) {
+    Preconditions.checkNotNull(result, "Partition expression for column '%s' returned null", _pipeline.getRawColumn());
+    Preconditions.checkState(result instanceof Number,
+        "Partition expression for column '%s' must return a numeric value, got: %s",
+        _pipeline.getRawColumn(), result.getClass().getSimpleName());
+    Number num = (Number) result;
     PartitionIntNormalizer intNormalizer = _pipeline.getIntNormalizer();
-    Preconditions.checkState(intNormalizer != null, "Integral-output partition pipeline must have an INT normalizer");
-    if (partitionValue.getType() == PartitionValueType.INT) {
-      return intNormalizer.getPartitionId(partitionValue.getIntValue(), _numPartitions);
+    Preconditions.checkState(intNormalizer != null,
+        "Integral-output partition pipeline for column '%s' must have an INT normalizer",
+        _pipeline.getRawColumn());
+    if (num instanceof Long || num instanceof BigInteger) {
+      return intNormalizer.getPartitionId(num.longValue(), _numPartitions);
     }
-    Preconditions.checkState(partitionValue.getType() == PartitionValueType.LONG,
-        "Expected INT or LONG partition value but got: %s", partitionValue.getType());
-    return intNormalizer.getPartitionId(partitionValue.getLongValue(), _numPartitions);
+    return intNormalizer.getPartitionId(num.intValue(), _numPartitions);
   }
 
   @Override
@@ -141,7 +137,7 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
     if (inputValue == null) {
       return null;
     }
-    if (inputValue instanceof byte[] && _pipeline.getInputType() == PartitionValueType.BYTES) {
+    if (inputValue instanceof byte[] && _pipeline.isBytesInput()) {
       return getPartition((byte[]) inputValue);
     }
     return getPartition(FieldSpec.getStringValue(inputValue));
@@ -156,7 +152,7 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
     if (inputValue == null) {
       return null;
     }
-    if (inputValue instanceof byte[] && _pipeline.getInputType() == PartitionValueType.BYTES) {
+    if (inputValue instanceof byte[] && _pipeline.isBytesInput()) {
       return getPartition((byte[]) inputValue);
     }
     return getPartition(FieldSpec.getStringValue(inputValue));

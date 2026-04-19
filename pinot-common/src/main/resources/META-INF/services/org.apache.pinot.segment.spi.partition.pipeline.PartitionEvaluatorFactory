@@ -16,4 +16,4 @@
 # specific language governing permissions and limitations
 # under the License.
 #
-org.apache.pinot.segment.spi.partition.pipeline.TestPartitionScalarFunctionResolver
+org.apache.pinot.common.evaluator.InbuiltPartitionEvaluatorFactory
