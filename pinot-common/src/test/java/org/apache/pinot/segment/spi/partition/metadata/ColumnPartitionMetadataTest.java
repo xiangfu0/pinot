@@ -43,6 +43,7 @@ public class ColumnPartitionMetadataTest {
     assertEquals(roundTripped.getPartitions(), metadata.getPartitions());
     assertNull(roundTripped.getFunctionExpr());
     assertNull(roundTripped.getPartitionIdNormalizer());
+    assertEquals(roundTripped, metadata);
   }
 
   @Test
@@ -83,5 +84,6 @@ public class ColumnPartitionMetadataTest {
     assertEquals(roundTripped.getNumPartitions(), 64);
     assertEquals(roundTripped.getPartitions(), Set.of(7, 15));
     assertNull(roundTripped.getInputType());
+    assertEquals(roundTripped, metadata);
   }
 }

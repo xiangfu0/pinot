@@ -22,7 +22,6 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
 import java.math.BigInteger;
-import java.util.Collections;
 import java.util.List;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.spi.data.FieldSpec;
@@ -128,7 +127,7 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
 
   @Override
   public List<String> getArguments() {
-    return Collections.singletonList(_pipeline.getRawColumn());
+    return _pipeline.getArguments();
   }
 
   @Override

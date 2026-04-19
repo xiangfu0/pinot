@@ -25,8 +25,9 @@ import org.apache.pinot.spi.function.FunctionEvaluator;
  * SPI for compiling a partition expression string into a {@link FunctionEvaluator}.
  *
  * <p>Implementations are loaded via {@link java.util.ServiceLoader}. Exactly one implementation must be present on the
- * classpath at runtime. The default implementation in {@code pinot-common} delegates to
- * {@link org.apache.pinot.common.evaluator.InbuiltFunctionEvaluator}.
+ * classpath at runtime. The default implementation in {@code pinot-common} is
+ * {@code org.apache.pinot.common.evaluator.InbuiltPartitionEvaluatorFactory}, which delegates to
+ * {@code org.apache.pinot.common.evaluator.PartitionFunctionEvaluator}.
  */
 public interface PartitionEvaluatorFactory {
 

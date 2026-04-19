@@ -55,7 +55,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
  * {@link ThreadLocal} scratch array so that concurrent invocations from different threads do not share mutable
  * state. A single call chain on one thread is not reentrant.
  */
-public class PartitionFunctionEvaluator extends ExecutableFunctionEvaluator {
+public final class PartitionFunctionEvaluator extends ExecutableFunctionEvaluator {
 
   public PartitionFunctionEvaluator(String functionExpression) {
     this(functionExpression, new ArrayList<>());
@@ -131,10 +131,10 @@ public class PartitionFunctionEvaluator extends ExecutableFunctionEvaluator {
    * as {@link ExecutableFunctionEvaluator.FunctionNode}.
    */
   private static class PartitionFunctionExecutionNode implements ExecutableNode {
-    final FunctionInvoker _functionInvoker;
-    final FunctionInfo _functionInfo;
-    final ExecutableNode[] _argumentNodes;
-    final ThreadLocal<Object[]> _arguments;
+    private final FunctionInvoker _functionInvoker;
+    private final FunctionInfo _functionInfo;
+    private final ExecutableNode[] _argumentNodes;
+    private final ThreadLocal<Object[]> _arguments;
 
     PartitionFunctionExecutionNode(FunctionInfo functionInfo, ExecutableNode[] argumentNodes) {
       _functionInvoker = new FunctionInvoker(functionInfo);

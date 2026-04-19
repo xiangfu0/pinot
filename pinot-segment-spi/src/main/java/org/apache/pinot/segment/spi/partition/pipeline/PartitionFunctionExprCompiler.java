@@ -29,8 +29,8 @@ import org.apache.pinot.spi.function.FunctionEvaluator;
 
 
 /**
- * Compiles a partition-function expression into a {@link PartitionPipeline} backed by
- * {@link org.apache.pinot.common.evaluator.InbuiltFunctionEvaluator} via {@link PartitionEvaluatorFactory}.
+ * Compiles a partition-function expression into a {@link PartitionPipeline} backed by a
+ * {@link org.apache.pinot.spi.function.FunctionEvaluator} provided by {@link PartitionEvaluatorFactory}.
  */
 public final class PartitionFunctionExprCompiler {
   private static final int MAX_EXPRESSION_LENGTH = 256;

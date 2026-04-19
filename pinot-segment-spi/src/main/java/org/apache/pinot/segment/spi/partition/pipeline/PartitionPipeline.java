@@ -43,6 +43,7 @@ public final class PartitionPipeline implements FunctionEvaluator {
   @Nullable
   private final PartitionIntNormalizer _intNormalizer;
   private final FunctionEvaluator _evaluator;
+  private final List<String> _arguments;
 
   PartitionPipeline(String rawColumn, boolean isBytesInput, String canonicalFunctionExpr,
       @Nullable PartitionIntNormalizer intNormalizer, FunctionEvaluator evaluator) {
@@ -54,6 +55,7 @@ public final class PartitionPipeline implements FunctionEvaluator {
     _canonicalFunctionExpr = canonicalFunctionExpr;
     _intNormalizer = intNormalizer;
     _evaluator = evaluator;
+    _arguments = Collections.singletonList(rawColumn);
   }
 
   public String getRawColumn() {
@@ -75,7 +77,7 @@ public final class PartitionPipeline implements FunctionEvaluator {
 
   @Override
   public List<String> getArguments() {
-    return Collections.singletonList(_rawColumn);
+    return _arguments;
   }
 
   @Override
