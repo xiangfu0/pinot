@@ -27,6 +27,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import javax.annotation.Nullable;
 import javax.net.ssl.SSLContext;
 import nl.altindag.ssl.SSLFactory;
 import org.apache.commons.lang3.StringUtils;
@@ -263,10 +264,12 @@ public abstract class BaseBrokerStarter implements ServiceStartable {
       QueryQuotaManager queryQuotaManager, TableCache tableCache, NettyConfig nettyConfig,
       TlsConfig tlsConfig, ServerRoutingStatsManager serverRoutingStatsManager,
       FailureDetector failureDetector, ThreadAccountant threadAccountant,
-      MultiClusterRoutingContext multiClusterRoutingContext) {
+      MultiClusterRoutingContext multiClusterRoutingContext,
+      @Nullable MvQueryRewriteEngine mvQueryRewriteEngine) {
     return new SingleConnectionBrokerRequestHandler(config, brokerId, requestIdGenerator, routingManager,
         accessControlFactory, queryQuotaManager, tableCache, nettyConfig, tlsConfig,
-        serverRoutingStatsManager, failureDetector, threadAccountant, multiClusterRoutingContext);
+        serverRoutingStatsManager, failureDetector, threadAccountant, multiClusterRoutingContext,
+        mvQueryRewriteEngine);
   }
 
   private void setupHelixSystemProperties() {
