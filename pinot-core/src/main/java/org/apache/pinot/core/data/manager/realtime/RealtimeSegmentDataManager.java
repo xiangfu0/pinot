@@ -2045,7 +2045,8 @@ public class RealtimeSegmentDataManager extends SegmentDataManager {
 
         realtimeSegmentConfigBuilder.setPartitionColumn(partitionColumn);
         realtimeSegmentConfigBuilder.setPartitionFunction(
-            PartitionFunctionFactory.getPartitionFunction(partitionColumn, columnPartitionConfig, numPartitions));
+            PartitionFunctionFactory.getPartitionFunction(partitionColumn, columnPartitionConfig,
+                _schema.getFieldSpecFor(partitionColumn)));
         realtimeSegmentConfigBuilder.setPartitionId(_partitionGroupId);
       } else {
         _segmentLogger.warn("Cannot partition on multiple columns: {}", columnPartitionMap.keySet());

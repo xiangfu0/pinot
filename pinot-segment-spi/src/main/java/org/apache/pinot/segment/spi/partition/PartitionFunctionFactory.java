@@ -152,6 +152,13 @@ public class PartitionFunctionFactory {
     return getPartitionFunction(columnName, columnPartitionConfig, columnPartitionConfig.getNumPartitions());
   }
 
+  /**
+   * Builds a partition function for the given column with an explicit numPartitions override.
+   *
+   * <p><b>CAUTION:</b> For BYTES-typed partition columns this overload always compiles the expression pipeline with
+   * STRING input. Use {@link #getPartitionFunction(String, ColumnPartitionConfig, FieldSpec)} instead so that BYTES
+   * columns receive the correct input type.
+   */
   public static PartitionFunction getPartitionFunction(String columnName, ColumnPartitionConfig columnPartitionConfig,
       int numPartitions) {
     Preconditions.checkNotNull(columnPartitionConfig, "Column partition config must be configured");

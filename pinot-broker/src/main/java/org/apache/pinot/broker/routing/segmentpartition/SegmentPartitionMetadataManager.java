@@ -126,10 +126,19 @@ public class SegmentPartitionMetadataManager implements SegmentZkMetadataFetchLi
 
   private boolean isMatchingPartitionFunction(PartitionFunction partitionFunction) {
     return _partitionFunction.getName().equalsIgnoreCase(partitionFunction.getName())
-        && Objects.equals(_partitionFunction.getFunctionConfig(), partitionFunction.getFunctionConfig())
+        && functionConfigsMatch(_partitionFunction.getFunctionConfig(), partitionFunction.getFunctionConfig())
         && Objects.equals(_partitionFunction.getFunctionExpr(), partitionFunction.getFunctionExpr())
         && equalsIgnoreCaseNullable(_partitionFunction.getPartitionIdNormalizer(),
         partitionFunction.getPartitionIdNormalizer());
+  }
+
+  private static boolean functionConfigsMatch(@Nullable Map<String, String> a, @Nullable Map<String, String> b) {
+    boolean aEmpty = a == null || a.isEmpty();
+    boolean bEmpty = b == null || b.isEmpty();
+    if (aEmpty && bEmpty) {
+      return true;
+    }
+    return Objects.equals(a, b);
   }
 
   private static boolean equalsIgnoreCaseNullable(@Nullable String a, @Nullable String b) {

@@ -82,6 +82,9 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
         "Partition expression for column '%s' must return a numeric value, got: %s",
         _pipeline.getRawColumn(), result.getClass().getSimpleName());
     Number num = (Number) result;
+    Preconditions.checkState(!(num instanceof Float) && !(num instanceof Double),
+        "Partition expression for column '%s' must return an integral value (int/long), got: %s (%s)",
+        _pipeline.getRawColumn(), result, result.getClass().getSimpleName());
     PartitionIntNormalizer intNormalizer = _pipeline.getIntNormalizer();
     Preconditions.checkState(intNormalizer != null,
         "Integral-output partition pipeline for column '%s' must have an INT normalizer",
