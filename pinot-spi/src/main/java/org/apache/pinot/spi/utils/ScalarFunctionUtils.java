@@ -21,9 +21,7 @@ package org.apache.pinot.spi.utils;
 import java.lang.reflect.Method;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.spi.annotations.ScalarFunction;
 
 
@@ -58,15 +56,11 @@ public final class ScalarFunctionUtils {
   }
 
   /**
-   * Returns the canonical form of a scalar-function name: underscores stripped, lower-cased.
+   * Returns the canonical form of a function name: underscores stripped, lower-cased.
    *
-   * <p><b>IMPORTANT:</b> This method is intentionally a duplicate of
-   * {@code org.apache.pinot.common.function.FunctionUtils#canonicalize} because {@code pinot-spi}
-   * cannot depend on {@code pinot-common}. Both implementations <b>must</b> produce identical
-   * results. If either changes, the other must be updated in the same commit to avoid silent
-   * canonicalization divergence between function registration and name lookup.
+   * @see FunctionNameUtils#canonicalize(String)
    */
   public static String canonicalize(String name) {
-    return StringUtils.remove(name, '_').toLowerCase(Locale.ROOT);
+    return FunctionNameUtils.canonicalize(name);
   }
 }

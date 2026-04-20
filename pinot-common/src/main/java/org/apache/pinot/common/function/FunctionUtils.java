@@ -22,16 +22,15 @@ import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.Map;
 import javax.annotation.Nullable;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.sql.type.SqlTypeName;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.common.utils.DataSchema.ColumnDataType;
 import org.apache.pinot.common.utils.PinotDataType;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
+import org.apache.pinot.spi.utils.FunctionNameUtils;
 
 
 public class FunctionUtils {
@@ -241,11 +240,11 @@ public class FunctionUtils {
   }
 
   /**
-   * Returns the canonical form of a scalar function name: underscores stripped, lower-cased.
-   * This is the single authoritative implementation used by {@link FunctionRegistry} and other
-   * function-resolution paths.
+   * Returns the canonical form of a function name: underscores stripped, lower-cased.
+   *
+   * @see FunctionNameUtils#canonicalize(String)
    */
   public static String canonicalize(String name) {
-    return StringUtils.remove(name, '_').toLowerCase(Locale.ROOT);
+    return FunctionNameUtils.canonicalize(name);
   }
 }
