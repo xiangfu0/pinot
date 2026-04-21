@@ -156,7 +156,7 @@ public class TypeFactoryTest {
 
   @Test(dataProvider = "relDataTypeConversion")
   public void testArrayTypes(FieldSpec.DataType dataType, RelDataType arrayType, boolean columnNullMode) {
-    if (dataType == FieldSpec.DataType.UUID || dataType == FieldSpec.DataType.BIG_DECIMAL) {
+    if (dataType == FieldSpec.DataType.BIG_DECIMAL || dataType == FieldSpec.DataType.JSON) {
       return;
     }
     TypeFactory typeFactory = new TypeFactory();
@@ -177,7 +177,7 @@ public class TypeFactoryTest {
 
   @Test(dataProvider = "relDataTypeConversion")
   public void testNullableArrayTypes(FieldSpec.DataType dataType, RelDataType arrayType, boolean columnNullMode) {
-    if (dataType == FieldSpec.DataType.UUID || dataType == FieldSpec.DataType.BIG_DECIMAL) {
+    if (dataType == FieldSpec.DataType.BIG_DECIMAL || dataType == FieldSpec.DataType.JSON) {
       return;
     }
     TypeFactory typeFactory = new TypeFactory();
@@ -201,7 +201,7 @@ public class TypeFactoryTest {
 
   @Test(dataProvider = "relDataTypeConversion")
   public void testNotNullableArrayTypes(FieldSpec.DataType dataType, RelDataType arrayType, boolean columnNullMode) {
-    if (dataType == FieldSpec.DataType.UUID || dataType == FieldSpec.DataType.BIG_DECIMAL) {
+    if (dataType == FieldSpec.DataType.BIG_DECIMAL || dataType == FieldSpec.DataType.JSON) {
       return;
     }
     TypeFactory typeFactory = new TypeFactory();
@@ -237,6 +237,7 @@ public class TypeFactoryTest {
         .addMultiValueDimension("FLOAT_ARRAY_COL", FieldSpec.DataType.FLOAT)
         .addMultiValueDimension("DOUBLE_ARRAY_COL", FieldSpec.DataType.DOUBLE)
         .addMultiValueDimension("STRING_ARRAY_COL", FieldSpec.DataType.STRING)
+        .addMultiValueDimension("UUID_ARRAY_COL", FieldSpec.DataType.UUID)
         .addMultiValueDimension("BYTES_ARRAY_COL", FieldSpec.DataType.BYTES)
         .build();
     RelDataType relDataTypeFromSchema = typeFactory.createRelDataTypeFromSchema(testSchema);
@@ -295,6 +296,10 @@ public class TypeFactoryTest {
           Assert.assertEquals(field.getType(), new ArraySqlType(
               TYPE_FACTORY.createTypeWithCharsetAndCollation(new BasicSqlType(TypeSystem.INSTANCE, SqlTypeName.VARCHAR),
                   StandardCharsets.UTF_8, SqlCollation.IMPLICIT), false));
+          break;
+        case "UUID_ARRAY_COL":
+          Assert.assertEquals(field.getType(),
+              new ArraySqlType(new BasicSqlType(TypeSystem.INSTANCE, SqlTypeName.UUID), false));
           break;
         case "BYTES_ARRAY_COL":
           Assert.assertEquals(field.getType(),

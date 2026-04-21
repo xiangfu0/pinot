@@ -525,8 +525,11 @@ public class NotInPredicateEvaluatorFactory {
     }
 
     @Override
-    public <R> R accept(MultiValueVisitor<R> visitor) {
-      byte[][] bytes = _nonMatchingValues.stream().map(UuidKey::toBytes).toArray(byte[][]::new);
+    public <R> R accept(Visitor<R> visitor) {
+      Set<ByteArray> bytes = new ObjectOpenHashSet<>(HashUtil.getMinHashSetSize(_nonMatchingValues.size()));
+      for (UuidKey nonMatchingValue : _nonMatchingValues) {
+        bytes.add(nonMatchingValue.toByteArray());
+      }
       return visitor.visitBytes(bytes);
     }
   }

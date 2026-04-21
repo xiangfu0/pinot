@@ -1231,6 +1231,13 @@ public enum PinotDataType {
     }
   },
 
+  UUID_ARRAY {
+    @Override
+    public byte[][] convert(Object value, PinotDataType sourceType) {
+      return sourceType.toUuidBytesArray(value);
+    }
+  },
+
   COLLECTION,
 
   OBJECT_ARRAY;
@@ -1514,6 +1521,28 @@ public enum PinotDataType {
     }
   }
 
+  public byte[][] toUuidBytesArray(Object value) {
+    if (value instanceof byte[][]) {
+      byte[][] values = (byte[][]) value;
+      byte[][] uuidBytes = new byte[values.length][];
+      for (int i = 0; i < values.length; i++) {
+        uuidBytes[i] = UuidUtils.toBytes(values[i]);
+      }
+      return uuidBytes;
+    }
+    if (isSingleValue()) {
+      return new byte[][]{UuidUtils.toBytes(value)};
+    } else {
+      Object[] valueArray = toObjectArray(value);
+      int length = valueArray.length;
+      byte[][] uuidBytes = new byte[length][];
+      for (int i = 0; i < length; i++) {
+        uuidBytes[i] = UuidUtils.toBytes(valueArray[i]);
+      }
+      return uuidBytes;
+    }
+  }
+
   public BigDecimal[] toBigDecimalArray(Object value) {
     if (value instanceof BigDecimal[]) {
       return (BigDecimal[]) value;
@@ -1643,6 +1672,8 @@ public enum PinotDataType {
         return STRING;
       case BYTES_ARRAY:
         return BYTES;
+      case UUID_ARRAY:
+        return UUID;
       case OBJECT_ARRAY:
       case COLLECTION:
         return OBJECT;
@@ -1725,6 +1756,9 @@ public enum PinotDataType {
     if (cls == byte[].class) {
       return BYTES_ARRAY;
     }
+    if (cls == UUID.class) {
+      return UUID_ARRAY;
+    }
     if (cls == Boolean.class) {
       return BOOLEAN_ARRAY;
     }
@@ -1788,10 +1822,7 @@ public enum PinotDataType {
       case STRING:
         return fieldSpec.isSingleValueField() ? STRING : STRING_ARRAY;
       case UUID:
-        if (fieldSpec.isSingleValueField()) {
-          return UUID;
-        }
-        throw new IllegalStateException("UUID data type only supports single-value fields");
+        return fieldSpec.isSingleValueField() ? UUID : UUID_ARRAY;
       case BYTES:
         return fieldSpec.isSingleValueField() ? BYTES : BYTES_ARRAY;
       case MAP:
@@ -1849,6 +1880,8 @@ public enum PinotDataType {
         return STRING_ARRAY;
       case BYTES_ARRAY:
         return BYTES_ARRAY;
+      case UUID_ARRAY:
+        return UUID_ARRAY;
       default:
         throw new IllegalStateException("Cannot convert ColumnDataType: " + columnDataType + " to PinotDataType");
     }

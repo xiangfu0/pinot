@@ -36,5 +36,12 @@ public class FunctionUtilsTest {
     Assert.assertEquals(FunctionUtils.getColumnDataType(java.util.UUID.class), ColumnDataType.UUID);
     Assert.assertEquals(FunctionUtils.getRelDataType(new JavaTypeFactoryImpl(), java.util.UUID.class).getSqlTypeName(),
         SqlTypeName.UUID);
+    Assert.assertEquals(FunctionUtils.getParameterType(java.util.UUID[].class), PinotDataType.UUID_ARRAY);
+    Assert.assertEquals(FunctionUtils.getArgumentType(java.util.UUID[].class), PinotDataType.UUID_ARRAY);
+    Assert.assertEquals(FunctionUtils.getDataType(java.util.UUID[].class), DataType.UUID);
+    Assert.assertEquals(FunctionUtils.getColumnDataType(java.util.UUID[].class), ColumnDataType.UUID_ARRAY);
+    Assert.assertEquals(
+        FunctionUtils.getRelDataType(new JavaTypeFactoryImpl(), java.util.UUID[].class).getComponentType()
+            .getSqlTypeName(), SqlTypeName.UUID);
   }
 }

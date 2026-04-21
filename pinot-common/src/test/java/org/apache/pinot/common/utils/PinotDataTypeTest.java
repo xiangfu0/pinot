@@ -151,9 +151,15 @@ public class PinotDataTypeTest {
         new Timestamp[] { new Timestamp(1000000L), new Timestamp(2000000L) }},
         {BYTES_ARRAY, BYTES_ARRAY, new byte[][] { "foo".getBytes(UTF_8), "bar".getBytes(UTF_8) },
             new byte[][] { "foo".getBytes(UTF_8), "bar".getBytes(UTF_8) }},
+        {STRING_ARRAY, UUID_ARRAY, new String[] {UUID_VALUE},
+            new byte[][] {UuidUtils.toBytes(UUID_VALUE)}},
+        {UUID_ARRAY, UUID_ARRAY, new java.util.UUID[] {java.util.UUID.fromString(UUID_VALUE)},
+            new byte[][] {UuidUtils.toBytes(UUID_VALUE)}},
         {COLLECTION, STRING_ARRAY, Arrays.asList("test1", "test2"), new String[] {"test1", "test2"}},
+        {COLLECTION, UUID_ARRAY, Arrays.asList(UUID_VALUE), new byte[][] {UuidUtils.toBytes(UUID_VALUE)}},
         {COLLECTION, FLOAT_ARRAY, Arrays.asList(1.0f, 2.0f), new Float[] {1.0f, 2.0f}},
         {OBJECT_ARRAY, STRING_ARRAY, new Object[] {"test1", "test2"}, new String[] {"test1", "test2"}},
+        {OBJECT_ARRAY, UUID_ARRAY, new Object[] {UUID_VALUE}, new byte[][] {UuidUtils.toBytes(UUID_VALUE)}},
         {OBJECT_ARRAY, FLOAT_ARRAY, new Object[] {1.0f, 2.0f}, new Float[] {1.0f, 2.0f}},
     };
   }
@@ -353,6 +359,7 @@ public class PinotDataTypeTest {
     testCases.put(Boolean.class, BOOLEAN_ARRAY);
     testCases.put(Timestamp.class, TIMESTAMP_ARRAY);
     testCases.put(byte[].class, BYTES_ARRAY);
+    testCases.put(java.util.UUID.class, UUID_ARRAY);
 
     for (Map.Entry<Class<?>, PinotDataType> tc : testCases.entrySet()) {
       assertEquals(getMultiValueType(tc.getKey()), tc.getValue());

@@ -61,6 +61,7 @@ public class FunctionUtils {
     put(BigDecimal[].class, PinotDataType.BIG_DECIMAL_ARRAY);
     put(String[].class, PinotDataType.STRING_ARRAY);
     put(byte[][].class, PinotDataType.BYTES_ARRAY);
+    put(UUID[].class, PinotDataType.UUID_ARRAY);
     put(Map.class, PinotDataType.MAP);
     put(Object.class, PinotDataType.OBJECT);
   }};
@@ -91,6 +92,7 @@ public class FunctionUtils {
     put(BigDecimal[].class, PinotDataType.BIG_DECIMAL_ARRAY);
     put(String[].class, PinotDataType.STRING_ARRAY);
     put(byte[][].class, PinotDataType.BYTES_ARRAY);
+    put(UUID[].class, PinotDataType.UUID_ARRAY);
     put(Object.class, PinotDataType.OBJECT);
     put(Object[].class, PinotDataType.OBJECT_ARRAY);
   }};
@@ -118,6 +120,7 @@ public class FunctionUtils {
     put(BigDecimal[].class, DataType.BIG_DECIMAL);
     put(String[].class, DataType.STRING);
     put(byte[][].class, DataType.BYTES);
+    put(UUID[].class, DataType.UUID);
   }};
 
   private static final Map<Class<?>, ColumnDataType> COLUMN_DATA_TYPE_MAP = new HashMap<>() {{
@@ -143,6 +146,7 @@ public class FunctionUtils {
     put(BigDecimal[].class, ColumnDataType.BIG_DECIMAL_ARRAY);
     put(String[].class, ColumnDataType.STRING_ARRAY);
     put(byte[][].class, ColumnDataType.BYTES_ARRAY);
+    put(UUID[].class, ColumnDataType.UUID_ARRAY);
     put(Object.class, ColumnDataType.OBJECT);
   }};
 
@@ -232,6 +236,8 @@ public class FunctionUtils {
         return typeFactory.createArrayType(typeFactory.createSqlType(SqlTypeName.VARCHAR), -1);
       case BYTES_ARRAY:
         return typeFactory.createArrayType(typeFactory.createSqlType(SqlTypeName.VARBINARY), -1);
+      case UUID_ARRAY:
+        return typeFactory.createArrayType(typeFactory.createSqlType(SqlTypeName.UUID), -1);
       default:
         return typeFactory.createSqlType(SqlTypeName.OTHER);
     }

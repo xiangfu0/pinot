@@ -524,8 +524,11 @@ public class InPredicateEvaluatorFactory {
     }
 
     @Override
-    public <R> R accept(MultiValueVisitor<R> visitor) {
-      byte[][] bytes = _matchingValues.stream().map(UuidKey::toBytes).toArray(byte[][]::new);
+    public <R> R accept(Visitor<R> visitor) {
+      Set<ByteArray> bytes = new ObjectOpenHashSet<>(HashUtil.getMinHashSetSize(_matchingValues.size()));
+      for (UuidKey matchingValue : _matchingValues) {
+        bytes.add(matchingValue.toByteArray());
+      }
       return visitor.visitBytes(bytes);
     }
   }
