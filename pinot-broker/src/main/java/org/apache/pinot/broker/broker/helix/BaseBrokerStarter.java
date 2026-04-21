@@ -26,6 +26,9 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
 import nl.altindag.ssl.SSLFactory;
@@ -118,6 +121,7 @@ import org.apache.pinot.spi.utils.CommonConstants.MultiStageQueryRunner;
 import org.apache.pinot.spi.utils.InstanceTypeUtils;
 import org.apache.pinot.spi.utils.NetUtils;
 import org.apache.pinot.spi.utils.PinotMd5Mode;
+import org.apache.pinot.spi.utils.TimeUtils;
 import org.apache.pinot.sql.parsers.rewriter.QueryRewriterFactory;
 import org.apache.pinot.tsdb.spi.PinotTimeSeriesConfiguration;
 import org.slf4j.Logger;
@@ -130,6 +134,13 @@ import org.slf4j.LoggerFactory;
 @SuppressWarnings("unused")
 public abstract class BaseBrokerStarter implements ServiceStartable {
   private static final Logger LOGGER = LoggerFactory.getLogger(BaseBrokerStarter.class);
+
+  /**
+   * When {@link CommonConstants.CursorConfigs#RESPONSE_STORE_CLEANER_INITIAL_DELAY} is unset, the first cleanup run
+   * is scheduled after one full frequency period plus jitter in {@code [0, frequencyMs / this value)}, to
+   * desynchronize brokers on shared storage.
+   */
+  private static final int RESPONSE_STORE_CLEANUP_INITIAL_DELAY_JITTER_DIVISOR = 4;
 
   protected PinotConfiguration _brokerConf;
   protected List<ListenerConfig> _listenerConfigs;
@@ -174,6 +185,7 @@ public abstract class BaseBrokerStarter implements ServiceStartable {
   protected HelixExternalViewBasedQueryQuotaManager _queryQuotaManager;
   protected MultiStageQueryThrottler _multiStageQueryThrottler;
   protected AbstractResponseStore _responseStore;
+  protected ScheduledExecutorService _responseStoreCleanupExecutor;
   protected BrokerGrpcServer _brokerGrpcServer;
   protected FailureDetector _failureDetector;
   protected ThreadAccountant _threadAccountant;
@@ -512,6 +524,44 @@ public abstract class BaseBrokerStarter implements ServiceStartable {
     _responseStore.init(responseStoreConfiguration.subset(_responseStore.getType()), _hostname, _port, brokerId,
         _brokerMetrics, expirationTime);
 
+    LOGGER.info("Starting ResponseStore cleanup scheduler");
+    _responseStoreCleanupExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+      Thread t = new Thread(runnable, "ResponseStoreCleanup");
+      t.setDaemon(true);
+      return t;
+    });
+    long cleanupFrequencyMs = TimeUtils.convertPeriodToMillis(
+        _brokerConf.getProperty(CommonConstants.CursorConfigs.RESPONSE_STORE_CLEANER_FREQUENCY_PERIOD,
+            CommonConstants.CursorConfigs.DEFAULT_RESPONSE_STORE_CLEANER_FREQUENCY_PERIOD));
+    Preconditions.checkArgument(cleanupFrequencyMs > 0,
+        "Invalid config '%s': cleanup frequency must be positive, got %s ms",
+        CommonConstants.CursorConfigs.RESPONSE_STORE_CLEANER_FREQUENCY_PERIOD, cleanupFrequencyMs);
+    String initialDelayStr =
+        _brokerConf.getProperty(CommonConstants.CursorConfigs.RESPONSE_STORE_CLEANER_INITIAL_DELAY);
+
+    long cleanupInitialDelayMs;
+    if (initialDelayStr != null) {
+      cleanupInitialDelayMs = TimeUtils.convertPeriodToMillis(initialDelayStr);
+      Preconditions.checkArgument(cleanupInitialDelayMs >= 0,
+          "Invalid config '%s': cleanup initial delay must be non-negative, got %s ms",
+          CommonConstants.CursorConfigs.RESPONSE_STORE_CLEANER_INITIAL_DELAY, cleanupInitialDelayMs);
+    } else {
+      long jitterUpperBound = Math.max(1L, cleanupFrequencyMs / RESPONSE_STORE_CLEANUP_INITIAL_DELAY_JITTER_DIVISOR);
+      cleanupInitialDelayMs =
+          cleanupFrequencyMs + ThreadLocalRandom.current().nextLong(jitterUpperBound);
+    }
+
+    _responseStoreCleanupExecutor.scheduleWithFixedDelay(() -> {
+      try {
+        int deleted = _responseStore.deleteExpiredResponses(System.currentTimeMillis());
+        if (deleted > 0) {
+          LOGGER.info("Cleaned up {} expired cursor response(s) from local ResponseStore", deleted);
+        }
+      } catch (Exception e) {
+        LOGGER.error("Failed to clean up expired cursor responses from local ResponseStore", e);
+      }
+    }, cleanupInitialDelayMs, cleanupFrequencyMs, TimeUnit.MILLISECONDS);
+
     _brokerRequestHandler =
         new BrokerRequestHandlerDelegate(singleStageBrokerRequestHandler, multiStageBrokerRequestHandler,
             timeSeriesRequestHandler, _responseStore);
@@ -820,6 +870,19 @@ public abstract class BaseBrokerStarter implements ServiceStartable {
     if (_brokerGrpcServer != null) {
       LOGGER.info("Stopping broker grpc server");
       _brokerGrpcServer.shutdown();
+    }
+
+    if (_responseStoreCleanupExecutor != null) {
+      LOGGER.info("Stopping ResponseStore cleanup scheduler");
+      _responseStoreCleanupExecutor.shutdown();
+      try {
+        if (!_responseStoreCleanupExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+          _responseStoreCleanupExecutor.shutdownNow();
+        }
+      } catch (InterruptedException e) {
+        _responseStoreCleanupExecutor.shutdownNow();
+        Thread.currentThread().interrupt();
+      }
     }
 
     LOGGER.info("Shutting down request handler and broker admin application");
