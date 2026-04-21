@@ -197,11 +197,26 @@ public class PartitionFunctionFactory {
    */
   public static PartitionFunction getPartitionFunction(String columnName, ColumnPartitionConfig config,
       @Nullable FieldSpec fieldSpec) {
+    return getPartitionFunction(columnName, config, config.getNumPartitions(), fieldSpec);
+  }
+
+  /**
+   * Builds a partition function with an explicit {@code numPartitions} override and uses {@code fieldSpec} to
+   * determine the correct input type for expression-mode partition functions on BYTES-typed columns.
+   *
+   * <p>Use this overload when the live partition count (e.g. the stream partition count) may differ from the value
+   * stored in the table config, so that the built function uses the authoritative count while still receiving the
+   * correct input type for BYTES columns.
+   */
+  public static PartitionFunction getPartitionFunction(String columnName, ColumnPartitionConfig config,
+      int numPartitions, @Nullable FieldSpec fieldSpec) {
     if (config.getFunctionExpr() != null && fieldSpec != null
         && fieldSpec.getDataType().getStoredType() == FieldSpec.DataType.BYTES) {
-      return getPartitionFunction(columnName, config, PartitionValueType.BYTES);
+      return PartitionFunctionExprCompiler.compilePartitionFunction(columnName, PartitionValueType.BYTES,
+          config.getFunctionExpr(), numPartitions, config.getPartitionIdNormalizer());
     }
-    return getPartitionFunction(columnName, config);
+    return getPartitionFunction(columnName, config.getFunctionName(), numPartitions, config.getFunctionConfig(),
+        config.getFunctionExpr(), config.getPartitionIdNormalizer());
   }
 
   public static PartitionFunction getPartitionFunction(String columnName, @Nullable String functionName,

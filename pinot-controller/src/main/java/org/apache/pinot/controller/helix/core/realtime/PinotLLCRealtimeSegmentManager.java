@@ -122,6 +122,8 @@ import org.apache.pinot.spi.config.table.SegmentsValidationAndRetentionConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.UpsertConfig;
 import org.apache.pinot.spi.config.table.assignment.InstancePartitionsType;
+import org.apache.pinot.spi.data.FieldSpec;
+import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.filesystem.PinotFS;
 import org.apache.pinot.spi.filesystem.PinotFSFactory;
 import org.apache.pinot.spi.stream.OffsetCriteria;
@@ -1157,11 +1159,19 @@ public class PinotLLCRealtimeSegmentManager implements PinotClusterConfigChangeL
       // This ensures the partition metadata stored in ZK matches what the broker's partition function computes
       // during query pruning. For example, stream 1 partition 5 has Pinot partition ID 10005, but should store 5.
       int streamPartitionId = IngestionConfigUtils.getStreamPartitionIdFromPinotPartitionId(tableConfig, partitionId);
-      PartitionFunction partitionFunction =
-          PartitionFunctionFactory.getPartitionFunction(entry.getKey(), columnPartitionConfig, numPartitionGroups);
+      String columnName = entry.getKey();
+      Schema schema = _helixResourceManager.getTableSchema(tableConfig.getTableName());
+      if (schema == null && columnPartitionConfig.getFunctionExpr() != null) {
+        LOGGER.warn("Unable to fetch schema for table '{}'; partition function for column '{}' will use STRING input "
+                + "type. BYTES-typed columns may produce incorrect partition metadata.",
+            tableConfig.getTableName(), columnName);
+      }
+      FieldSpec fieldSpec = schema != null ? schema.getFieldSpecFor(columnName) : null;
+      PartitionFunction partitionFunction = PartitionFunctionFactory
+          .getPartitionFunction(columnName, columnPartitionConfig, numPartitionGroups, fieldSpec);
       ColumnPartitionMetadata columnPartitionMetadata =
           new ColumnPartitionMetadata(partitionFunction, Collections.singleton(streamPartitionId));
-      return new SegmentPartitionMetadata(Collections.singletonMap(entry.getKey(), columnPartitionMetadata));
+      return new SegmentPartitionMetadata(Collections.singletonMap(columnName, columnPartitionMetadata));
     } else {
       LOGGER.warn(
           "Skip persisting partition metadata because there are other than exact one partition column for table: {}",
