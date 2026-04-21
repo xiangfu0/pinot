@@ -16,30 +16,42 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.spi.metrics;
+package org.apache.pinot.plugin.metrics.fake;
 
-import java.util.function.Supplier;
+import java.util.Objects;
+import org.apache.pinot.spi.metrics.PinotMetricName;
 
 
-/**
- * SettableValue allows the value to be set to a value or provided by a value supplier.
- * @param <T> the type of the value to be set.
- */
-public interface SettableValue<T> {
-  /**
-   * Sets the value.
-   * @param value the value to set.
-   */
-  void setValue(T value);
+public class FakePinotMetricName implements PinotMetricName {
+  private final String _name;
 
-  /**
-   * Sets the value supplier.
-   * @param valueSupplier the value supplier to set.
-   */
-  void setValueSupplier(Supplier<T> valueSupplier);
+  public FakePinotMetricName(Class<?> clazz, String name) {
+    _name = clazz.getName() + "." + name;
+  }
 
-  /**
-   * Returns the current value produced by either the set value or the value supplier.
-   */
-  T getValue();
+  @Override
+  public Object getMetricName() {
+    return _name;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (!(o instanceof FakePinotMetricName)) {
+      return false;
+    }
+    return Objects.equals(_name, ((FakePinotMetricName) o)._name);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hashCode(_name);
+  }
+
+  @Override
+  public String toString() {
+    return _name;
+  }
 }

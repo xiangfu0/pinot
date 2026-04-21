@@ -16,30 +16,42 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.spi.metrics;
+package org.apache.pinot.plugin.metrics.fake;
 
+import java.util.function.Function;
 import java.util.function.Supplier;
+import org.apache.pinot.spi.metrics.PinotGauge;
 
 
-/**
- * SettableValue allows the value to be set to a value or provided by a value supplier.
- * @param <T> the type of the value to be set.
- */
-public interface SettableValue<T> {
-  /**
-   * Sets the value.
-   * @param value the value to set.
-   */
-  void setValue(T value);
+public class FakePinotGauge<T> implements PinotGauge<T> {
+  private Supplier<T> _valueSupplier;
 
-  /**
-   * Sets the value supplier.
-   * @param valueSupplier the value supplier to set.
-   */
-  void setValueSupplier(Supplier<T> valueSupplier);
+  public FakePinotGauge(Function<Void, T> condition) {
+    _valueSupplier = () -> condition.apply(null);
+  }
 
-  /**
-   * Returns the current value produced by either the set value or the value supplier.
-   */
-  T getValue();
+  @Override
+  public T value() {
+    return _valueSupplier.get();
+  }
+
+  @Override
+  public Object getGauge() {
+    return this;
+  }
+
+  @Override
+  public Object getMetric() {
+    return this;
+  }
+
+  @Override
+  public void setValue(T value) {
+    _valueSupplier = () -> value;
+  }
+
+  @Override
+  public void setValueSupplier(Supplier<T> valueSupplier) {
+    _valueSupplier = valueSupplier;
+  }
 }

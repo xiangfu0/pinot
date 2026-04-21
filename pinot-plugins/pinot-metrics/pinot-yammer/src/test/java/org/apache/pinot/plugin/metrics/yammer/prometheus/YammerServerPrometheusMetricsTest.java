@@ -16,30 +16,23 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pinot.spi.metrics;
 
-import java.util.function.Supplier;
+package org.apache.pinot.plugin.metrics.yammer.prometheus;
+
+import org.apache.pinot.common.metrics.prometheus.ServerPrometheusMetricsTest;
+import org.apache.pinot.plugin.metrics.yammer.YammerMetricsFactory;
+import org.apache.pinot.spi.annotations.metrics.PinotMetricsFactory;
 
 
-/**
- * SettableValue allows the value to be set to a value or provided by a value supplier.
- * @param <T> the type of the value to be set.
- */
-public interface SettableValue<T> {
-  /**
-   * Sets the value.
-   * @param value the value to set.
-   */
-  void setValue(T value);
+public class YammerServerPrometheusMetricsTest extends ServerPrometheusMetricsTest {
 
-  /**
-   * Sets the value supplier.
-   * @param valueSupplier the value supplier to set.
-   */
-  void setValueSupplier(Supplier<T> valueSupplier);
+  @Override
+  protected PinotMetricsFactory getPinotMetricsFactory() {
+    return new YammerMetricsFactory();
+  }
 
-  /**
-   * Returns the current value produced by either the set value or the value supplier.
-   */
-  T getValue();
+  @Override
+  protected String getConfigFile() {
+    return "../../../docker/images/pinot/etc/jmx_prometheus_javaagent/configs/server.yml";
+  }
 }
