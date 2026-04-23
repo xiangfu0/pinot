@@ -26,6 +26,7 @@ import java.text.Normalizer;
 import java.util.Base64;
 import java.util.UUID;
 import javax.annotation.Nullable;
+import org.apache.commons.codec.language.Soundex;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.common.utils.URIUtils;
 import org.apache.pinot.spi.annotations.ScalarFunction;
@@ -43,6 +44,8 @@ import org.apache.pinot.spi.utils.JsonUtils;
 public class StringFunctions {
   private StringFunctions() {
   }
+
+  private static final Soundex SOUNDEX = new Soundex();
 
   /**
    * @see StringUtils#reverse(String)
@@ -907,5 +910,38 @@ public class StringFunctions {
     } catch (Exception e) {
       return false;
     }
+  }
+
+  /**
+   * Returns the Soundex code for a string. Empty string returns "0000" (SQL standard behaviour).
+   */
+  @Nullable
+  @ScalarFunction(nullableParameters = true)
+  public static String soundex(@Nullable String input) {
+    if (input == null) {
+      return null;
+    }
+    if (input.isEmpty()) {
+      return "0000";
+    }
+    return SOUNDEX.soundex(input);
+  }
+
+  /**
+   * Returns an integer 0-4 indicating how similar two strings sound based on their Soundex codes.
+   * 4 means the codes are identical; 0 means they share no common code characters.
+   * The framework null-propagates when either argument is null.
+   */
+  @ScalarFunction
+  public static int difference(String input1, String input2) {
+    String code1 = soundex(input1);
+    String code2 = soundex(input2);
+    int matches = 0;
+    for (int i = 0; i < 4; i++) {
+      if (code1.charAt(i) == code2.charAt(i)) {
+        matches++;
+      }
+    }
+    return matches;
   }
 }
