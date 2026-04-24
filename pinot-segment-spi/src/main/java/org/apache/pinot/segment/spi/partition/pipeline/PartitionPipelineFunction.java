@@ -92,14 +92,20 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
         "Partition expression for column '%s' must return a numeric value, got: %s",
         _pipeline.getRawColumn(), result.getClass().getSimpleName());
     Number num = (Number) result;
-    Preconditions.checkState(!(num instanceof Float) && !(num instanceof Double),
-        "Partition expression for column '%s' must return an integral value (int/long), got: %s (%s)",
-        _pipeline.getRawColumn(), result, result.getClass().getSimpleName());
+    // Pinot scalar functions commonly box integral arithmetic to Double (e.g. plus(long, long) → Double). Accept
+    // Float/Double iff the value is integral (no fractional part); reject genuinely fractional values since they
+    // cannot map to a stable partition id.
+    if (num instanceof Float || num instanceof Double) {
+      double d = num.doubleValue();
+      Preconditions.checkState(!Double.isNaN(d) && !Double.isInfinite(d) && d == Math.floor(d),
+          "Partition expression for column '%s' must return an integral value (int/long), got: %s (%s)",
+          _pipeline.getRawColumn(), result, result.getClass().getSimpleName());
+    }
     PartitionIntNormalizer intNormalizer = _pipeline.getIntNormalizer();
     Preconditions.checkState(intNormalizer != null,
         "Integral-output partition pipeline for column '%s' must have an INT normalizer",
         _pipeline.getRawColumn());
-    if (num instanceof Long || num instanceof BigInteger) {
+    if (num instanceof Long || num instanceof BigInteger || num instanceof Float || num instanceof Double) {
       return intNormalizer.getPartitionId(num.longValue(), _numPartitions);
     }
     return intNormalizer.getPartitionId(num.intValue(), _numPartitions);
