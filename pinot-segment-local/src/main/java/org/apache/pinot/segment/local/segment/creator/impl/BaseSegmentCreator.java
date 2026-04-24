@@ -631,6 +631,7 @@ public abstract class BaseSegmentCreator implements SegmentCreator {
       }
     }
 
+    FieldType fieldType = fieldSpec.getFieldType();
     // Datetime field
     if (fieldType == FieldType.DATE_TIME) {
       DateTimeFieldSpec dateTimeFieldSpec = (DateTimeFieldSpec) fieldSpec;
