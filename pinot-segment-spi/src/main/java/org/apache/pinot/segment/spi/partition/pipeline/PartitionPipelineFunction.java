@@ -28,6 +28,8 @@ import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.readers.GenericRow;
 import org.apache.pinot.spi.function.FunctionEvaluator;
 import org.apache.pinot.spi.utils.BytesUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 /**
@@ -38,7 +40,11 @@ import org.apache.pinot.spi.utils.BytesUtils;
  */
 @SuppressWarnings("serial")
 public class PartitionPipelineFunction implements PartitionFunction, FunctionEvaluator {
+  private static final Logger LOGGER = LoggerFactory.getLogger(PartitionPipelineFunction.class);
   public static final String NAME = "FunctionExpr";
+  // Sentinel returned when the partition expression evaluates to null for a given value (e.g. null input).
+  // Callers that update per-segment partition sets must skip this value.
+  public static final int NULL_RESULT_PARTITION_ID = -1;
 
   private final PartitionPipeline _pipeline;
   private final int _numPartitions;
@@ -77,7 +83,11 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
   }
 
   private int normalizeResult(Object result) {
-    Preconditions.checkNotNull(result, "Partition expression for column '%s' returned null", _pipeline.getRawColumn());
+    if (result == null) {
+      LOGGER.debug("Partition expression for column '{}' returned null; skipping partition assignment for this value",
+          _pipeline.getRawColumn());
+      return NULL_RESULT_PARTITION_ID;
+    }
     Preconditions.checkState(result instanceof Number,
         "Partition expression for column '%s' must return a numeric value, got: %s",
         _pipeline.getRawColumn(), result.getClass().getSimpleName());

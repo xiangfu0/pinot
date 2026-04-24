@@ -127,7 +127,7 @@ public class SegmentPartitionMetadataManager implements SegmentZkMetadataFetchLi
   private boolean isMatchingPartitionFunction(PartitionFunction partitionFunction) {
     return _partitionFunction.getName().equalsIgnoreCase(partitionFunction.getName())
         && functionConfigsMatch(_partitionFunction.getFunctionConfig(), partitionFunction.getFunctionConfig())
-        && Objects.equals(_partitionFunction.getFunctionExpr(), partitionFunction.getFunctionExpr())
+        && equalsIgnoreCaseNullable(_partitionFunction.getFunctionExpr(), partitionFunction.getFunctionExpr())
         && equalsIgnoreCaseNullable(_partitionFunction.getPartitionIdNormalizer(),
         partitionFunction.getPartitionIdNormalizer());
   }
