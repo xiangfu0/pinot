@@ -1,0 +1,80 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+package org.apache.pinot.segment.local.segment.creator.impl.fwd;
+
+import java.io.File;
+import java.io.IOException;
+import org.apache.pinot.segment.local.io.codec.CodecPipelineExecutor;
+import org.apache.pinot.segment.local.io.writer.impl.FixedByteChunkForwardIndexWriterV7;
+import org.apache.pinot.segment.spi.V1Constants;
+import org.apache.pinot.segment.spi.index.creator.ForwardIndexCreator;
+import org.apache.pinot.spi.data.FieldSpec.DataType;
+
+
+/**
+ * Raw (non-dictionary-encoded) forward index creator for single-value fixed-width columns
+ * (INT, LONG) using a codec pipeline.
+ *
+ * <p>Delegates encoding to a {@link CodecPipelineExecutor} and writes version-7 chunk files via
+ * {@link FixedByteChunkForwardIndexWriterV7}.
+ */
+public class SingleValueFixedByteCodecPipelineIndexCreator implements ForwardIndexCreator {
+  private final FixedByteChunkForwardIndexWriterV7 _indexWriter;
+  private final DataType _valueType;
+
+  public SingleValueFixedByteCodecPipelineIndexCreator(File baseIndexDir, String column, int totalDocs,
+      DataType valueType, int targetDocsPerChunk, CodecPipelineExecutor executor)
+      throws IOException {
+    File file = new File(baseIndexDir, column + V1Constants.Indexes.RAW_SV_FORWARD_INDEX_FILE_EXTENSION);
+    _indexWriter = new FixedByteChunkForwardIndexWriterV7(file, executor, totalDocs, targetDocsPerChunk,
+        valueType.size());
+    _valueType = valueType;
+  }
+
+  @Override
+  public boolean isDictionaryEncoded() {
+    return false;
+  }
+
+  @Override
+  public boolean isSingleValue() {
+    return true;
+  }
+
+  @Override
+  public DataType getValueType() {
+    return _valueType;
+  }
+
+  @Override
+  public void putInt(int value) {
+    _indexWriter.putInt(value);
+  }
+
+  @Override
+  public void putLong(long value) {
+    _indexWriter.putLong(value);
+  }
+
+  @Override
+  public void close()
+      throws IOException {
+    _indexWriter.close();
+  }
+}

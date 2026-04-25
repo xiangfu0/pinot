@@ -33,9 +33,12 @@ import org.apache.pinot.spi.config.table.FieldConfig.CompressionCodec;
 import org.apache.pinot.spi.config.table.FieldConfig.EncodingType;
 import org.apache.pinot.spi.config.table.IndexConfig;
 import org.apache.pinot.spi.utils.DataSizeUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 public class ForwardIndexConfig extends IndexConfig {
+  private static final Logger LOGGER = LoggerFactory.getLogger(ForwardIndexConfig.class);
   private static int _defaultRawIndexWriterVersion = 4;
   private static String _defaultTargetMaxChunkSize = "1MB";
   private static int _defaultTargetMaxChunkSizeBytes = 1024 * 1024;
@@ -78,9 +81,23 @@ public class ForwardIndexConfig extends IndexConfig {
     return new Builder(EncodingType.DICTIONARY).withDisabled(true).build();
   }
 
+  /**
+   * Writer version used for codec-pipeline (codecSpec) forward indexes.
+   * Versions 1-6 are assigned to existing fixed-byte and var-byte chunk formats;
+   * version 7 is the first version that embeds a canonical codec spec in the header.
+   *
+   * <p><b>This integer is a frozen on-disk identifier.</b> Once a release ships with this
+   * constant, the value 7 is permanently bound to the codec-pipeline format defined by
+   * {@code FixedByteChunkForwardIndexWriterV7}. It must never be reassigned to a different
+   * format; any new format must take a new (unused) version number.
+   */
+  public static final int CODEC_PIPELINE_WRITER_VERSION = 7;
+
   private final EncodingType _encodingType;
   @Nullable
   private final CompressionCodec _compressionCodec;
+  @Nullable
+  private final String _codecSpec;
   private final boolean _deriveNumDocsPerChunk;
   private final int _rawIndexWriterVersion;
   private final String _targetMaxChunkSize;
@@ -94,25 +111,60 @@ public class ForwardIndexConfig extends IndexConfig {
   @Nullable
   private final Map<String, Object> _configs;
 
-  @JsonCreator
-  private ForwardIndexConfig(@JsonProperty("disabled") @Nullable Boolean disabled,
-      @JsonProperty("encodingType") @Nullable EncodingType encodingType,
-      @JsonProperty("compressionCodec") @Nullable CompressionCodec compressionCodec,
-      @Deprecated @JsonProperty("chunkCompressionType") @Nullable ChunkCompressionType chunkCompressionType,
-      @Deprecated @JsonProperty("dictIdCompressionType") @Nullable DictIdCompressionType dictIdCompressionType,
-      @JsonProperty("deriveNumDocsPerChunk") @Nullable Boolean deriveNumDocsPerChunk,
-      @JsonProperty("rawIndexWriterVersion") @Nullable Integer rawIndexWriterVersion,
-      @JsonProperty("targetMaxChunkSize") @Nullable String targetMaxChunkSize,
-      @JsonProperty("targetDocsPerChunk") @Nullable Integer targetDocsPerChunk,
-      @JsonProperty("configs") @Nullable Map<String, Object> configs) {
+  public ForwardIndexConfig(@Nullable Boolean disabled, @Nullable CompressionCodec compressionCodec,
+      @Nullable Boolean deriveNumDocsPerChunk, @Nullable Integer rawIndexWriterVersion,
+      @Nullable String targetMaxChunkSize, @Nullable Integer targetDocsPerChunk,
+      @Nullable Map<String, Object> configs) {
+    this(disabled, EncodingType.DICTIONARY, compressionCodec, null, deriveNumDocsPerChunk, rawIndexWriterVersion,
+        targetMaxChunkSize, targetDocsPerChunk, configs);
+  }
+
+  public ForwardIndexConfig(@Nullable Boolean disabled, @Nullable CompressionCodec compressionCodec,
+      @Nullable String codecSpec, @Nullable Boolean deriveNumDocsPerChunk, @Nullable Integer rawIndexWriterVersion,
+      @Nullable String targetMaxChunkSize, @Nullable Integer targetDocsPerChunk,
+      @Nullable Map<String, Object> configs) {
+    this(disabled, EncodingType.DICTIONARY, compressionCodec, codecSpec, deriveNumDocsPerChunk,
+        rawIndexWriterVersion, targetMaxChunkSize, targetDocsPerChunk, configs);
+  }
+
+  private ForwardIndexConfig(@Nullable Boolean disabled, @Nullable EncodingType encodingType,
+      @Nullable CompressionCodec compressionCodec, @Nullable String codecSpec,
+      @Nullable Boolean deriveNumDocsPerChunk, @Nullable Integer rawIndexWriterVersion,
+      @Nullable String targetMaxChunkSize, @Nullable Integer targetDocsPerChunk,
+      @Nullable Map<String, Object> configs) {
     super(disabled);
     // Backward-compat for legacy JSON that lacks `encodingType`: default to DICTIONARY (matches the historical
     // implicit behavior where ForwardIndexConfig had no encoding distinction). Programmatic callers must use
     // Builder(EncodingType) and pass an explicit value, typically from FieldConfig.getEncodingType().
     _encodingType = encodingType == null ? EncodingType.DICTIONARY : encodingType;
-    _compressionCodec = getActualCompressionCodec(compressionCodec, chunkCompressionType, dictIdCompressionType);
+    if (compressionCodec != null && codecSpec != null) {
+      throw new IllegalArgumentException("compressionCodec and codecSpec are mutually exclusive");
+    }
+    _compressionCodec = compressionCodec;
+    _codecSpec = codecSpec;
     _deriveNumDocsPerChunk = Boolean.TRUE.equals(deriveNumDocsPerChunk);
-    _rawIndexWriterVersion = rawIndexWriterVersion == null ? _defaultRawIndexWriterVersion : rawIndexWriterVersion;
+
+    // codecSpec always uses the dedicated pipeline writer version; reject explicit conflicting override
+    // (null means "not explicitly set by caller" — the Builder always passes non-null after defaulting,
+    //  but the @JsonCreator path passes null when the field is absent from JSON)
+    if (codecSpec != null && rawIndexWriterVersion != null
+        && rawIndexWriterVersion != CODEC_PIPELINE_WRITER_VERSION) {
+      throw new IllegalArgumentException(
+          "rawIndexWriterVersion=" + rawIndexWriterVersion + " conflicts with codecSpec (which requires version "
+              + CODEC_PIPELINE_WRITER_VERSION + "). Remove rawIndexWriterVersion or set it to "
+              + CODEC_PIPELINE_WRITER_VERSION + ".");
+    }
+    // Conversely, version 7 is reserved for the codec-pipeline path; setting it without a codecSpec
+    // would create a config that the legacy creator factory cannot honor and fails late and confusingly
+    // at segment build. Reject early.
+    if (codecSpec == null && rawIndexWriterVersion != null
+        && rawIndexWriterVersion == CODEC_PIPELINE_WRITER_VERSION) {
+      throw new IllegalArgumentException(
+          "rawIndexWriterVersion=" + CODEC_PIPELINE_WRITER_VERSION + " is reserved for the codec-pipeline path"
+              + " and requires a non-null codecSpec.");
+    }
+    _rawIndexWriterVersion = codecSpec != null ? CODEC_PIPELINE_WRITER_VERSION
+        : (rawIndexWriterVersion == null ? _defaultRawIndexWriterVersion : rawIndexWriterVersion);
     _targetMaxChunkSize = targetMaxChunkSize == null ? _defaultTargetMaxChunkSize : targetMaxChunkSize;
     _targetMaxChunkSizeBytes =
         targetMaxChunkSize == null ? _defaultTargetMaxChunkSizeBytes : (int) DataSizeUtils.toBytes(targetMaxChunkSize);
@@ -165,6 +217,42 @@ public class ForwardIndexConfig extends IndexConfig {
     }
   }
 
+  @JsonCreator
+  public ForwardIndexConfig(@JsonProperty("disabled") @Nullable Boolean disabled,
+      @JsonProperty("encodingType") @Nullable EncodingType encodingType,
+      @JsonProperty("compressionCodec") @Nullable CompressionCodec compressionCodec,
+      @Deprecated @JsonProperty("chunkCompressionType") @Nullable ChunkCompressionType chunkCompressionType,
+      @Deprecated @JsonProperty("dictIdCompressionType") @Nullable DictIdCompressionType dictIdCompressionType,
+      @JsonProperty("codecSpec") @Nullable String codecSpec,
+      @JsonProperty("deriveNumDocsPerChunk") @Nullable Boolean deriveNumDocsPerChunk,
+      @JsonProperty("rawIndexWriterVersion") @Nullable Integer rawIndexWriterVersion,
+      @JsonProperty("targetMaxChunkSize") @Nullable String targetMaxChunkSize,
+      @JsonProperty("targetDocsPerChunk") @Nullable Integer targetDocsPerChunk,
+      @JsonProperty("configs") @Nullable Map<String, Object> configs) {
+    this(disabled, encodingType,
+        getActualCompressionCodec(compressionCodec, chunkCompressionType, dictIdCompressionType), codecSpec,
+        deriveNumDocsPerChunk, rawIndexWriterVersion, targetMaxChunkSize, targetDocsPerChunk, configs);
+  }
+
+  /**
+   * Binary-compatibility bridge for callers compiled against the pre-codecSpec constructor signature.
+   * Delegates to the current 10-argument constructor with {@code codecSpec=null}.
+   *
+   * @deprecated Use the 10-argument constructor that includes {@code codecSpec}.
+   *             Scheduled for removal in Pinot 2.0 once all callers have migrated.
+   */
+  @Deprecated(forRemoval = true)
+  public ForwardIndexConfig(@Nullable Boolean disabled, @Nullable CompressionCodec compressionCodec,
+      @Nullable ChunkCompressionType chunkCompressionType,
+      @Nullable DictIdCompressionType dictIdCompressionType, @Nullable Boolean deriveNumDocsPerChunk,
+      @Nullable Integer rawIndexWriterVersion, @Nullable String targetMaxChunkSize,
+      @Nullable Integer targetDocsPerChunk, @Nullable Map<String, Object> configs) {
+    this(disabled, EncodingType.DICTIONARY,
+        getActualCompressionCodec(compressionCodec, chunkCompressionType, dictIdCompressionType),
+        null, deriveNumDocsPerChunk, rawIndexWriterVersion, targetMaxChunkSize, targetDocsPerChunk, configs);
+  }
+
+  @SuppressWarnings("deprecation") // intentional: translating legacy ChunkCompressionType to its CompressionCodec shim
   public static CompressionCodec getActualCompressionCodec(@Nullable CompressionCodec compressionCodec,
       @Nullable ChunkCompressionType chunkCompressionType, @Nullable DictIdCompressionType dictIdCompressionType) {
     if (compressionCodec != null) {
@@ -202,9 +290,31 @@ public class ForwardIndexConfig extends IndexConfig {
     }
   }
 
+  /**
+   * Legacy compression codec accessor. Still load-bearing for SNAPPY/GZIP on STRING/BYTES/MV
+   * columns, MV_ENTRY_DICT, and the CLP family — none of which {@code codecSpec} can express
+   * yet. Do not mark this {@code @Deprecated} until all of those use cases have an equivalent
+   * codec-pipeline path. New SV INT/LONG callers should prefer {@link #getCodecSpec()}.
+   */
   @Nullable
   public CompressionCodec getCompressionCodec() {
     return _compressionCodec;
+  }
+
+  /**
+   * Returns the codec DSL spec string (e.g. {@code "CODEC(DELTA,ZSTD(3))"}) when this
+   * forward index uses a codec pipeline, or {@code null} when using the legacy
+   * {@code compressionCodec} path.
+   */
+  @Nullable
+  public String getCodecSpec() {
+    return _codecSpec;
+  }
+
+  /** Returns {@code true} when this config uses a codec pipeline spec rather than a legacy compression codec. */
+  @JsonIgnore
+  public boolean hasCodecSpec() {
+    return _codecSpec != null;
   }
 
   public boolean isDeriveNumDocsPerChunk() {
@@ -262,7 +372,8 @@ public class ForwardIndexConfig extends IndexConfig {
       return false;
     }
     ForwardIndexConfig that = (ForwardIndexConfig) o;
-    return _compressionCodec == that._compressionCodec && _deriveNumDocsPerChunk == that._deriveNumDocsPerChunk
+    return _compressionCodec == that._compressionCodec && Objects.equals(_codecSpec, that._codecSpec)
+        && _deriveNumDocsPerChunk == that._deriveNumDocsPerChunk
         && _rawIndexWriterVersion == that._rawIndexWriterVersion && Objects.equals(_targetMaxChunkSize,
         that._targetMaxChunkSize) && _targetDocsPerChunk == that._targetDocsPerChunk
         && _encodingType == that._encodingType;
@@ -270,8 +381,8 @@ public class ForwardIndexConfig extends IndexConfig {
 
   @Override
   public int hashCode() {
-    return Objects.hash(super.hashCode(), _compressionCodec, _deriveNumDocsPerChunk, _rawIndexWriterVersion,
-        _targetMaxChunkSize, _targetDocsPerChunk, _encodingType);
+    return Objects.hash(super.hashCode(), _compressionCodec, _codecSpec, _deriveNumDocsPerChunk,
+        _rawIndexWriterVersion, _targetMaxChunkSize, _targetDocsPerChunk, _encodingType);
   }
 
   public static class Builder {
@@ -279,8 +390,11 @@ public class ForwardIndexConfig extends IndexConfig {
     private final EncodingType _encodingType;
     @Nullable
     private CompressionCodec _compressionCodec;
+    @Nullable
+    private String _codecSpec;
     private boolean _deriveNumDocsPerChunk = false;
     private int _rawIndexWriterVersion = _defaultRawIndexWriterVersion;
+    private boolean _rawIndexWriterVersionExplicit = false;
     private String _targetMaxChunkSize = _defaultTargetMaxChunkSize;
     private int _targetDocsPerChunk = _defaultTargetDocsPerChunk;
     private Map<String, Object> _configs = new HashMap<>();
@@ -302,8 +416,12 @@ public class ForwardIndexConfig extends IndexConfig {
       _disabled = other.isDisabled();
       _encodingType = Preconditions.checkNotNull(encodingType, "encodingType must not be null");
       _compressionCodec = other._compressionCodec;
+      _codecSpec = other._codecSpec;
       _deriveNumDocsPerChunk = other._deriveNumDocsPerChunk;
       _rawIndexWriterVersion = other._rawIndexWriterVersion;
+      // Version 7 is implicit when codecSpec is set — do not treat it as an explicit caller override.
+      _rawIndexWriterVersionExplicit = (other._rawIndexWriterVersion != _defaultRawIndexWriterVersion)
+          && other._codecSpec == null;
       _targetMaxChunkSize = other._targetMaxChunkSize;
       _targetDocsPerChunk = other._targetDocsPerChunk;
       _configs = other._configs;
@@ -316,6 +434,19 @@ public class ForwardIndexConfig extends IndexConfig {
 
     public Builder withCompressionCodec(CompressionCodec compressionCodec) {
       _compressionCodec = compressionCodec;
+      // symmetric with withCodecSpec: setting one path clears the other so build() never hits the
+      // mutually-exclusive guard at construction time.
+      _codecSpec = null;
+      return this;
+    }
+
+    public Builder withCodecSpec(String codecSpec) {
+      if (_rawIndexWriterVersionExplicit) {
+        throw new IllegalStateException(
+            "rawIndexWriterVersion has been explicitly set; do not combine with codecSpec");
+      }
+      _codecSpec = codecSpec;
+      _compressionCodec = null;
       return this;
     }
 
@@ -325,7 +456,12 @@ public class ForwardIndexConfig extends IndexConfig {
     }
 
     public Builder withRawIndexWriterVersion(int rawIndexWriterVersion) {
+      if (_codecSpec != null) {
+        throw new IllegalStateException(
+            "rawIndexWriterVersion is controlled by codecSpec; do not set both");
+      }
       _rawIndexWriterVersion = rawIndexWriterVersion;
+      _rawIndexWriterVersionExplicit = true;
       return this;
     }
 
@@ -340,10 +476,12 @@ public class ForwardIndexConfig extends IndexConfig {
     }
 
     @Deprecated
+    @SuppressWarnings("deprecation") // intentional: this deprecated shim translates legacy types to their enum values
     public Builder withCompressionType(ChunkCompressionType chunkCompressionType) {
       if (chunkCompressionType == null) {
         return this;
       }
+      _codecSpec = null;
       switch (chunkCompressionType) {
         case LZ4:
         case LZ4_LENGTH_PREFIXED:
@@ -372,6 +510,7 @@ public class ForwardIndexConfig extends IndexConfig {
       Preconditions.checkArgument(dictIdCompressionType == DictIdCompressionType.MV_ENTRY_DICT,
           "Unsupported dictionary compression type: " + dictIdCompressionType);
       _compressionCodec = CompressionCodec.MV_ENTRY_DICT;
+      _codecSpec = null;
       return this;
     }
 
@@ -392,14 +531,22 @@ public class ForwardIndexConfig extends IndexConfig {
       }
       String newRawIndexVersion = properties.get(FieldConfig.RAW_INDEX_WRITER_VERSION);
       if (newRawIndexVersion != null) {
-        withRawIndexWriterVersion(Integer.parseInt(newRawIndexVersion));
+        if (_codecSpec != null) {
+          LOGGER.warn("Ignoring legacy property {}={} because codecSpec={} forces version {}",
+              FieldConfig.RAW_INDEX_WRITER_VERSION, newRawIndexVersion, _codecSpec, CODEC_PIPELINE_WRITER_VERSION);
+        } else {
+          withRawIndexWriterVersion(Integer.parseInt(newRawIndexVersion));
+        }
       }
       return this;
     }
 
     public ForwardIndexConfig build() {
-      return new ForwardIndexConfig(_disabled, _encodingType, _compressionCodec, null, null, _deriveNumDocsPerChunk,
-          _rawIndexWriterVersion, _targetMaxChunkSize, _targetDocsPerChunk, _configs);
+      // Pass null for rawIndexWriterVersion when it was not explicitly set by the caller,
+      // so the constructor's guard does not fire for the common case of codecSpec + default version.
+      Integer versionArg = _rawIndexWriterVersionExplicit ? _rawIndexWriterVersion : null;
+      return new ForwardIndexConfig(_disabled, _encodingType, _compressionCodec, _codecSpec, _deriveNumDocsPerChunk,
+          versionArg, _targetMaxChunkSize, _targetDocsPerChunk, _configs);
     }
   }
 }

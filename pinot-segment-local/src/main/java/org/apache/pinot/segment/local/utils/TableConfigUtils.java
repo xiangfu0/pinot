@@ -48,8 +48,13 @@ import org.apache.pinot.common.tier.TierFactory;
 import org.apache.pinot.common.utils.config.TagNameUtils;
 import org.apache.pinot.segment.local.aggregator.ValueAggregator;
 import org.apache.pinot.segment.local.aggregator.ValueAggregatorFactory;
+import org.apache.pinot.segment.local.io.codec.CodecPipelineValidator;
+import org.apache.pinot.segment.local.io.codec.CodecRegistry;
 import org.apache.pinot.segment.local.recordtransformer.SchemaConformingTransformer;
 import org.apache.pinot.segment.spi.AggregationFunctionType;
+import org.apache.pinot.segment.spi.codec.CodecContext;
+import org.apache.pinot.segment.spi.codec.CodecPipeline;
+import org.apache.pinot.segment.spi.codec.CodecSpecParser;
 import org.apache.pinot.segment.spi.index.DictionaryIndexConfig;
 import org.apache.pinot.segment.spi.index.FieldIndexConfigs;
 import org.apache.pinot.segment.spi.index.FieldIndexConfigsUtil;
@@ -1503,6 +1508,9 @@ public final class TableConfigUtils {
 
         // Validate DELTA / DELTADELTA compression codecs compatibility
         validateGorillaCompressionCodecIfPresent(fieldConfig, schema.getFieldSpecFor(column));
+
+        // Validate codec pipeline spec
+        validateCodecSpecIfPresent(fieldConfig, schema.getFieldSpecFor(column));
       }
       validateIndexingConfigAndFieldConfigListCompatibility(indexingConfig, fieldConfigs);
     }
@@ -2207,6 +2215,46 @@ public final class TableConfigUtils {
         break;
       default:
         // no-op for other codecs
+    }
+  }
+
+  // Validates FieldConfig.codecSpec when present:
+  // - Syntax must be parseable by the Codec DSL parser.
+  // - Only supported on single-value INT or LONG columns (v1 restriction).
+  // - Encoding type must be RAW (codec pipeline does not support dictionary encoding).
+  // - All codec stages must be registered and structurally valid (semantic check).
+  private static void validateCodecSpecIfPresent(FieldConfig fieldConfig, FieldSpec fieldSpec) {
+    String codecSpec = fieldConfig.getCodecSpec();
+    if (codecSpec == null) {
+      return;
+    }
+    // Parse to catch syntax errors early at table-creation time
+    CodecPipeline pipeline;
+    try {
+      pipeline = CodecSpecParser.parse(codecSpec);
+    } catch (IllegalArgumentException e) {
+      throw new IllegalStateException(
+          "Invalid codecSpec for column '" + fieldConfig.getName() + "': " + e.getMessage(), e);
+    }
+    // v1: only SV INT/LONG columns are supported
+    Preconditions.checkState(fieldSpec.isSingleValueField(),
+        "codecSpec can only be used on single-value columns, found multi-value column: %s", fieldConfig.getName());
+    DataType storedType = fieldSpec.getDataType().getStoredType();
+    Preconditions.checkState(storedType == DataType.INT || storedType == DataType.LONG,
+        "codecSpec can only be used on INT or LONG columns (v1), found %s for column: %s", storedType,
+        fieldConfig.getName());
+    // Must be RAW-encoded
+    Preconditions.checkState(fieldConfig.getEncodingType() == FieldConfig.EncodingType.RAW,
+        "codecSpec requires RAW encoding type for column: %s", fieldConfig.getName());
+    // Semantic check: all codec names must be registered and structurally valid for the column type.
+    // This catches unknown codec names and unsupported pipelines (e.g. two compression stages) before
+    // the bad config reaches ZK and causes silent failures at ingest/load time on servers.
+    try {
+      CodecPipelineValidator.validate(pipeline, CodecRegistry.DEFAULT, new CodecContext(storedType));
+    } catch (IllegalArgumentException e) {
+      throw new IllegalStateException(
+          "Codec pipeline validation failed for column '" + fieldConfig.getName() + "' (codecSpec='" + codecSpec
+              + "'): " + e.getMessage(), e);
     }
   }
 }

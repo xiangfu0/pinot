@@ -77,6 +77,7 @@ public class FieldConfig extends BaseJsonConfig {
   private final JsonNode _indexes;
   private final JsonNode _tierOverwrites;
   private final CompressionCodec _compressionCodec;
+  private final String _codecSpec;
   private final Map<String, String> _properties;
   private final TimestampConfig _timestampConfig;
 
@@ -86,6 +87,7 @@ public class FieldConfig extends BaseJsonConfig {
     this(name, encodingType, indexType, null, compressionCodec, null, null, properties, null);
   }
 
+  @Deprecated
   public FieldConfig(String name, EncodingType encodingType, @Nullable List<IndexType> indexTypes,
       @Nullable CompressionCodec compressionCodec, @Nullable Map<String, String> properties) {
     this(name, encodingType, null, indexTypes, compressionCodec, null, null, properties, null);
@@ -98,22 +100,35 @@ public class FieldConfig extends BaseJsonConfig {
     this(name, encodingType, indexType, indexTypes, compressionCodec, timestampConfig, null, properties, null);
   }
 
+  @Deprecated
+  public FieldConfig(String name, EncodingType encodingType, @Nullable IndexType indexType,
+      @Nullable List<IndexType> indexTypes, @Nullable CompressionCodec compressionCodec,
+      @Nullable TimestampConfig timestampConfig, @Nullable JsonNode indexes,
+      @Nullable Map<String, String> properties, @Nullable JsonNode tierOverwrites) {
+    this(name, encodingType, indexType, indexTypes, compressionCodec, null, timestampConfig, indexes, properties,
+        tierOverwrites);
+  }
+
   @JsonCreator
   public FieldConfig(@JsonProperty(value = "name", required = true) String name,
       @JsonProperty(value = "encodingType") EncodingType encodingType,
       @JsonProperty(value = "indexType") @Nullable IndexType indexType,
       @JsonProperty(value = "indexTypes") @Nullable List<IndexType> indexTypes,
       @JsonProperty(value = "compressionCodec") @Nullable CompressionCodec compressionCodec,
+      @JsonProperty(value = "codecSpec") @Nullable String codecSpec,
       @JsonProperty(value = "timestampConfig") @Nullable TimestampConfig timestampConfig,
       @JsonProperty(value = "indexes") @Nullable JsonNode indexes,
       @JsonProperty(value = "properties") @Nullable Map<String, String> properties,
       @JsonProperty(value = "tierOverwrites") @Nullable JsonNode tierOverwrites) {
     Preconditions.checkArgument(name != null, "'name' must be configured");
+    Preconditions.checkArgument(compressionCodec == null || codecSpec == null,
+        "compressionCodec and codecSpec are mutually exclusive for column: %s", name);
     _name = name;
     _encodingType = encodingType == null ? EncodingType.DICTIONARY : encodingType;
     _indexTypes =
         indexTypes != null ? indexTypes : (indexType == null ? Lists.newArrayList() : Lists.newArrayList(indexType));
     _compressionCodec = compressionCodec;
+    _codecSpec = codecSpec;
     _timestampConfig = timestampConfig;
     _properties = properties;
     _indexes = indexes == null ? NullNode.getInstance() : indexes;
@@ -134,9 +149,29 @@ public class FieldConfig extends BaseJsonConfig {
   public enum CompressionCodec {
     //@formatter:off
     PASS_THROUGH(true, false),
+    /**
+     * Snappy compression for raw forward indexes. For SV INT/LONG columns, prefer
+     * {@code codecSpec="SNAPPY"} in new segments; existing uses remain supported.
+     * Required for STRING, BYTES, and multi-value columns (not yet supported by codecSpec).
+     */
     SNAPPY(true, false),
+    /**
+     * Zstandard compression for raw forward indexes. For SV INT/LONG columns, prefer
+     * {@code codecSpec="ZSTD(3)"} in new segments; existing uses remain supported.
+     * Required for STRING, BYTES, and multi-value columns (not yet supported by codecSpec).
+     */
     ZSTANDARD(true, false),
+    /**
+     * LZ4 compression for raw forward indexes. For SV INT/LONG columns, prefer
+     * {@code codecSpec="LZ4"} in new segments; existing uses remain supported.
+     * Required for STRING, BYTES, and multi-value columns (not yet supported by codecSpec).
+     */
     LZ4(true, false),
+    /**
+     * GZIP (DEFLATE) compression for raw forward indexes. For SV INT/LONG columns, prefer
+     * {@code codecSpec="GZIP"} in new segments; existing uses remain supported.
+     * Required for STRING, BYTES, and multi-value columns (not yet supported by codecSpec).
+     */
     GZIP(true, false),
 
     // For MV dictionary encoded forward index, add a second level dictionary encoding for the multi-value entries
@@ -149,7 +184,16 @@ public class FieldConfig extends BaseJsonConfig {
     CLPV2_ZSTD(false, false),
     CLPV2_LZ4(false, false),
 
+    /**
+     * Delta encoding for SV INT/LONG raw forward indexes. For new SV INT/LONG columns, prefer
+     * {@code codecSpec="CODEC(DELTA,LZ4)"} which adds byte-level compression on top.
+     * Note: migrating to codecSpec changes on-disk semantics (adds LZ4) — not a drop-in replacement.
+     */
     DELTA(false, false),
+    /**
+     * Second-order delta encoding for SV INT/LONG raw forward indexes. For new SV INT/LONG columns,
+     * prefer {@code codecSpec="CODEC(DELTADELTA,LZ4)"}. Same migration caveat as {@link #DELTA}.
+     */
     DELTADELTA(false, false);
 
     //@formatter:on
@@ -197,9 +241,25 @@ public class FieldConfig extends BaseJsonConfig {
     return _tierOverwrites;
   }
 
+  /**
+   * Legacy compression codec accessor. Still required for column types that {@code codecSpec}
+   * does not yet support (STRING/BYTES/MV with SNAPPY/GZIP, MV_ENTRY_DICT, the CLP family).
+   * Do not mark {@code @Deprecated} until all of those have a codec-pipeline equivalent.
+   * New SV INT/LONG callers should prefer {@link #getCodecSpec()}.
+   */
   @Nullable
   public CompressionCodec getCompressionCodec() {
     return _compressionCodec;
+  }
+
+  /**
+   * Returns the codec pipeline DSL spec (e.g. {@code "CODEC(DELTA,ZSTD(3))"}) for this column,
+   * or {@code null} when using the legacy {@code compressionCodec} path.
+   * Mutually exclusive with {@link #getCompressionCodec()}.
+   */
+  @Nullable
+  public String getCodecSpec() {
+    return _codecSpec;
   }
 
   @Nullable
@@ -218,6 +278,7 @@ public class FieldConfig extends BaseJsonConfig {
     private List<IndexType> _indexTypes;
     private JsonNode _indexes;
     private CompressionCodec _compressionCodec;
+    private String _codecSpec;
     private Map<String, String> _properties;
     private TimestampConfig _timestampConfig;
     private JsonNode _tierOverwrites;
@@ -232,6 +293,7 @@ public class FieldConfig extends BaseJsonConfig {
       _indexTypes = other._indexTypes;
       _indexes = other._indexes;
       _compressionCodec = other._compressionCodec;
+      _codecSpec = other._codecSpec;
       _properties = other._properties;
       _timestampConfig = other._timestampConfig;
       _tierOverwrites = other._tierOverwrites;
@@ -259,6 +321,15 @@ public class FieldConfig extends BaseJsonConfig {
 
     public Builder withCompressionCodec(CompressionCodec compressionCodec) {
       _compressionCodec = compressionCodec;
+      // symmetric with withCodecSpec: setting one path clears the other so the constructor's
+      // mutually-exclusive guard never fires.
+      _codecSpec = null;
+      return this;
+    }
+
+    public Builder withCodecSpec(String codecSpec) {
+      _codecSpec = codecSpec;
+      _compressionCodec = null;
       return this;
     }
 
@@ -278,8 +349,8 @@ public class FieldConfig extends BaseJsonConfig {
     }
 
     public FieldConfig build() {
-      return new FieldConfig(_name, _encodingType, null, _indexTypes, _compressionCodec, _timestampConfig, _indexes,
-          _properties, _tierOverwrites);
+      return new FieldConfig(_name, _encodingType, null, _indexTypes, _compressionCodec, _codecSpec, _timestampConfig,
+          _indexes, _properties, _tierOverwrites);
     }
   }
 }

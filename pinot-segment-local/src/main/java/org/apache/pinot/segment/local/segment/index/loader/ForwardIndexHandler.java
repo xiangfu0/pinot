@@ -31,6 +31,8 @@ import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.commons.io.FileUtils;
+import org.apache.pinot.segment.local.io.codec.CodecPipelineExecutor;
+import org.apache.pinot.segment.local.io.codec.CodecRegistry;
 import org.apache.pinot.segment.local.io.util.PinotDataBitSet;
 import org.apache.pinot.segment.local.segment.creator.impl.SegmentDictionaryCreator;
 import org.apache.pinot.segment.local.segment.creator.impl.fwd.MultiValueVarByteRawIndexCreator;
@@ -49,6 +51,7 @@ import org.apache.pinot.segment.local.segment.readers.PinotSegmentColumnReader;
 import org.apache.pinot.segment.local.utils.ClusterConfigForTable;
 import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.V1Constants;
+import org.apache.pinot.segment.spi.codec.CodecContext;
 import org.apache.pinot.segment.spi.compression.ChunkCompressionType;
 import org.apache.pinot.segment.spi.compression.DictIdCompressionType;
 import org.apache.pinot.segment.spi.creator.IndexCreationContext;
@@ -316,7 +319,7 @@ public class ForwardIndexHandler extends BaseIndexHandler {
       } else if (!existingHasDict) {
         // Both existing and new column is RAW forward index encoded. Check if compression needs to be changed.
         // TODO: Also check if raw index version needs to be changed
-        if (shouldChangeRawCompressionType(column, segmentReader)) {
+        if (shouldRewriteRawForwardIndex(column, segmentReader)) {
           columnOperationsMap.put(column, Collections.singletonList(Operation.CHANGE_INDEX_COMPRESSION_TYPE));
         }
       } else {
@@ -376,29 +379,122 @@ public class ForwardIndexHandler extends BaseIndexHandler {
     return true;
   }
 
-  private boolean shouldChangeRawCompressionType(String column, SegmentDirectory.Reader segmentReader)
+  private boolean shouldRewriteRawForwardIndex(String column, SegmentDirectory.Reader segmentReader)
       throws Exception {
     // The compression type for an existing segment can only be determined by reading the forward index header.
     ColumnMetadata existingColMetadata = _segmentDirectory.getSegmentMetadata().getColumnMetadataFor(column);
     ChunkCompressionType existingCompressionType;
+    String existingCodecSpec;
 
     // Get the forward index reader factory and create a reader
     IndexReaderFactory<ForwardIndexReader> readerFactory = StandardIndexes.forward().getReaderFactory();
     try (ForwardIndexReader<?> fwdIndexReader = readerFactory.createIndexReader(segmentReader,
         _fieldIndexConfigs.get(column), existingColMetadata)) {
       existingCompressionType = fwdIndexReader.getCompressionType();
-      Preconditions.checkState(existingCompressionType != null,
-          "Existing compressionType cannot be null for raw forward index column=" + column);
+      existingCodecSpec = fwdIndexReader.getCodecSpec();
     }
 
-    // Get the new compression type.
-    ChunkCompressionType newCompressionType =
-        _fieldIndexConfigs.get(column).getConfig(StandardIndexes.forward()).getChunkCompressionType();
+    ForwardIndexConfig fwdConfig = _fieldIndexConfigs.get(column).getConfig(StandardIndexes.forward());
 
+    // Positive V7 detection: a non-null canonical codec spec is the only signal that the existing
+    // segment was written by the codec-pipeline writer. Relying on `existingCompressionType == null`
+    // alone would misclassify any future reader that defaults `getCompressionType()` to null without
+    // also setting `getCodecSpec()`.
+    if (existingCodecSpec != null) {
+      // V7 codec-pipeline only supports INT and LONG; guard against future type expansion reaching this path.
+      DataType existingStoredType = existingColMetadata.getDataType().getStoredType();
+      Preconditions.checkState(existingStoredType == DataType.INT || existingStoredType == DataType.LONG,
+          "V7 codec-pipeline segment for column=%s has unexpected stored type %s; expected INT or LONG",
+          column, existingStoredType);
+      // Codec-pipeline segment (version 7): compare the stored canonical spec against the configured codecSpec.
+      // If no codecSpec is configured, a legacy compressionCodec or default will apply to new segments only;
+      // existing V7 segments are left as-is (no rewrite needed).
+      String newCodecSpec = fwdConfig.getCodecSpec();
+      if (newCodecSpec == null) {
+        // Config may have reverted from codecSpec back to a legacy compressionCodec — schedule a
+        // rewrite back to the legacy format so the segment can be read by older servers.
+        // Use the typed CompressionCodec enum to distinguish:
+        //   - explicit PASS_THROUGH (user wants no compression) → rewrite to legacy PASS_THROUGH
+        //   - any other named codec (LZ4/ZSTANDARD/SNAPPY/GZIP/DELTA/DELTADELTA) → rewrite
+        //   - CLP family / MV_ENTRY_DICT → not applicable to fixed-byte SV; skip
+        //   - null (no compression configured) → no-op
+        FieldConfig.CompressionCodec newCompressionCodec = fwdConfig.getCompressionCodec();
+        if (newCompressionCodec != null && isLegacyRevertTargetForFixedByteSv(newCompressionCodec)) {
+          LOGGER.info("Config reverted from codecSpec to legacy compressionCodec='{}' for column={} in segment={}: "
+                  + "scheduling rewrite back to legacy format",
+              newCompressionCodec, column, _segmentDirectory.getSegmentMetadata().getName());
+          return true;
+        }
+        LOGGER.debug("Skipping codec-spec check for column={} in segment={}: no codecSpec configured",
+            column, _segmentDirectory.getSegmentMetadata().getName());
+        return false;
+      }
+      // Compare canonical forms. The stored spec is already canonical (written by CodecPipelineExecutor);
+      // canonicalize the configured spec by running it through the executor to normalize (e.g. fill defaults).
+      DataType storedType = existingColMetadata.getDataType().getStoredType();
+      String canonicalNewSpec;
+      try {
+        canonicalNewSpec = CodecPipelineExecutor.create(newCodecSpec, new CodecContext(storedType),
+            CodecRegistry.DEFAULT).getCanonicalSpec();
+      } catch (Exception e) {
+        // Config was validated at table-config time; if we can't parse it here, propagate the error.
+        throw new IllegalStateException(
+            "Failed to canonicalize configured codecSpec='" + newCodecSpec + "' for column=" + column
+                + " in segment=" + _segmentDirectory.getSegmentMetadata().getName(), e);
+      }
+      boolean specChanged = !canonicalNewSpec.equals(existingCodecSpec);
+      if (specChanged) {
+        LOGGER.info("Codec spec changed for column={} in segment={}: existing='{}', configured='{}'",
+            column, _segmentDirectory.getSegmentMetadata().getName(), existingCodecSpec, canonicalNewSpec);
+      } else {
+        LOGGER.debug("Codec spec unchanged for column={} in segment={}: spec='{}'",
+            column, _segmentDirectory.getSegmentMetadata().getName(), existingCodecSpec);
+      }
+      return specChanged;
+    }
+
+    // Legacy (pre-V7) segment: if a codecSpec is now configured, trigger a rewrite to the V7 format.
+    if (fwdConfig.hasCodecSpec()) {
+      LOGGER.info(
+          "Config switched from legacy compressionCodec to codecSpec='{}' for column={} in segment={}: "
+              + "scheduling rewrite to V7 codec-pipeline format",
+          fwdConfig.getCodecSpec(), column, _segmentDirectory.getSegmentMetadata().getName());
+      return true;
+    }
+
+    // Compare ChunkCompressionType.
     // Note that default compression type (PASS_THROUGH for metric and LZ4 for dimension) is not considered if the
     // compressionType is not explicitly provided in tableConfig. This is to avoid incorrectly rewriting all the
     // forward indexes during segmentReload when the default compressionType changes.
+    ChunkCompressionType newCompressionType = fwdConfig.getChunkCompressionType();
     return newCompressionType != null && existingCompressionType != newCompressionType;
+  }
+
+  /**
+   * Identifies CompressionCodec values that, when configured on a fixed-byte SV column whose
+   * existing on-disk format is V7 (codec-pipeline), represent a legitimate rollback target — i.e.
+   * the segment should be rewritten to a legacy format readable by older servers. Excludes the
+   * CLP family (which doesn't apply to fixed-byte SV INT/LONG) and MV_ENTRY_DICT (dict-encoded
+   * MV index).
+   */
+  private static boolean isLegacyRevertTargetForFixedByteSv(FieldConfig.CompressionCodec codec) {
+    switch (codec) {
+      case PASS_THROUGH:
+      case SNAPPY:
+      case ZSTANDARD:
+      case LZ4:
+      case GZIP:
+      case DELTA:
+      case DELTADELTA:
+        return true;
+      case CLP:
+      case CLPV2:
+      case CLPV2_ZSTD:
+      case CLPV2_LZ4:
+      case MV_ENTRY_DICT:
+      default:
+        return false;
+    }
   }
 
   private boolean shouldChangeDictIdCompressionType(String column, SegmentDirectory.Reader segmentReader)

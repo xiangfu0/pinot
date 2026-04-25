@@ -217,6 +217,7 @@ public class ForwardIndexType extends AbstractIndexType<ForwardIndexConfig, Forw
           // `noDictionaryColumns` / `noDictionaryConfig` membership — historically these may be set alongside a
           // FieldConfig that left `encodingType` at the default DICTIONARY.
           FieldConfig.CompressionCodec fcCodec = fieldConfig.getCompressionCodec();
+          String fcCodecSpec = fieldConfig.getCodecSpec();
           FieldConfig.EncodingType encodingType =
               inNoDictionaryList ? FieldConfig.EncodingType.RAW : fieldConfig.getEncodingType();
 
@@ -242,15 +243,31 @@ public class ForwardIndexType extends AbstractIndexType<ForwardIndexConfig, Forw
                   "Conflicting forward-index compressionCodec for column: %s — FieldConfig.compressionCodec=%s "
                       + "but indexes.forward.compressionCodec=%s", column, fcCodec, inner);
             }
+            JsonNode innerCodecSpecNode = forwardIndexNode.get("codecSpec");
+            if (innerCodecSpecNode != null && !innerCodecSpecNode.isNull() && fcCodecSpec != null) {
+              String inner = innerCodecSpecNode.asText();
+              Preconditions.checkState(inner.equals(fcCodecSpec),
+                  "Conflicting forward-index codecSpec for column: %s — FieldConfig.codecSpec=%s "
+                      + "but indexes.forward.codecSpec=%s", column, fcCodecSpec, inner);
+            }
+            Preconditions.checkState(fcCodecSpec == null || innerCodecNode == null || innerCodecNode.isNull(),
+                "Conflicting forward-index config for column: %s — FieldConfig.codecSpec=%s but "
+                    + "indexes.forward.compressionCodec is also set", column, fcCodecSpec);
+            Preconditions.checkState(fcCodec == null || innerCodecSpecNode == null || innerCodecSpecNode.isNull(),
+                "Conflicting forward-index config for column: %s — FieldConfig.compressionCodec=%s but "
+                    + "indexes.forward.codecSpec is also set", column, fcCodec);
 
-            // Inject the resolved encodingType / compressionCodec into the JSON when absent so the resulting
-            // ForwardIndexConfig always matches the column-level signals.
+            // Inject the resolved encodingType / compressionCodec / codecSpec into the JSON when absent so the
+            // resulting ForwardIndexConfig always matches the column-level signals.
             ObjectNode configNode = (ObjectNode) forwardIndexNode.deepCopy();
             if (innerEncodingNode == null || innerEncodingNode.isNull()) {
               configNode.put("encodingType", encodingType.name());
             }
             if ((innerCodecNode == null || innerCodecNode.isNull()) && fcCodec != null) {
               configNode.put("compressionCodec", fcCodec.name());
+            }
+            if ((innerCodecSpecNode == null || innerCodecSpecNode.isNull()) && fcCodecSpec != null) {
+              configNode.put("codecSpec", fcCodecSpec);
             }
             try {
               result.put(column, JsonUtils.jsonNodeToObject(configNode, ForwardIndexConfig.class));
@@ -279,8 +296,12 @@ public class ForwardIndexType extends AbstractIndexType<ForwardIndexConfig, Forw
 
   private ForwardIndexConfig createConfigFromFieldConfig(FieldConfig fieldConfig,
       FieldConfig.EncodingType resolvedEncodingType) {
-    ForwardIndexConfig.Builder builder = new ForwardIndexConfig.Builder(resolvedEncodingType)
-        .withCompressionCodec(fieldConfig.getCompressionCodec());
+    ForwardIndexConfig.Builder builder = new ForwardIndexConfig.Builder(resolvedEncodingType);
+    if (fieldConfig.getCodecSpec() != null) {
+      builder.withCodecSpec(fieldConfig.getCodecSpec());
+    } else {
+      builder.withCompressionCodec(fieldConfig.getCompressionCodec());
+    }
     Map<String, String> properties = fieldConfig.getProperties();
     if (properties != null) {
       builder.withLegacyProperties(properties);

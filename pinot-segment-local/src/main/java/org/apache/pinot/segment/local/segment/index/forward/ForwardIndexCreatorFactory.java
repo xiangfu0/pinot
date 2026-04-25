@@ -21,16 +21,20 @@ package org.apache.pinot.segment.local.segment.index.forward;
 
 import java.io.File;
 import java.io.IOException;
+import org.apache.pinot.segment.local.io.codec.CodecPipelineExecutor;
+import org.apache.pinot.segment.local.io.codec.CodecRegistry;
 import org.apache.pinot.segment.local.segment.creator.impl.fwd.CLPForwardIndexCreatorV1;
 import org.apache.pinot.segment.local.segment.creator.impl.fwd.CLPForwardIndexCreatorV2;
 import org.apache.pinot.segment.local.segment.creator.impl.fwd.MultiValueEntryDictForwardIndexCreator;
 import org.apache.pinot.segment.local.segment.creator.impl.fwd.MultiValueFixedByteRawIndexCreator;
 import org.apache.pinot.segment.local.segment.creator.impl.fwd.MultiValueUnsortedForwardIndexCreator;
 import org.apache.pinot.segment.local.segment.creator.impl.fwd.MultiValueVarByteRawIndexCreator;
+import org.apache.pinot.segment.local.segment.creator.impl.fwd.SingleValueFixedByteCodecPipelineIndexCreator;
 import org.apache.pinot.segment.local.segment.creator.impl.fwd.SingleValueFixedByteRawIndexCreator;
 import org.apache.pinot.segment.local.segment.creator.impl.fwd.SingleValueSortedForwardIndexCreator;
 import org.apache.pinot.segment.local.segment.creator.impl.fwd.SingleValueUnsortedForwardIndexCreator;
 import org.apache.pinot.segment.local.segment.creator.impl.fwd.SingleValueVarByteRawIndexCreator;
+import org.apache.pinot.segment.spi.codec.CodecContext;
 import org.apache.pinot.segment.spi.compression.ChunkCompressionType;
 import org.apache.pinot.segment.spi.compression.DictIdCompressionType;
 import org.apache.pinot.segment.spi.creator.IndexCreationContext;
@@ -73,6 +77,29 @@ public class ForwardIndexCreatorFactory {
     } else {
       // Raw forward index
       DataType storedType = fieldSpec.getDataType().getStoredType();
+
+      // Codec pipeline path (codecSpec takes priority over legacy compressionCodec).
+      // Note: targetMaxChunkSize and deriveNumDocsPerChunk are not honored on this path — V7 sizes
+      // chunks as numDocsPerChunk * sizeOfEntry where numDocsPerChunk is rounded up to a power of
+      // two from indexConfig.getTargetDocsPerChunk(). Operators relying on the legacy size knobs
+      // should keep using the legacy compressionCodec path or set targetDocsPerChunk to control
+      // V7 chunk size.
+      if (indexConfig.hasCodecSpec()) {
+        if (!fieldSpec.isSingleValueField()) {
+          throw new IllegalArgumentException(
+              "codecSpec is only supported for single-value columns, but column '" + columnName + "' is multi-value");
+        }
+        if (storedType != DataType.INT && storedType != DataType.LONG) {
+          throw new IllegalArgumentException(
+              "codecSpec is only supported for INT and LONG columns in v1, but column '" + columnName
+                  + "' has type: " + storedType);
+        }
+        CodecPipelineExecutor executor = CodecPipelineExecutor.create(indexConfig.getCodecSpec(),
+            new CodecContext(storedType), CodecRegistry.DEFAULT);
+        return new SingleValueFixedByteCodecPipelineIndexCreator(indexDir, columnName, numTotalDocs, storedType,
+            indexConfig.getTargetDocsPerChunk(), executor);
+      }
+
       if (indexConfig.getCompressionCodec() == FieldConfig.CompressionCodec.CLP) {
         // CLP (V1) uses hard-coded chunk compressor which is set to `PassThrough`
         return new CLPForwardIndexCreatorV1(indexDir, columnName, numTotalDocs, context.getColumnStatistics());
