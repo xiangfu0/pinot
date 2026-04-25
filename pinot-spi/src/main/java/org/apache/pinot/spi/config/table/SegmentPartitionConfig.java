@@ -73,6 +73,8 @@ public class SegmentPartitionConfig extends BaseJsonConfig {
     return (config != null) ? config.getPartitionIdNormalizer() : null;
   }
 
+  // TODO: remove this deprecated getter after release 1.7.0 once internal callers have migrated to
+  //       getColumnPartitionConfig(column).getFunctionConfig().
   @Deprecated
   @Nullable
   public Map<String, String> getFunctionConfig(String column) {

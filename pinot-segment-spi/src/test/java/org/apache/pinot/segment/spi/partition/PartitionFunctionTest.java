@@ -20,8 +20,13 @@ package org.apache.pinot.segment.spi.partition;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
+import org.apache.pinot.segment.spi.V1Constants;
+import org.apache.pinot.segment.spi.partition.pipeline.PartitionIntNormalizer;
+import org.apache.pinot.spi.config.table.ColumnPartitionConfig;
 import org.apache.pinot.spi.data.readers.GenericRow;
 import org.apache.pinot.spi.function.FunctionEvaluator;
 import org.apache.pinot.spi.utils.BytesUtils;
@@ -898,6 +903,28 @@ public class PartitionFunctionTest {
   public void testFunctionExprSentinelIsNotARealPartitionFunctionType() {
     expectThrows(IllegalArgumentException.class,
         () -> PartitionFunctionFactory.PartitionFunctionType.fromString(
-            org.apache.pinot.segment.spi.V1Constants.MetadataKeys.Column.PARTITION_FUNCTION_EXPR_SENTINEL));
+            V1Constants.MetadataKeys.Column.PARTITION_FUNCTION_EXPR_SENTINEL));
+  }
+
+  /**
+   * Drift regression: {@code ColumnPartitionConfig.PARTITION_ID_NORMALIZER_*} string constants live in pinot-spi
+   * (which cannot reference {@link PartitionIntNormalizer} due to the module dependency direction). This test
+   * asserts the two stay in lockstep so adding a new normalizer to the enum without updating the validator string
+   * list trips a test failure rather than a silent runtime rejection.
+   */
+  @Test
+  public void testPartitionIdNormalizerConstantsMatchEnumValues() {
+    Set<String> enumNames = new HashSet<>();
+    for (PartitionIntNormalizer normalizer : PartitionIntNormalizer.values()) {
+      enumNames.add(normalizer.name());
+    }
+    Set<String> configConstants = new HashSet<>();
+    configConstants.add(ColumnPartitionConfig.PARTITION_ID_NORMALIZER_POSITIVE_MODULO);
+    configConstants.add(ColumnPartitionConfig.PARTITION_ID_NORMALIZER_ABS);
+    configConstants.add(ColumnPartitionConfig.PARTITION_ID_NORMALIZER_MASK);
+    assertEquals(configConstants, enumNames,
+        "ColumnPartitionConfig.PARTITION_ID_NORMALIZER_* string constants must match PartitionIntNormalizer enum "
+            + "values. If a new normalizer is added, update both ColumnPartitionConfig.isValidPartitionIdNormalizer "
+            + "and the constants list in this test.");
   }
 }
