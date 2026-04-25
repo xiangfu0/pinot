@@ -75,6 +75,7 @@ public class ColumnPartitionMetadata {
    * @param functionConfig Configuration required by partition function.
    * @deprecated Use {@link #ColumnPartitionMetadata(PartitionFunction, Set)} instead, which derives all fields
    *             directly from the {@link PartitionFunction} contract and keeps them consistent.
+   *             TODO: remove after release 1.7.0.
    */
   @Deprecated
   public ColumnPartitionMetadata(String functionName, int numPartitions, Set<Integer> partitions,

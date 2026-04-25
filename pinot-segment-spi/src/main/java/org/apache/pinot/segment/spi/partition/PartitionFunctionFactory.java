@@ -115,6 +115,7 @@ public class PartitionFunctionFactory {
    * @deprecated Expression-mode configs require a column name to compile the pipeline. This overload throws on
    *     expression-mode configs; prefer {@link #getPartitionFunction(String, ColumnPartitionConfig)} or
    *     {@link #getPartitionFunction(String, ColumnPartitionConfig, FieldSpec)} which support both modes.
+   *     TODO: remove after release 1.7.0.
    * @throws IllegalArgumentException if {@code config.getFunctionExpr()} is non-null.
    */
   @Deprecated
@@ -130,6 +131,7 @@ public class PartitionFunctionFactory {
    *
    * @deprecated Expression-mode metadata requires a column name to compile the pipeline. This overload throws on
    *     expression-mode metadata; prefer {@link #getPartitionFunction(String, ColumnPartitionMetadata)}.
+   *     TODO: remove after release 1.7.0.
    * @throws IllegalArgumentException if {@code metadata.getFunctionExpr()} is non-null.
    */
   @Deprecated
@@ -160,7 +162,8 @@ public class PartitionFunctionFactory {
    *
    * @deprecated For BYTES-typed partition columns this overload always compiles the expression pipeline with STRING
    * input, producing partition ids that disagree with ingestion. Prefer
-   * {@link #getPartitionFunction(String, ColumnPartitionConfig, FieldSpec)}.
+   * {@link #getPartitionFunction(String, ColumnPartitionConfig, int, FieldSpec)} (the FieldSpec-aware 4-arg form).
+   * TODO: remove after release 1.7.0.
    */
   @Deprecated
   public static PartitionFunction getPartitionFunction(String columnName, ColumnPartitionConfig columnPartitionConfig,

@@ -75,6 +75,19 @@ public class SegmentPartitionMetadataManager implements SegmentZkMetadataFetchLi
   private transient TablePartitionInfo _tablePartitionInfo;
   private transient TablePartitionReplicatedServersInfo _tablePartitionReplicatedServersInfo;
 
+  /**
+   * Backward-compat shim: the legacy (name-mode-only) constructor used by external broker plugins / vendor forks
+   * that linked against the pre-expression-mode signature. Builds a synthetic {@link ColumnPartitionConfig} and
+   * delegates to the new constructor. Expression-mode tables must use the {@link ColumnPartitionConfig} overloads.
+   * TODO: remove after release 1.7.0 once external callers have migrated.
+   */
+  @Deprecated
+  public SegmentPartitionMetadataManager(String tableNameWithType, String partitionColumn, String partitionFunctionName,
+      int numPartitions) {
+    this(tableNameWithType, partitionColumn,
+        new ColumnPartitionConfig(partitionFunctionName, numPartitions), null);
+  }
+
   public SegmentPartitionMetadataManager(String tableNameWithType, String partitionColumn,
       ColumnPartitionConfig columnPartitionConfig) {
     this(tableNameWithType, partitionColumn, columnPartitionConfig, null);

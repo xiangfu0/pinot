@@ -21,6 +21,7 @@ package org.apache.pinot.spi.config.table;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
+import java.util.Locale;
 import java.util.Map;
 import javax.annotation.Nullable;
 import org.apache.pinot.spi.config.BaseJsonConfig;
@@ -88,7 +89,10 @@ public class ColumnPartitionConfig extends BaseJsonConfig {
         "Unsupported partitionIdNormalizer: %s", partitionIdNormalizer);
     _functionName = functionName;
     _functionExpr = functionExpr;
-    _partitionIdNormalizer = partitionIdNormalizer;
+    // Canonicalize to uppercase at construction so downstream comparisons (case-sensitive on the wire format,
+    // case-insensitive in older code paths) cannot disagree on case alone.
+    _partitionIdNormalizer = hasText(partitionIdNormalizer)
+        ? partitionIdNormalizer.trim().toUpperCase(Locale.ROOT) : null;
     _numPartitions = numPartitions;
     _functionConfig = functionConfig;
   }
