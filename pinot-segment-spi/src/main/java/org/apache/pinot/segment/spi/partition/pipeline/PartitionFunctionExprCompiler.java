@@ -22,7 +22,10 @@ import com.google.common.base.Preconditions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.ServiceLoader;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 import org.apache.pinot.spi.config.table.ColumnPartitionConfig;
@@ -44,6 +47,13 @@ public final class PartitionFunctionExprCompiler {
   // Collapses any run of internal whitespace (e.g. "a  +  b") to a single space so that segment-vs-config
   // comparisons of canonicalized expressions don't disagree on whitespace alone.
   private static final Pattern INTERNAL_WS = Pattern.compile("\\s+");
+
+  // Cache compiled pipelines so a broker/server with thousands of segments sharing the same partition expression
+  // only Calcite-parses the expression once. PartitionPipeline is stateless except for per-thread scratch arrays in
+  // its inner ExecutableNode tree, so the cached instance is safe to share across multiple PartitionPipelineFunction
+  // wrappers (each wrapper applies its own numPartitions at normalization time). Cache size is bounded by unique
+  // (rawColumn, inputType, canonicalExpr, normalizer) tuples — typically a handful per cluster.
+  private static final ConcurrentMap<PipelineCacheKey, PartitionPipeline> PIPELINE_CACHE = new ConcurrentHashMap<>();
 
   private PartitionFunctionExprCompiler() {
   }
@@ -93,8 +103,11 @@ public final class PartitionFunctionExprCompiler {
 
     String canonicalExpr = canonicalize(functionExpr);
     boolean isBytesInput = inputType == PartitionValueType.BYTES;
-    FunctionEvaluator evaluator = EvaluatorFactoryHolder.INSTANCE.compile(rawColumn, canonicalExpr);
-    return new PartitionPipeline(rawColumn, isBytesInput, canonicalExpr, partitionIdNormalizer, evaluator);
+    PipelineCacheKey cacheKey = new PipelineCacheKey(rawColumn, isBytesInput, canonicalExpr, partitionIdNormalizer);
+    return PIPELINE_CACHE.computeIfAbsent(cacheKey, k -> {
+      FunctionEvaluator evaluator = EvaluatorFactoryHolder.INSTANCE.compile(rawColumn, canonicalExpr);
+      return new PartitionPipeline(rawColumn, isBytesInput, canonicalExpr, partitionIdNormalizer, evaluator);
+    });
   }
 
   public static PartitionPipelineFunction compilePartitionFunction(String rawColumn, String functionExpr,
@@ -133,5 +146,40 @@ public final class PartitionFunctionExprCompiler {
     String afterClose = CLOSE_PAREN_WS.matcher(afterOpen).replaceAll(")");
     String afterComma = COMMA_WS.matcher(afterClose).replaceAll(", ");
     return INTERNAL_WS.matcher(afterComma).replaceAll(" ");
+  }
+
+  private static final class PipelineCacheKey {
+    private final String _rawColumn;
+    private final boolean _isBytesInput;
+    private final String _canonicalExpr;
+    private final String _normalizerName;
+
+    PipelineCacheKey(String rawColumn, boolean isBytesInput, String canonicalExpr,
+        @Nullable PartitionIntNormalizer normalizer) {
+      _rawColumn = rawColumn;
+      _isBytesInput = isBytesInput;
+      _canonicalExpr = canonicalExpr;
+      _normalizerName = normalizer != null ? normalizer.name() : null;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+      if (this == obj) {
+        return true;
+      }
+      if (!(obj instanceof PipelineCacheKey)) {
+        return false;
+      }
+      PipelineCacheKey other = (PipelineCacheKey) obj;
+      return _isBytesInput == other._isBytesInput
+          && _rawColumn.equals(other._rawColumn)
+          && _canonicalExpr.equals(other._canonicalExpr)
+          && Objects.equals(_normalizerName, other._normalizerName);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(_rawColumn, _isBytesInput, _canonicalExpr, _normalizerName);
+    }
   }
 }
