@@ -122,7 +122,9 @@ public class HashFunctions {
    * @param input the byte array to hash
    * @return 32-bit hash
    */
-  @ScalarFunction(names = {"murmur2"})
+  // "murmurHash2" preserves the canonical name auto-derived on master before this PR introduced the "murmur2" alias.
+  // Existing user SQL queries / ingestion transforms calling murmurHash2(byte_col) must continue to resolve.
+  @ScalarFunction(names = {"murmur2", "murmurHash2"})
   public static int murmurHash2(byte[] input) {
     return MurmurHashFunctions.murmurHash2(input);
   }
@@ -240,7 +242,8 @@ public class HashFunctions {
    * @param input the byte array to hash
    * @return 32-bit hash
    */
-  @ScalarFunction(names = {"fnv1_32"})
+  // "fnv1Hash32" preserves the canonical name auto-derived on master before this PR introduced the "fnv1_32" alias.
+  @ScalarFunction(names = {"fnv1_32", "fnv1Hash32"})
   public static int fnv1Hash32(byte[] input) {
     return FnvHashFunctions.fnv1Hash32(input);
   }
@@ -262,7 +265,8 @@ public class HashFunctions {
    * @param input the byte array to hash
    * @return 32-bit hash
    */
-  @ScalarFunction(names = {"fnv1a_32"})
+  // "fnv1aHash32" preserves the canonical name auto-derived on master before this PR introduced the "fnv1a_32" alias.
+  @ScalarFunction(names = {"fnv1a_32", "fnv1aHash32"})
   public static int fnv1aHash32(byte[] input) {
     return FnvHashFunctions.fnv1aHash32(input);
   }
@@ -284,7 +288,8 @@ public class HashFunctions {
    * @param input the byte array to hash
    * @return 64-bit hash
    */
-  @ScalarFunction(names = {"fnv1_64"})
+  // "fnv1Hash64" preserves the canonical name auto-derived on master before this PR introduced the "fnv1_64" alias.
+  @ScalarFunction(names = {"fnv1_64", "fnv1Hash64"})
   public static long fnv1Hash64(byte[] input) {
     return FnvHashFunctions.fnv1Hash64(input);
   }
@@ -306,7 +311,8 @@ public class HashFunctions {
    * @param input the byte array to hash
    * @return 64-bit hash
    */
-  @ScalarFunction(names = {"fnv1a_64"})
+  // "fnv1aHash64" preserves the canonical name auto-derived on master before this PR introduced the "fnv1a_64" alias.
+  @ScalarFunction(names = {"fnv1a_64", "fnv1aHash64"})
   public static long fnv1aHash64(byte[] input) {
     return FnvHashFunctions.fnv1aHash64(input);
   }
