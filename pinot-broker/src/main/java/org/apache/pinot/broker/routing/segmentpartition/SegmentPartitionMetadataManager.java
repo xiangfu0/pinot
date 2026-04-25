@@ -42,6 +42,7 @@ import org.apache.pinot.core.routing.TablePartitionReplicatedServersInfo.Partiti
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.segment.spi.partition.PartitionFunctionFactory;
 import org.apache.pinot.spi.config.table.ColumnPartitionConfig;
+import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.utils.CommonConstants.Helix.StateModel.SegmentStateModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,9 +77,21 @@ public class SegmentPartitionMetadataManager implements SegmentZkMetadataFetchLi
 
   public SegmentPartitionMetadataManager(String tableNameWithType, String partitionColumn,
       ColumnPartitionConfig columnPartitionConfig) {
+    this(tableNameWithType, partitionColumn, columnPartitionConfig, null);
+  }
+
+  /**
+   * Preferred constructor: pass the partition column's {@link FieldSpec} so expression-mode pipelines on BYTES
+   * columns are compiled with BYTES input. The {@code FieldSpec}-less overload above always compiles with STRING
+   * input, which silently disagrees with ingestion partition ids on BYTES columns.
+   */
+  public SegmentPartitionMetadataManager(String tableNameWithType, String partitionColumn,
+      ColumnPartitionConfig columnPartitionConfig, @Nullable FieldSpec fieldSpec) {
     _tableNameWithType = tableNameWithType;
     _partitionColumn = partitionColumn;
-    _partitionFunction = PartitionFunctionFactory.getPartitionFunction(partitionColumn, columnPartitionConfig);
+    _partitionFunction = fieldSpec != null
+        ? PartitionFunctionFactory.getPartitionFunction(partitionColumn, columnPartitionConfig, fieldSpec)
+        : PartitionFunctionFactory.getPartitionFunction(partitionColumn, columnPartitionConfig);
     _numPartitions = _partitionFunction.getNumPartitions();
   }
 

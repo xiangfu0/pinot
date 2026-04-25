@@ -112,10 +112,12 @@ public class PartitionFunctionFactory {
   /**
    * Returns the legacy (name-mode) partition function for the given config.
    *
-   * @throws IllegalArgumentException if {@code config.getFunctionExpr()} is non-null; use
-   *                                  {@link #getPartitionFunction(String, ColumnPartitionConfig)} instead for
-   *                                  expression-mode configs.
+   * @deprecated Expression-mode configs require a column name to compile the pipeline. This overload throws on
+   *     expression-mode configs; prefer {@link #getPartitionFunction(String, ColumnPartitionConfig)} or
+   *     {@link #getPartitionFunction(String, ColumnPartitionConfig, FieldSpec)} which support both modes.
+   * @throws IllegalArgumentException if {@code config.getFunctionExpr()} is non-null.
    */
+  @Deprecated
   public static PartitionFunction getPartitionFunction(ColumnPartitionConfig config) {
     Preconditions.checkNotNull(config, "Column partition config must be configured");
     Preconditions.checkArgument(config.getFunctionExpr() == null,
@@ -126,10 +128,11 @@ public class PartitionFunctionFactory {
   /**
    * Returns the legacy (name-mode) partition function for the given segment metadata.
    *
-   * @throws IllegalArgumentException if {@code metadata.getFunctionExpr()} is non-null; use
-   *                                  {@link #getPartitionFunction(String, ColumnPartitionMetadata)} instead for
-   *                                  expression-mode metadata.
+   * @deprecated Expression-mode metadata requires a column name to compile the pipeline. This overload throws on
+   *     expression-mode metadata; prefer {@link #getPartitionFunction(String, ColumnPartitionMetadata)}.
+   * @throws IllegalArgumentException if {@code metadata.getFunctionExpr()} is non-null.
    */
+  @Deprecated
   public static PartitionFunction getPartitionFunction(ColumnPartitionMetadata metadata) {
     Preconditions.checkNotNull(metadata, "Column partition metadata must be configured");
     Preconditions.checkArgument(metadata.getFunctionExpr() == null,

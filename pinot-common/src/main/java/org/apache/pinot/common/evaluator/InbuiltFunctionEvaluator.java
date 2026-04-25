@@ -39,11 +39,10 @@ import org.apache.pinot.spi.data.readers.GenericRow;
  * The expression is compiled once into an {@link ExecutableFunctionEvaluator.ExecutableNode} tree
  * whose nodes handle constants, column reads, logical operators, and function calls.
  *
- * <p><b>Thread-safety:</b> Instances are thread-safe for concurrent invocation. Each
- * {@link FunctionExecutionNode} maintains a per-thread argument scratch array via
- * {@link ThreadLocal}, so multiple threads can call {@code evaluate} on the same compiled tree
- * without sharing mutable state. A single call chain on one thread must not invoke {@code evaluate}
- * recursively on the same node instance.
+ * <p><b>Thread-safety:</b> Instances are safe for both concurrent invocation by multiple threads and
+ * re-entrant invocation on a single thread. Each {@link FunctionExecutionNode} allocates a fresh
+ * argument scratch array per {@code execute} call, so cross-thread sharing and recursive invocation
+ * through nested user-defined scalar functions cannot corrupt argument state.
  */
 public class InbuiltFunctionEvaluator extends ExecutableFunctionEvaluator {
 
@@ -114,27 +113,25 @@ public class InbuiltFunctionEvaluator extends ExecutableFunctionEvaluator {
 
   /**
    * Executes a Pinot-registry function via {@link FunctionInvoker}, with null propagation and
-   * type conversion.  Uses a per-thread argument scratch array via {@link ThreadLocal} so that concurrent
-   * invocations of the same node instance from multiple threads do not share mutable state.
+   * type conversion. Allocates a fresh argument scratch array per {@code execute} call, so multiple threads
+   * and re-entrant invocations of the same node instance do not share mutable state.
    */
   private static class FunctionExecutionNode implements ExecutableNode {
     final FunctionInvoker _functionInvoker;
     final FunctionInfo _functionInfo;
     final ExecutableNode[] _argumentNodes;
-    final ThreadLocal<Object[]> _arguments;
 
     FunctionExecutionNode(FunctionInfo functionInfo, ExecutableNode[] argumentNodes) {
       _functionInvoker = new FunctionInvoker(functionInfo);
       _functionInfo = functionInfo;
       _argumentNodes = argumentNodes;
-      _arguments = ThreadLocal.withInitial(() -> new Object[argumentNodes.length]);
     }
 
     @Override
     public Object execute(GenericRow row) {
       try {
-        Object[] arguments = _arguments.get();
         int numArguments = _argumentNodes.length;
+        Object[] arguments = new Object[numArguments];
         for (int i = 0; i < numArguments; i++) {
           arguments[i] = _argumentNodes[i].execute(row);
         }
@@ -160,8 +157,8 @@ public class InbuiltFunctionEvaluator extends ExecutableFunctionEvaluator {
     @Override
     public Object execute(Object[] values) {
       try {
-        Object[] arguments = _arguments.get();
         int numArguments = _argumentNodes.length;
+        Object[] arguments = new Object[numArguments];
         for (int i = 0; i < numArguments; i++) {
           arguments[i] = _argumentNodes[i].execute(values);
         }

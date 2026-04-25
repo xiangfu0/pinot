@@ -59,14 +59,14 @@ public final class PartitionFunctionExprCompiler {
   // Bounded by maximumSize so that long-lived processes with churning table configs (creates/drops/expression edits)
   // don't accumulate compiled pipelines indefinitely. The cap is sized for the realistic case of a handful of
   // distinct (column, expression) tuples per table × hundreds of tables.
-  // expireAfterAccess provides eventual invalidation when a table is dropped or a partition expression is edited
-  // (no caller currently emits explicit invalidation events). 1 hour is long enough that the cache helps, short
-  // enough that stale entries from dropped tables don't pin memory indefinitely.
+  // expireAfterWrite (not access) ensures that an edited expression (rare, but legitimate during schema evolution)
+  // takes effect within the TTL even on a hot table whose cache entry would otherwise never expire. Combined with
+  // maximumSize, this caps both staleness and memory.
   private static final long PIPELINE_CACHE_MAX_SIZE = 10_000L;
   private static final long PIPELINE_CACHE_EXPIRE_HOURS = 1L;
   private static final Cache<PipelineCacheKey, PartitionPipeline> PIPELINE_CACHE = CacheBuilder.newBuilder()
       .maximumSize(PIPELINE_CACHE_MAX_SIZE)
-      .expireAfterAccess(PIPELINE_CACHE_EXPIRE_HOURS, TimeUnit.HOURS)
+      .expireAfterWrite(PIPELINE_CACHE_EXPIRE_HOURS, TimeUnit.HOURS)
       .build();
 
   private PartitionFunctionExprCompiler() {

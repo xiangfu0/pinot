@@ -51,9 +51,9 @@ import static java.nio.charset.StandardCharsets.UTF_8;
  *   <li>{@code murmur2("hello")} — converts {@code "hello"} to UTF-8 bytes, then hashes</li>
  * </ol>
  *
- * <p><b>Thread-safety:</b> Instances are thread-safe. Each {@link PartitionFunctionExecutionNode} uses a
- * {@link ThreadLocal} scratch array so that concurrent invocations from different threads do not share mutable
- * state. A single call chain on one thread is not reentrant.
+ * <p><b>Thread-safety:</b> Instances are safe for both concurrent invocation by multiple threads and
+ * re-entrant invocation on a single thread. Each {@link PartitionFunctionExecutionNode} allocates a fresh
+ * argument scratch array per {@code execute} call.
  */
 public final class PartitionFunctionEvaluator extends ExecutableFunctionEvaluator {
 
@@ -127,27 +127,25 @@ public final class PartitionFunctionEvaluator extends ExecutableFunctionEvaluato
    * {@code byte[]} using UTF-8 encoding instead of hex-decoding, matching ingestion semantics for partition
    * expressions.
    *
-   * <p>Uses a per-thread {@link ThreadLocal} argument scratch array for thread-safety, following the same pattern
-   * as {@link ExecutableFunctionEvaluator.FunctionNode}.
+   * <p>Allocates a fresh argument scratch array per {@code execute} call so that concurrent invocations from
+   * multiple threads, and re-entrant invocations on a single thread, do not share mutable state.
    */
   private static class PartitionFunctionExecutionNode implements ExecutableNode {
     private final FunctionInvoker _functionInvoker;
     private final FunctionInfo _functionInfo;
     private final ExecutableNode[] _argumentNodes;
-    private final ThreadLocal<Object[]> _arguments;
 
     PartitionFunctionExecutionNode(FunctionInfo functionInfo, ExecutableNode[] argumentNodes) {
       _functionInvoker = new FunctionInvoker(functionInfo);
       _functionInfo = functionInfo;
       _argumentNodes = argumentNodes;
-      _arguments = ThreadLocal.withInitial(() -> new Object[_argumentNodes.length]);
     }
 
     @Override
     public Object execute(GenericRow row) {
       try {
-        Object[] arguments = _arguments.get();
         int numArguments = _argumentNodes.length;
+        Object[] arguments = new Object[numArguments];
         for (int i = 0; i < numArguments; i++) {
           arguments[i] = _argumentNodes[i].execute(row);
         }
@@ -160,8 +158,8 @@ public final class PartitionFunctionEvaluator extends ExecutableFunctionEvaluato
     @Override
     public Object execute(Object[] values) {
       try {
-        Object[] arguments = _arguments.get();
         int numArguments = _argumentNodes.length;
+        Object[] arguments = new Object[numArguments];
         for (int i = 0; i < numArguments; i++) {
           arguments[i] = _argumentNodes[i].execute(values);
         }

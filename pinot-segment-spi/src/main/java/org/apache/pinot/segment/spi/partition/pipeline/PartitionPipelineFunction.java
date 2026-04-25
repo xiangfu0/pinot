@@ -58,12 +58,15 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
 
   private final PartitionPipeline _pipeline;
   private final int _numPartitions;
+  // Cached BigInteger.valueOf(_numPartitions) to avoid per-row allocation when the expression returns BigInteger.
+  private final BigInteger _numPartitionsBig;
 
   public PartitionPipelineFunction(PartitionPipeline pipeline, int numPartitions) {
     Preconditions.checkNotNull(pipeline, "Partition pipeline must be configured");
     Preconditions.checkArgument(numPartitions > 0, "Number of partitions must be > 0");
     _pipeline = pipeline;
     _numPartitions = numPartitions;
+    _numPartitionsBig = BigInteger.valueOf(numPartitions);
   }
 
   public PartitionPipeline getPartitionPipeline() {
@@ -187,7 +190,7 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
     // arithmetic to preserve the mathematical result, then narrow safely.
     if (num instanceof BigInteger) {
       BigInteger bi = (BigInteger) num;
-      BigInteger reduced = bi.mod(BigInteger.valueOf(_numPartitions));
+      BigInteger reduced = bi.mod(_numPartitionsBig);
       // After mod with positive numPartitions, the value is in [0, numPartitions); intValueExact is safe.
       return intNormalizer.getPartitionId(reduced.intValueExact(), _numPartitions);
     }

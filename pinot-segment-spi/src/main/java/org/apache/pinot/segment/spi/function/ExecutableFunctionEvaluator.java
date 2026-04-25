@@ -31,11 +31,11 @@ import org.apache.pinot.spi.data.readers.GenericRow;
  * {@link ExecutableNode}. This class owns the repeated row/value execution logic so ingestion and partition paths do
  * not maintain separate node evaluators.
  *
- * <p><b>Thread-safety:</b> Once constructed, an {@code ExecutableFunctionEvaluator} instance is safe to use
- * concurrently from multiple threads.  {@link FunctionNode} maintains per-thread argument scratch arrays via
- * {@link ThreadLocal}, so concurrent invocations do not share mutable state.  A single call chain, however, is
- * not reentrant: do not invoke {@code evaluate} recursively on the same thread with the same node instance.
- * Subclasses that extend or wrap this evaluator must preserve these guarantees.
+ * <p><b>Thread-safety:</b> Once constructed, an {@code ExecutableFunctionEvaluator} instance is safe for
+ * concurrent invocation by multiple threads and for re-entrant invocation on a single thread.
+ * {@link FunctionNode} allocates a fresh argument scratch array per {@code execute} call, so neither
+ * cross-thread sharing nor recursive invocation through nested user-defined scalar functions can corrupt
+ * argument state.
  */
 public class ExecutableFunctionEvaluator implements org.apache.pinot.spi.function.FunctionEvaluator {
   /**
@@ -166,23 +166,27 @@ public class ExecutableFunctionEvaluator implements org.apache.pinot.spi.functio
 
   /**
    * Executes a bound function after evaluating all child arguments.
+   *
+   * <p>Allocates a fresh {@code Object[argumentNodes.length]} per {@code execute} call. This is safe under both
+   * concurrent invocation by multiple threads and re-entrant invocation on a single thread (e.g. when a partition
+   * expression nested inside a transform function recurses through the same compiled tree). The allocation is
+   * small and short-lived; HotSpot's escape analysis routinely scalar-replaces such arrays so the per-row cost
+   * is negligible relative to the underlying function invocation.
    */
   public static class FunctionNode implements ExecutableNode {
     private final String _functionName;
     private final Invoker _invoker;
     private final ExecutableNode[] _argumentNodes;
-    private final ThreadLocal<Object[]> _arguments;
 
     public FunctionNode(String functionName, Invoker invoker, ExecutableNode[] argumentNodes) {
       _functionName = functionName;
       _invoker = invoker;
       _argumentNodes = argumentNodes;
-      _arguments = ThreadLocal.withInitial(() -> new Object[argumentNodes.length]);
     }
 
     @Override
     public Object execute(GenericRow row) {
-      Object[] arguments = _arguments.get();
+      Object[] arguments = new Object[_argumentNodes.length];
       for (int i = 0; i < _argumentNodes.length; i++) {
         arguments[i] = _argumentNodes[i].execute(row);
       }
@@ -191,7 +195,7 @@ public class ExecutableFunctionEvaluator implements org.apache.pinot.spi.functio
 
     @Override
     public Object execute(Object[] values) {
-      Object[] arguments = _arguments.get();
+      Object[] arguments = new Object[_argumentNodes.length];
       for (int i = 0; i < _argumentNodes.length; i++) {
         arguments[i] = _argumentNodes[i].execute(values);
       }
