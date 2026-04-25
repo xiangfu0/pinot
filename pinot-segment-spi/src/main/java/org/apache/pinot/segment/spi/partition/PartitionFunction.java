@@ -103,6 +103,15 @@ public interface PartitionFunction extends Serializable {
     return null;
   }
 
+  /**
+   * Reports the int-normalizer used by this partition function (e.g. {@code POSITIVE_MODULO}, {@code ABS},
+   * {@code MASK}). The returned string is used by the framework only for identity / staleness matching between
+   * config-side and segment-side function metadata; it does not drive runtime normalization. Legacy partition
+   * functions (Murmur, FNV, HashCode, ByteArray, Modulo) report the closest matching normalizer name even though
+   * their internal implementation may differ subtly at edge cases (e.g. Kafka-style abs handling
+   * {@code Integer.MIN_VALUE → 0} vs strict mod-then-abs). Expression-mode pipelines drive normalization through
+   * {@code PartitionIntNormalizer} directly and are the only code path where this value is authoritative.
+   */
   @JsonIgnore
   @Nullable
   default String getPartitionIdNormalizer() {
