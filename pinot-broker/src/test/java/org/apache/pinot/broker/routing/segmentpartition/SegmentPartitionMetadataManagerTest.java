@@ -354,6 +354,44 @@ public class SegmentPartitionMetadataManagerTest extends ControllerTest {
     assertTrue(tablePartitionReplicatedServersInfo.getSegmentsWithInvalidPartition().isEmpty());
   }
 
+  /**
+   * Regression for commit 28546f1523. The broker compiles its config-side functionExpr through the canonicalize()
+   * pipeline (lowercased, spaces stripped) but segments may have been written with mixed-case expressions by an
+   * older node or a direct ZK write. The match check must be case-insensitive so such segments are still routed
+   * via partition-aware pruning instead of silently degrading to scatter-gather.
+   */
+  @Test
+  public void testPartitionMetadataManagerProcessingWithMixedCaseFunctionExpr() {
+    ExternalView externalView = new ExternalView(OFFLINE_TABLE_NAME);
+    Map<String, Map<String, String>> segmentAssignment = externalView.getRecord().getMapFields();
+    Set<String> onlineSegments = new HashSet<>();
+    IdealState idealState = new IdealState(OFFLINE_TABLE_NAME);
+    String configExpr = "fnv1a_32(md5(" + PARTITION_COLUMN + "))";
+    String mixedCaseSegmentExpr = "FNV1A_32(MD5(" + PARTITION_COLUMN + "))";
+    String segment = "mixedCaseSegment";
+
+    SegmentPartitionMetadataManager partitionMetadataManager =
+        new SegmentPartitionMetadataManager(OFFLINE_TABLE_NAME, PARTITION_COLUMN,
+            ColumnPartitionConfig.forFunctionExpr(configExpr, 8, "MASK"));
+    SegmentZkMetadataFetcher segmentZkMetadataFetcher =
+        new SegmentZkMetadataFetcher(OFFLINE_TABLE_NAME, _propertyStore);
+    segmentZkMetadataFetcher.register(partitionMetadataManager);
+    segmentZkMetadataFetcher.init(idealState, externalView, onlineSegments);
+
+    onlineSegments.add(segment);
+    segmentAssignment.put(segment, Collections.singletonMap(SERVER_0, ONLINE));
+    setSegmentZKMetadata(segment, PartitionPipelineFunction.NAME, 8, 1, mixedCaseSegmentExpr, "MASK", 0L);
+    segmentZkMetadataFetcher.onAssignmentChange(idealState, externalView, onlineSegments);
+
+    TablePartitionReplicatedServersInfo tablePartitionReplicatedServersInfo =
+        partitionMetadataManager.getTablePartitionReplicatedServersInfo();
+    assertEquals(tablePartitionReplicatedServersInfo.getPartitionInfoMap()[1]._segments,
+        Collections.singleton(segment),
+        "Segment with mixed-case functionExpr must still match the canonicalized config expr");
+    assertTrue(tablePartitionReplicatedServersInfo.getSegmentsWithInvalidPartition().isEmpty(),
+        "Segment must not be flagged as invalid solely because its expr was written in mixed case");
+  }
+
   private void setSegmentZKMetadata(String segment, String partitionFunction, int numPartitions, int partitionId,
       long creationTimeMs) {
     setSegmentZKMetadata(segment, partitionFunction, numPartitions, partitionId, null, null, creationTimeMs);
