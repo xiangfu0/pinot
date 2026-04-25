@@ -60,6 +60,9 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
   private final int _numPartitions;
   // Cached BigInteger.valueOf(_numPartitions) to avoid per-row allocation when the expression returns BigInteger.
   private final BigInteger _numPartitionsBig;
+  // Cache the IntNormalizer so the per-row hot path skips the @Nullable getter lookup + Preconditions.checkState.
+  // The constructor enforces non-null below; this is then a class invariant for the wrapper.
+  private final PartitionIntNormalizer _intNormalizer;
 
   public PartitionPipelineFunction(PartitionPipeline pipeline, int numPartitions) {
     Preconditions.checkNotNull(pipeline, "Partition pipeline must be configured");
@@ -73,6 +76,7 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
     _pipeline = pipeline;
     _numPartitions = numPartitions;
     _numPartitionsBig = BigInteger.valueOf(numPartitions);
+    _intNormalizer = pipeline.getIntNormalizer();
   }
 
   public PartitionPipeline getPartitionPipeline() {
@@ -89,10 +93,12 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
     // Probe set covers numeric strings, alpha strings, raw bytes (for BYTES input), and null. The null sample
     // mirrors the runtime ingestion path that already handles nulls, so the validation also exercises that the
     // pipeline does not blow up on null input. Non-null samples are checked for non-numeric output types.
+    // Track non-null-probe success separately: a pipeline that only succeeds on null (e.g. "case when col is null
+    // then 0 else fail() end") would otherwise pass validation and crash on the first real row.
     Object[] samples = _pipeline.isBytesInput()
         ? new Object[]{new byte[]{0}, new byte[]{1, 2, 3}, new byte[0], null}
         : new Object[]{"1", "0", "abc", null};
-    boolean anyProbeSucceeded = false;
+    boolean anyNonNullProbeSucceeded = false;
     RuntimeException lastFailure = null;
     for (Object sample : samples) {
       Object probe;
@@ -102,17 +108,19 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
         lastFailure = e;
         continue;
       }
-      anyProbeSucceeded = true;
+      if (sample != null) {
+        anyNonNullProbeSucceeded = true;
+      }
       if (probe == null || probe instanceof Number) {
         continue;
       }
       throw new IllegalArgumentException(
           "Partition pipeline must produce INT or LONG output, got: " + javaClassToTypeName(probe.getClass()));
     }
-    if (!anyProbeSucceeded) {
+    if (!anyNonNullProbeSucceeded) {
       throw new IllegalArgumentException(
-          "Partition pipeline for column '" + _pipeline.getRawColumn() + "' failed to evaluate against any sample "
-              + "input; check the expression is well-formed and accepts the column's stored type. Last error: "
+          "Partition pipeline for column '" + _pipeline.getRawColumn() + "' failed to evaluate against any non-null "
+              + "sample input; check the expression is well-formed and accepts the column's stored type. Last error: "
               + (lastFailure != null ? lastFailure.getMessage() : "unknown"));
     }
   }
@@ -187,10 +195,7 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
               + "(|x| < 2^53), got: %s (%s); cast the expression result to LONG explicitly to avoid this",
           _pipeline.getRawColumn(), result, result.getClass().getSimpleName());
     }
-    PartitionIntNormalizer intNormalizer = _pipeline.getIntNormalizer();
-    Preconditions.checkState(intNormalizer != null,
-        "Integral-output partition pipeline for column '%s' must have an INT normalizer",
-        _pipeline.getRawColumn());
+    // _intNormalizer is non-null by class invariant (enforced in the constructor).
     // BigInteger gets a dedicated path: Number.longValue() silently truncates to the low 64 bits when the magnitude
     // overflows Long, producing a wrap-around partition id. Reduce modulo numPartitions while still in BigInteger
     // arithmetic to preserve the mathematical result, then narrow safely.
@@ -198,12 +203,12 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
       BigInteger bi = (BigInteger) num;
       BigInteger reduced = bi.mod(_numPartitionsBig);
       // After mod with positive numPartitions, the value is in [0, numPartitions); intValueExact is safe.
-      return intNormalizer.getPartitionId(reduced.intValueExact(), _numPartitions);
+      return _intNormalizer.getPartitionId(reduced.intValueExact(), _numPartitions);
     }
     if (num instanceof Long || num instanceof Float || num instanceof Double) {
-      return intNormalizer.getPartitionId(num.longValue(), _numPartitions);
+      return _intNormalizer.getPartitionId(num.longValue(), _numPartitions);
     }
-    return intNormalizer.getPartitionId(num.intValue(), _numPartitions);
+    return _intNormalizer.getPartitionId(num.intValue(), _numPartitions);
   }
 
   @Override

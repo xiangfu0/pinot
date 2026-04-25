@@ -1851,7 +1851,7 @@ public abstract class BaseTableDataManager implements TableDataManager {
           }
         }
         if (partitionFunction.getNumPartitions() != expectedPartitionFunction.getNumPartitions()) {
-          LOGGER.debug("tableNameWithType: {}, columnName: {},, segmentName: {}, change: num partitions",
+          LOGGER.debug("tableNameWithType: {}, columnName: {}, segmentName: {}, change: num partitions",
               tableNameWithType, columnName, segmentName);
           return new StaleSegment(segmentName, true, "num partitions changed: " + columnName);
         }

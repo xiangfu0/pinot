@@ -94,8 +94,12 @@ public final class PartitionFunctionExprCompiler {
       if (factories.size() == 1) {
         return factories.get(0);
       }
+      // Match by FQN, not getSimpleName(): a user-supplied factory in a different package with the same simple name
+      // would silently shadow the real built-in. Hard-coding the FQN here is acceptable because pinot-common is
+      // always on the broker/server/controller classpath.
+      String inbuiltFqn = "org.apache.pinot.common.evaluator.InbuiltPartitionEvaluatorFactory";
       for (PartitionEvaluatorFactory f : factories) {
-        if (f.getClass().getSimpleName().equals("InbuiltPartitionEvaluatorFactory")) {
+        if (f.getClass().getName().equals(inbuiltFqn)) {
           LOGGER.info("Found {} PartitionEvaluatorFactory implementations on the classpath: {}; preferring {}",
               factories.size(), factories, f.getClass().getName());
           return f;
