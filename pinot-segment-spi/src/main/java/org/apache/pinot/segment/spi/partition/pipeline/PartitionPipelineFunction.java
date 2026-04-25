@@ -23,6 +23,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
 import java.math.BigInteger;
 import java.util.List;
+import java.util.Locale;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.readers.GenericRow;
@@ -58,6 +59,50 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
 
   public PartitionPipeline getPartitionPipeline() {
     return _pipeline;
+  }
+
+  /**
+   * Validates that the compiled expression produces an integral numeric output by probing it with a sample value.
+   * Throws {@link IllegalArgumentException} if the output is a non-numeric type (e.g. STRING from {@code md5(col)}).
+   * If the probe itself throws, validation is skipped (best-effort) and runtime evaluation will surface the error.
+   */
+  public void validateOutputType() {
+    Object probe;
+    try {
+      probe = _pipeline.evaluate(new Object[]{"1"});
+    } catch (RuntimeException e) {
+      return;
+    }
+    if (probe == null || probe instanceof Number) {
+      return;
+    }
+    throw new IllegalArgumentException(
+        "Partition pipeline must produce INT or LONG output, got: " + javaClassToTypeName(probe.getClass()));
+  }
+
+  private static String javaClassToTypeName(Class<?> cls) {
+    if (cls == String.class) {
+      return "STRING";
+    }
+    if (cls == Integer.class) {
+      return "INT";
+    }
+    if (cls == Long.class) {
+      return "LONG";
+    }
+    if (cls == Float.class) {
+      return "FLOAT";
+    }
+    if (cls == Double.class) {
+      return "DOUBLE";
+    }
+    if (cls == byte[].class) {
+      return "BYTES";
+    }
+    if (cls == Boolean.class) {
+      return "BOOLEAN";
+    }
+    return cls.getSimpleName().toUpperCase(Locale.ROOT);
   }
 
   @Override
