@@ -46,6 +46,9 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
   // Sentinel returned when the partition expression evaluates to null for a given value (e.g. null input).
   // Callers that update per-segment partition sets must skip this value.
   public static final int NULL_RESULT_PARTITION_ID = -1;
+  // Largest integer that Double can represent exactly: any |x| > 2^53 is implicitly "integral" because the mantissa
+  // cannot hold the fractional bit, but multiple distinct longs collapse to the same double in this range.
+  private static final double MAX_PRECISE_DOUBLE_INTEGRAL = 1L << 53;
 
   private final PartitionPipeline _pipeline;
   private final int _numPartitions;
@@ -62,22 +65,38 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
   }
 
   /**
-   * Validates that the compiled expression produces an integral numeric output by probing it with a sample value.
-   * Throws {@link IllegalArgumentException} if the output is a non-numeric type (e.g. STRING from {@code md5(col)}).
-   * If the probe itself throws, validation is skipped (best-effort) and runtime evaluation will surface the error.
+   * Validates that the compiled expression produces an integral numeric output by probing it with several sample
+   * values that cover common input shapes (numeric strings, alpha strings, raw bytes). Throws
+   * {@link IllegalArgumentException} if at least one probe completes and the output is non-numeric (e.g. STRING from
+   * {@code md5(col)}), or if every probe throws (cannot determine output type — likely a misconfigured pipeline).
    */
   public void validateOutputType() {
-    Object probe;
-    try {
-      probe = _pipeline.evaluate(new Object[]{"1"});
-    } catch (RuntimeException e) {
-      return;
+    Object[] samples = _pipeline.isBytesInput()
+        ? new Object[]{new byte[]{0}, new byte[]{1, 2, 3}, new byte[0]}
+        : new Object[]{"1", "0", "abc"};
+    boolean anyProbeSucceeded = false;
+    RuntimeException lastFailure = null;
+    for (Object sample : samples) {
+      Object probe;
+      try {
+        probe = _pipeline.evaluate(new Object[]{sample});
+      } catch (RuntimeException e) {
+        lastFailure = e;
+        continue;
+      }
+      anyProbeSucceeded = true;
+      if (probe == null || probe instanceof Number) {
+        continue;
+      }
+      throw new IllegalArgumentException(
+          "Partition pipeline must produce INT or LONG output, got: " + javaClassToTypeName(probe.getClass()));
     }
-    if (probe == null || probe instanceof Number) {
-      return;
+    if (!anyProbeSucceeded) {
+      throw new IllegalArgumentException(
+          "Partition pipeline for column '" + _pipeline.getRawColumn() + "' failed to evaluate against any sample "
+              + "input; check the expression is well-formed and accepts the column's stored type. Last error: "
+              + (lastFailure != null ? lastFailure.getMessage() : "unknown"));
     }
-    throw new IllegalArgumentException(
-        "Partition pipeline must produce INT or LONG output, got: " + javaClassToTypeName(probe.getClass()));
   }
 
   private static String javaClassToTypeName(Class<?> cls) {
@@ -138,12 +157,16 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
         _pipeline.getRawColumn(), result.getClass().getSimpleName());
     Number num = (Number) result;
     // Pinot scalar functions commonly box integral arithmetic to Double (e.g. plus(long, long) → Double). Accept
-    // Float/Double iff the value is integral (no fractional part); reject genuinely fractional values since they
-    // cannot map to a stable partition id.
+    // Float/Double iff the value is integral (no fractional part) AND fits within Double's 53-bit mantissa, since
+    // any double with absolute value > 2^53 is implicitly "integral" (mantissa cannot represent the fractional bit)
+    // but maps multiple distinct longs to the same double — silently collapsing partition ids. Reject these and
+    // require the user to cast to LONG explicitly in the expression.
     if (num instanceof Float || num instanceof Double) {
       double d = num.doubleValue();
-      Preconditions.checkState(!Double.isNaN(d) && !Double.isInfinite(d) && d == Math.floor(d),
-          "Partition expression for column '%s' must return an integral value (int/long), got: %s (%s)",
+      Preconditions.checkState(!Double.isNaN(d) && !Double.isInfinite(d) && d == Math.floor(d)
+              && Math.abs(d) <= MAX_PRECISE_DOUBLE_INTEGRAL,
+          "Partition expression for column '%s' must return an integral value within Double precision "
+              + "(|x| <= 2^53), got: %s (%s); cast the expression result to LONG explicitly to avoid this",
           _pipeline.getRawColumn(), result, result.getClass().getSimpleName());
     }
     PartitionIntNormalizer intNormalizer = _pipeline.getIntNormalizer();
@@ -200,10 +223,10 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
     if (inputValue == null) {
       return null;
     }
-    if (inputValue instanceof byte[] && _pipeline.isBytesInput()) {
-      return getPartition((byte[]) inputValue);
-    }
-    return getPartition(FieldSpec.getStringValue(inputValue));
+    int partitionId = (inputValue instanceof byte[] && _pipeline.isBytesInput())
+        ? getPartition((byte[]) inputValue)
+        : getPartition(FieldSpec.getStringValue(inputValue));
+    return partitionId == NULL_RESULT_PARTITION_ID ? null : partitionId;
   }
 
   @Override
@@ -215,10 +238,10 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
     if (inputValue == null) {
       return null;
     }
-    if (inputValue instanceof byte[] && _pipeline.isBytesInput()) {
-      return getPartition((byte[]) inputValue);
-    }
-    return getPartition(FieldSpec.getStringValue(inputValue));
+    int partitionId = (inputValue instanceof byte[] && _pipeline.isBytesInput())
+        ? getPartition((byte[]) inputValue)
+        : getPartition(FieldSpec.getStringValue(inputValue));
+    return partitionId == NULL_RESULT_PARTITION_ID ? null : partitionId;
   }
 
   @Override

@@ -155,10 +155,11 @@ public class PartitionFunctionFactory {
   /**
    * Builds a partition function for the given column with an explicit numPartitions override.
    *
-   * <p><b>CAUTION:</b> For BYTES-typed partition columns this overload always compiles the expression pipeline with
-   * STRING input. Use {@link #getPartitionFunction(String, ColumnPartitionConfig, FieldSpec)} instead so that BYTES
-   * columns receive the correct input type.
+   * @deprecated For BYTES-typed partition columns this overload always compiles the expression pipeline with STRING
+   * input, producing partition ids that disagree with ingestion. Prefer
+   * {@link #getPartitionFunction(String, ColumnPartitionConfig, FieldSpec)}.
    */
+  @Deprecated
   public static PartitionFunction getPartitionFunction(String columnName, ColumnPartitionConfig columnPartitionConfig,
       int numPartitions) {
     Preconditions.checkNotNull(columnPartitionConfig, "Column partition config must be configured");

@@ -212,7 +212,7 @@ public class ColumnPartitionMetadata {
 
   @Nullable
   private static String normalizeOptionalText(@Nullable String value) {
-    return StringUtils.isBlank(value) || "null".equals(value) ? null : value;
+    return StringUtils.isBlank(value) ? null : value;
   }
 
   /**

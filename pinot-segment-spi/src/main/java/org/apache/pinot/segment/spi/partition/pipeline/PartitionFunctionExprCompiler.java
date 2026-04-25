@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.ServiceLoader;
+import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 import org.apache.pinot.spi.config.table.ColumnPartitionConfig;
 import org.apache.pinot.spi.function.FunctionEvaluator;
@@ -33,7 +34,13 @@ import org.apache.pinot.spi.function.FunctionEvaluator;
  * {@link org.apache.pinot.spi.function.FunctionEvaluator} provided by {@link PartitionEvaluatorFactory}.
  */
 public final class PartitionFunctionExprCompiler {
+  // Cap on user-supplied expression length, sized to fit comfortably within ZK / segment metadata size budgets while
+  // allowing realistic chained expressions (e.g. fnv1a_32(md5(lower(trim(col))))).
   private static final int MAX_EXPRESSION_LENGTH = 256;
+  // Pre-compiled patterns for canonicalize(): avoids recompiling the regex on every compile() invocation.
+  private static final Pattern OPEN_PAREN_WS = Pattern.compile("\\s*\\(\\s*");
+  private static final Pattern CLOSE_PAREN_WS = Pattern.compile("\\s*\\)\\s*");
+  private static final Pattern COMMA_WS = Pattern.compile("\\s*,\\s*");
 
   private PartitionFunctionExprCompiler() {
   }
@@ -118,9 +125,9 @@ public final class PartitionFunctionExprCompiler {
    * {@code (}, {@code )}, and {@code ,}.
    */
   static String canonicalize(String expression) {
-    return expression.trim().toLowerCase(Locale.ROOT)
-        .replaceAll("\\s*\\(\\s*", "(")
-        .replaceAll("\\s*\\)\\s*", ")")
-        .replaceAll("\\s*,\\s*", ", ");
+    String lowered = expression.trim().toLowerCase(Locale.ROOT);
+    String afterOpen = OPEN_PAREN_WS.matcher(lowered).replaceAll("(");
+    String afterClose = CLOSE_PAREN_WS.matcher(afterOpen).replaceAll(")");
+    return COMMA_WS.matcher(afterClose).replaceAll(", ");
   }
 }

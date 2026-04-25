@@ -606,13 +606,11 @@ public abstract class BaseSegmentCreator implements SegmentCreator {
 
     PartitionFunction partitionFunction = columnStatistics.getPartitionFunction();
     if (partitionFunction != null) {
-      // Expression-mode functions are identified by the presence of PARTITION_FUNCTION_EXPR in segment metadata.
-      // The legacy PARTITION_FUNCTION name key is omitted for expression-mode to avoid writing a sentinel value
-      // ("FunctionExpr") that pre-feature readers would reject as an unknown function name. Note: segments written
-      // with expression-mode metadata use v7 format and are not readable by older servers regardless of this key.
-      if (partitionFunction.getFunctionExpr() == null) {
-        properties.setProperty(getKeyFor(column, PARTITION_FUNCTION), partitionFunction.getName());
-      }
+      // Always write PARTITION_FUNCTION (function name) to segment metadata. Expression-mode functions write the
+      // sentinel name "FunctionExpr" so that old readers fail fast with IllegalArgumentException
+      // ("No enum constant for: FunctionExpr") rather than silently treating the column as un-partitioned and
+      // degrading to scatter-gather.
+      properties.setProperty(getKeyFor(column, PARTITION_FUNCTION), partitionFunction.getName());
       properties.setProperty(getKeyFor(column, NUM_PARTITIONS), partitionFunction.getNumPartitions());
       if (partitionFunction.getFunctionExpr() != null) {
         properties.setProperty(getKeyFor(column, PARTITION_FUNCTION_EXPR), partitionFunction.getFunctionExpr());

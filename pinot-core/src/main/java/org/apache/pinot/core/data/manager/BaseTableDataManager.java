@@ -1809,13 +1809,19 @@ public abstract class BaseTableDataManager implements TableDataManager {
               tableNameWithType, columnName, segmentName);
           return new StaleSegment(segmentName, true, "partition function name changed: " + columnName);
         }
-        if (!Objects.equals(partitionFunction.getFunctionExpr(), expectedPartitionFunction.getFunctionExpr())) {
+        if (!nullableEqualsIgnoreCase(partitionFunction.getFunctionExpr(),
+            expectedPartitionFunction.getFunctionExpr())) {
           LOGGER.debug("tableNameWithType: {}, columnName: {}, segmentName: {}, change: partition function expr",
               tableNameWithType, columnName, segmentName);
           return new StaleSegment(segmentName, true, "partition function expr changed: " + columnName);
         }
-        if (!Objects.equals(partitionFunction.getPartitionIdNormalizer(),
-            expectedPartitionFunction.getPartitionIdNormalizer())) {
+        // null-tolerant compare: a custom-plugin PartitionFunction inheriting the SPI default returns null for
+        // getPartitionIdNormalizer; treat null on either side as "match" so segments built by such plugins are not
+        // perpetually flagged stale.
+        if (partitionFunction.getPartitionIdNormalizer() != null
+            && expectedPartitionFunction.getPartitionIdNormalizer() != null
+            && !partitionFunction.getPartitionIdNormalizer().equalsIgnoreCase(
+                expectedPartitionFunction.getPartitionIdNormalizer())) {
           LOGGER.debug("tableNameWithType: {}, columnName: {}, segmentName: {}, change: partition id normalizer",
               tableNameWithType, columnName, segmentName);
           return new StaleSegment(segmentName, true, "partition id normalizer changed: " + columnName);
@@ -1858,6 +1864,15 @@ public abstract class BaseTableDataManager implements TableDataManager {
     File indexDir =
         getSegmentDataDir(segmentName, indexLoadingConfig.getSegmentTier(), indexLoadingConfig.getTableConfig());
     return segmentDirectoryLoader.load(indexDir.toURI(), loaderContext);
+  }
+
+  // Case-insensitive null-tolerant string equality. Treats two nulls as equal and a null on either side compared
+  // against a non-null as not equal.
+  private static boolean nullableEqualsIgnoreCase(@Nullable String a, @Nullable String b) {
+    if (a == null) {
+      return b == null;
+    }
+    return b != null && a.equalsIgnoreCase(b);
   }
 
   // CRC check can be performed on both segment CRC and data CRC (if available) based on the ZK property value of
