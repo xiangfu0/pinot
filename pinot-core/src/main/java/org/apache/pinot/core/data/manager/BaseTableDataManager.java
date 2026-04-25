@@ -1815,13 +1815,14 @@ public abstract class BaseTableDataManager implements TableDataManager {
               tableNameWithType, columnName, segmentName);
           return new StaleSegment(segmentName, true, "partition function expr changed: " + columnName);
         }
-        // null-tolerant compare: a custom-plugin PartitionFunction inheriting the SPI default returns null for
-        // getPartitionIdNormalizer; treat null on either side as "match" so segments built by such plugins are not
-        // perpetually flagged stale.
-        if (partitionFunction.getPartitionIdNormalizer() != null
-            && expectedPartitionFunction.getPartitionIdNormalizer() != null
-            && !partitionFunction.getPartitionIdNormalizer().equalsIgnoreCase(
-                expectedPartitionFunction.getPartitionIdNormalizer())) {
+        // Asymmetric null tolerance: a segment built by an older or custom-plugin partition function returns null
+        // from the SPI default getPartitionIdNormalizer (which is fine — tolerate). However, if the segment side
+        // declares a normalizer and the config side does not, the user explicitly cleared the normalizer and the
+        // segment must be rebuilt; same when the two non-null values differ.
+        String segmentNormalizer = partitionFunction.getPartitionIdNormalizer();
+        String configNormalizer = expectedPartitionFunction.getPartitionIdNormalizer();
+        if (segmentNormalizer != null
+            && (configNormalizer == null || !segmentNormalizer.equalsIgnoreCase(configNormalizer))) {
           LOGGER.debug("tableNameWithType: {}, columnName: {}, segmentName: {}, change: partition id normalizer",
               tableNameWithType, columnName, segmentName);
           return new StaleSegment(segmentName, true, "partition id normalizer changed: " + columnName);

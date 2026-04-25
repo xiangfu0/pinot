@@ -886,4 +886,18 @@ public class PartitionFunctionTest {
   private int getMaskPartition(long hash, int numPartitions) {
     return (int) ((hash & Long.MAX_VALUE) % numPartitions);
   }
+
+  /**
+   * Cross-version contract regression: the segment-metadata sentinel "FunctionExpr" written for expression-mode
+   * segments MUST never resolve to a real PartitionFunctionType enum constant. Old readers rely on the enum lookup
+   * throwing IllegalArgumentException to fail fast and skip partition pruning, instead of silently treating the
+   * column as un-partitioned. If anyone adds a "FunctionExpr" enum value, this test guards against the silent
+   * regression in the cross-version fail-fast contract.
+   */
+  @Test
+  public void testFunctionExprSentinelIsNotARealPartitionFunctionType() {
+    expectThrows(IllegalArgumentException.class,
+        () -> PartitionFunctionFactory.PartitionFunctionType.fromString(
+            org.apache.pinot.segment.spi.V1Constants.MetadataKeys.Column.PARTITION_FUNCTION_EXPR_SENTINEL));
+  }
 }

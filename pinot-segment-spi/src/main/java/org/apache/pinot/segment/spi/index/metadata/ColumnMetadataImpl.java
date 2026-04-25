@@ -364,9 +364,15 @@ public class ColumnMetadataImpl implements ColumnMetadata {
       // needed here (only required by the ingestion path). Expression-mode needs the column for the pipeline.
       PartitionFunction partitionFunction;
       if (partitionFunctionExpr != null) {
-        // Pass BYTES input type for BYTES columns so functions receive raw bytes directly.
-        PartitionValueType inputType =
-            storedType == DataType.BYTES ? PartitionValueType.BYTES : PartitionValueType.STRING;
+        // Prefer the explicitly-stored PARTITION_INPUT_TYPE if present (newer segments). Fall back to the
+        // schema-derived type for older segments that pre-date the stored input-type field.
+        String storedInputType = config.getString(Column.getKeyFor(column, Column.PARTITION_INPUT_TYPE), null);
+        PartitionValueType inputType;
+        if (storedInputType != null) {
+          inputType = PartitionValueType.valueOf(storedInputType);
+        } else {
+          inputType = storedType == DataType.BYTES ? PartitionValueType.BYTES : PartitionValueType.STRING;
+        }
         partitionFunction = PartitionFunctionExprCompiler.compilePartitionFunction(column, inputType,
             partitionFunctionExpr, numPartitions, partitionIdNormalizer);
       } else {

@@ -190,6 +190,13 @@ public class V1Constants {
        * contract.
        */
       public static final String PARTITION_FUNCTION_EXPR_SENTINEL = "FunctionExpr";
+      /**
+       * Stored input type for expression-mode partition pipelines (e.g. {@code "BYTES"}). Optional: when absent,
+       * readers derive the input type from the column's stored {@link org.apache.pinot.spi.data.FieldSpec.DataType}.
+       * Writing it explicitly avoids any chance of segment-vs-broker disagreement on the type used to compile the
+       * pipeline (the broker reads {@code inputType} from ZK metadata; the server now reads from segment metadata).
+       */
+      public static final String PARTITION_INPUT_TYPE = "partitionInputType";
 
       /// Old key maintained for backward compatibility
       // Replaced by LENGTH_OF_LONGEST_ELEMENT

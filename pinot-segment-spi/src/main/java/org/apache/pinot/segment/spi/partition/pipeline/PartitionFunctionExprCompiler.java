@@ -19,13 +19,15 @@
 package org.apache.pinot.segment.spi.partition.pipeline;
 
 import com.google.common.base.Preconditions;
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.util.concurrent.UncheckedExecutionException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.ServiceLoader;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
 import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 import org.apache.pinot.spi.config.table.ColumnPartitionConfig;
@@ -51,9 +53,14 @@ public final class PartitionFunctionExprCompiler {
   // Cache compiled pipelines so a broker/server with thousands of segments sharing the same partition expression
   // only Calcite-parses the expression once. PartitionPipeline is stateless except for per-thread scratch arrays in
   // its inner ExecutableNode tree, so the cached instance is safe to share across multiple PartitionPipelineFunction
-  // wrappers (each wrapper applies its own numPartitions at normalization time). Cache size is bounded by unique
-  // (rawColumn, inputType, canonicalExpr, normalizer) tuples — typically a handful per cluster.
-  private static final ConcurrentMap<PipelineCacheKey, PartitionPipeline> PIPELINE_CACHE = new ConcurrentHashMap<>();
+  // wrappers (each wrapper applies its own numPartitions at normalization time).
+  //
+  // Bounded by maximumSize so that long-lived processes with churning table configs (creates/drops/expression edits)
+  // don't accumulate compiled pipelines indefinitely. The cap is sized for the realistic case of a handful of
+  // distinct (column, expression) tuples per table × hundreds of tables.
+  private static final long PIPELINE_CACHE_MAX_SIZE = 10_000L;
+  private static final Cache<PipelineCacheKey, PartitionPipeline> PIPELINE_CACHE =
+      CacheBuilder.newBuilder().maximumSize(PIPELINE_CACHE_MAX_SIZE).build();
 
   private PartitionFunctionExprCompiler() {
   }
@@ -71,8 +78,17 @@ public final class PartitionFunctionExprCompiler {
       }
       Preconditions.checkState(!factories.isEmpty(),
           "No PartitionEvaluatorFactory implementation found on the classpath");
-      Preconditions.checkState(factories.size() == 1,
-          "Expected exactly 1 PartitionEvaluatorFactory implementation but found %s: %s", factories.size(), factories);
+      // Tolerate multiple implementations (common in shaded-jar / test classpaths where pinot-common appears via more
+      // than one route). Prefer the built-in InbuiltPartitionEvaluatorFactory when present; otherwise pick the first
+      // and log the choice. Hard-failing here would abort every segment load that reaches the compiler.
+      if (factories.size() == 1) {
+        return factories.get(0);
+      }
+      for (PartitionEvaluatorFactory f : factories) {
+        if (f.getClass().getSimpleName().equals("InbuiltPartitionEvaluatorFactory")) {
+          return f;
+        }
+      }
       return factories.get(0);
     }
   }
@@ -104,10 +120,26 @@ public final class PartitionFunctionExprCompiler {
     String canonicalExpr = canonicalize(functionExpr);
     boolean isBytesInput = inputType == PartitionValueType.BYTES;
     PipelineCacheKey cacheKey = new PipelineCacheKey(rawColumn, isBytesInput, canonicalExpr, partitionIdNormalizer);
-    return PIPELINE_CACHE.computeIfAbsent(cacheKey, k -> {
-      FunctionEvaluator evaluator = EvaluatorFactoryHolder.INSTANCE.compile(rawColumn, canonicalExpr);
-      return new PartitionPipeline(rawColumn, isBytesInput, canonicalExpr, partitionIdNormalizer, evaluator);
-    });
+    try {
+      return PIPELINE_CACHE.get(cacheKey, () -> {
+        FunctionEvaluator evaluator = EvaluatorFactoryHolder.INSTANCE.compile(rawColumn, canonicalExpr);
+        return new PartitionPipeline(rawColumn, isBytesInput, canonicalExpr, partitionIdNormalizer, evaluator);
+      });
+    } catch (UncheckedExecutionException e) {
+      // Loader threw a RuntimeException (e.g. invalid expression). Unwrap so callers see the original failure.
+      Throwable cause = e.getCause();
+      if (cause instanceof RuntimeException) {
+        throw (RuntimeException) cause;
+      }
+      throw new IllegalStateException("Failed to compile partition pipeline for column '" + rawColumn + "'", cause);
+    } catch (ExecutionException e) {
+      // Loader threw a checked exception. Unwrap to surface the original cause.
+      Throwable cause = e.getCause();
+      if (cause instanceof RuntimeException) {
+        throw (RuntimeException) cause;
+      }
+      throw new IllegalStateException("Failed to compile partition pipeline for column '" + rawColumn + "'", cause);
+    }
   }
 
   public static PartitionPipelineFunction compilePartitionFunction(String rawColumn, String functionExpr,
