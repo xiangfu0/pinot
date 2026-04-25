@@ -47,8 +47,15 @@ public interface PartitionFunction extends Serializable {
    * Method to compute and return partition id for the given value.
    * NOTE: The value is expected to be a string representation of the actual value.
    *
+   * <p><b>Return-value contract:</b> implementations must return a non-negative partition id in
+   * {@code [0, getNumPartitions())}. The value {@code -1} is reserved as a framework-internal sentinel for
+   * "expression evaluated to null" (see
+   * {@link org.apache.pinot.segment.spi.partition.pipeline.PartitionPipelineFunction#NULL_RESULT_PARTITION_ID}) —
+   * custom plugin implementations must not return {@code -1} as a real partition id. Internal callers
+   * (broker pruner, stats collector, segment processing partitioner) treat {@code -1} as "skip / no partition".
+   *
    * @param value Value for which to determine the partition id.
-   * @return partition id for the value.
+   * @return partition id for the value (non-negative for real partitions; never {@code -1}).
    */
   int getPartition(String value);
 
