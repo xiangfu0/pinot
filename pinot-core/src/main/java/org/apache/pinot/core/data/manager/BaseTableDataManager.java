@@ -1797,6 +1797,14 @@ public abstract class BaseTableDataManager implements TableDataManager {
         return new StaleSegment(segmentName, true, "range index changed: " + columnName);
       }
 
+      // Partition function removed: segment carries a partitionFunction but the table config no longer has any
+      // partitionColumn (or removed this column). Flag stale so the segment is rebuilt without partition metadata.
+      if (partitionColumn == null && columnMetadata.getPartitionFunction() != null) {
+        LOGGER.debug("tableNameWithType: {}, columnName: {}, segmentName: {}, change: partition function removed",
+            tableNameWithType, columnName, segmentName);
+        return new StaleSegment(segmentName, true, "partition function removed: " + columnName);
+      }
+
       // Partition changed or segment not properly partitioned
       if (columnName.equals(partitionColumn)) {
         PartitionFunction partitionFunction = columnMetadata.getPartitionFunction();

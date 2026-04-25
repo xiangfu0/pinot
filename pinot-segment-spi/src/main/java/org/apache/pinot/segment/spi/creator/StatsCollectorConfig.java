@@ -117,7 +117,6 @@ public class StatsCollectorConfig {
         : SegmentPartitionConfig.INVALID_NUM_PARTITIONS;
   }
 
-  @Deprecated
   @Nullable
   public String getPartitionFunctionExpr(String column) {
     return (_segmentPartitionConfig != null) ? _segmentPartitionConfig.getFunctionExpr(column) : null;

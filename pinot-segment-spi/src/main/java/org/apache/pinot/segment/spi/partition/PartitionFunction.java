@@ -30,7 +30,16 @@ import org.apache.pinot.spi.utils.BytesUtils;
  *
  * <p>Implementations of this interface are assumed not to be stateful.
  * That is, two invocations of {@code PartitionFunction.getPartition(value)}
- * with the same value are expected to produce the same result.
+ * with the same value are expected to produce the same result. Implementations must also be safe for concurrent
+ * invocation by multiple threads.
+ *
+ * <p><b>Expression-mode partition functions:</b> When {@link #getFunctionExpr()} returns non-null, the implementation
+ * is operating in expression mode (e.g. {@code PartitionPipelineFunction}). In that case
+ * {@link #getPartitionIdNormalizer()} and {@link #getPartitionColumn()} also typically return non-null. Existing
+ * legacy partition functions ({@code Murmur}, {@code Modulo}, {@code HashCode}, etc.) return {@code null} from these
+ * accessors and continue to operate as before. Framework callers (segment writers, broker pruners, staleness checks)
+ * use the non-null/null distinction on {@code getFunctionExpr} to dispatch between the two modes — plugins that
+ * want to be treated as expression-mode must override the relevant accessors.
  */
 public interface PartitionFunction extends Serializable {
 

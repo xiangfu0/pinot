@@ -19,6 +19,7 @@
 package org.apache.pinot.segment.spi.partition.metadata;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationContext;
@@ -123,9 +124,12 @@ public class ColumnPartitionMetadata {
 
   /**
    * Returns the pipeline input type for expression-mode partition functions, or {@code null} if the default
-   * ({@link PartitionValueType#STRING}) input type applies.
+   * ({@link PartitionValueType#STRING}) input type applies. The {@code @JsonProperty} value matches
+   * {@link org.apache.pinot.segment.spi.V1Constants.MetadataKeys.Column#PARTITION_INPUT_TYPE} so the same key
+   * names the field on both wire formats (ZK JSON and segment {@code .properties}).
    */
   @Nullable
+  @JsonProperty("partitionInputType")
   public String getInputType() {
     return _inputType;
   }
@@ -227,7 +231,9 @@ public class ColumnPartitionMetadata {
     private static final String FUNCTION_CONFIG_KEY = "functionConfig";
     private static final String FUNCTION_EXPR_KEY = "functionExpr";
     private static final String PARTITION_ID_NORMALIZER_KEY = "partitionIdNormalizer";
-    private static final String INPUT_TYPE_KEY = "inputType";
+    // Matches V1Constants.MetadataKeys.Column.PARTITION_INPUT_TYPE so the same key names the field on both
+    // wire formats (ZK JSON and segment .properties).
+    private static final String INPUT_TYPE_KEY = "partitionInputType";
     private static final String PARTITIONS_KEY = "partitions";
 
     // DO NOT CHANGE: for backward-compatibility
