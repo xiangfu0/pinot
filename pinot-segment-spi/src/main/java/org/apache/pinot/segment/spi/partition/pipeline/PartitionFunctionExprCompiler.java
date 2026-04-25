@@ -28,6 +28,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.ServiceLoader;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 import org.apache.pinot.spi.config.table.ColumnPartitionConfig;
@@ -58,9 +59,15 @@ public final class PartitionFunctionExprCompiler {
   // Bounded by maximumSize so that long-lived processes with churning table configs (creates/drops/expression edits)
   // don't accumulate compiled pipelines indefinitely. The cap is sized for the realistic case of a handful of
   // distinct (column, expression) tuples per table × hundreds of tables.
+  // expireAfterAccess provides eventual invalidation when a table is dropped or a partition expression is edited
+  // (no caller currently emits explicit invalidation events). 1 hour is long enough that the cache helps, short
+  // enough that stale entries from dropped tables don't pin memory indefinitely.
   private static final long PIPELINE_CACHE_MAX_SIZE = 10_000L;
-  private static final Cache<PipelineCacheKey, PartitionPipeline> PIPELINE_CACHE =
-      CacheBuilder.newBuilder().maximumSize(PIPELINE_CACHE_MAX_SIZE).build();
+  private static final long PIPELINE_CACHE_EXPIRE_HOURS = 1L;
+  private static final Cache<PipelineCacheKey, PartitionPipeline> PIPELINE_CACHE = CacheBuilder.newBuilder()
+      .maximumSize(PIPELINE_CACHE_MAX_SIZE)
+      .expireAfterAccess(PIPELINE_CACHE_EXPIRE_HOURS, TimeUnit.HOURS)
+      .build();
 
   private PartitionFunctionExprCompiler() {
   }

@@ -161,8 +161,11 @@ public class SinglePartitionColumnSegmentPruner implements SegmentPruner {
     try {
       return partitionInfo.getPartitions().contains(partitionInfo.getPartitionFunction().getPartition(value));
     } catch (RuntimeException e) {
-      LOGGER.warn("Failed to evaluate partition function for table: {}, partition column: {}; skipping partition "
-          + "pruning", _tableNameWithType, _partitionColumn, e);
+      // Fail-open: a buggy partition function/expression must not drop user query results. Log at ERROR (not WARN)
+      // so this surfaces in alerting — silent fail-open hides table-config bugs that should be fixed.
+      LOGGER.error("Failed to evaluate partition function for table: {}, partition column: {}; falling back to "
+          + "scatter-gather (no pruning) for this query. Fix the partition expression to avoid query-time fail-open.",
+          _tableNameWithType, _partitionColumn, e);
       return true;
     }
   }

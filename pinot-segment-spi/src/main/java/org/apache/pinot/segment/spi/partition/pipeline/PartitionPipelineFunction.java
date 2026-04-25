@@ -24,6 +24,7 @@ import com.google.common.base.Preconditions;
 import java.math.BigInteger;
 import java.util.List;
 import java.util.Locale;
+import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.readers.GenericRow;
@@ -42,7 +43,12 @@ import org.slf4j.LoggerFactory;
 @SuppressWarnings("serial")
 public class PartitionPipelineFunction implements PartitionFunction, FunctionEvaluator {
   private static final Logger LOGGER = LoggerFactory.getLogger(PartitionPipelineFunction.class);
-  public static final String NAME = "FunctionExpr";
+  /**
+   * Function-name value reported via {@link #getName()} and written into segment metadata for expression-mode
+   * pipelines. Bound to the reserved sentinel constant in {@link V1Constants.MetadataKeys.Column} so the
+   * cross-version fail-fast contract for old readers cannot drift via duplicate string literals.
+   */
+  public static final String NAME = V1Constants.MetadataKeys.Column.PARTITION_FUNCTION_EXPR_SENTINEL;
   // Sentinel returned when the partition expression evaluates to null for a given value (e.g. null input).
   // Callers that update per-segment partition sets must skip this value.
   public static final int NULL_RESULT_PARTITION_ID = -1;
@@ -176,7 +182,16 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
     Preconditions.checkState(intNormalizer != null,
         "Integral-output partition pipeline for column '%s' must have an INT normalizer",
         _pipeline.getRawColumn());
-    if (num instanceof Long || num instanceof BigInteger || num instanceof Float || num instanceof Double) {
+    // BigInteger gets a dedicated path: Number.longValue() silently truncates to the low 64 bits when the magnitude
+    // overflows Long, producing a wrap-around partition id. Reduce modulo numPartitions while still in BigInteger
+    // arithmetic to preserve the mathematical result, then narrow safely.
+    if (num instanceof BigInteger) {
+      BigInteger bi = (BigInteger) num;
+      BigInteger reduced = bi.mod(BigInteger.valueOf(_numPartitions));
+      // After mod with positive numPartitions, the value is in [0, numPartitions); intValueExact is safe.
+      return intNormalizer.getPartitionId(reduced.intValueExact(), _numPartitions);
+    }
+    if (num instanceof Long || num instanceof Float || num instanceof Double) {
       return intNormalizer.getPartitionId(num.longValue(), _numPartitions);
     }
     return intNormalizer.getPartitionId(num.intValue(), _numPartitions);
@@ -199,14 +214,14 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
   }
 
   @Override
-  @JsonIgnore(false)
+  @JsonIgnore(false)  // Override @JsonIgnore on PartitionFunction#getFunctionExpr to expose this in serialization.
   @JsonProperty("functionExpr")
   public String getFunctionExpr() {
     return _pipeline.getCanonicalFunctionExpr();
   }
 
   @Override
-  @JsonIgnore(false)
+  @JsonIgnore(false)  // Override @JsonIgnore on PartitionFunction#getPartitionIdNormalizer.
   @JsonProperty("partitionIdNormalizer")
   public String getPartitionIdNormalizer() {
     PartitionIntNormalizer intNormalizer = _pipeline.getIntNormalizer();
