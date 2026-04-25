@@ -41,6 +41,9 @@ public final class PartitionFunctionExprCompiler {
   private static final Pattern OPEN_PAREN_WS = Pattern.compile("\\s*\\(\\s*");
   private static final Pattern CLOSE_PAREN_WS = Pattern.compile("\\s*\\)\\s*");
   private static final Pattern COMMA_WS = Pattern.compile("\\s*,\\s*");
+  // Collapses any run of internal whitespace (e.g. "a  +  b") to a single space so that segment-vs-config
+  // comparisons of canonicalized expressions don't disagree on whitespace alone.
+  private static final Pattern INTERNAL_WS = Pattern.compile("\\s+");
 
   private PartitionFunctionExprCompiler() {
   }
@@ -128,6 +131,7 @@ public final class PartitionFunctionExprCompiler {
     String lowered = expression.trim().toLowerCase(Locale.ROOT);
     String afterOpen = OPEN_PAREN_WS.matcher(lowered).replaceAll("(");
     String afterClose = CLOSE_PAREN_WS.matcher(afterOpen).replaceAll(")");
-    return COMMA_WS.matcher(afterClose).replaceAll(", ");
+    String afterComma = COMMA_WS.matcher(afterClose).replaceAll(", ");
+    return INTERNAL_WS.matcher(afterComma).replaceAll(" ");
   }
 }

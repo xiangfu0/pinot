@@ -178,6 +178,18 @@ public class V1Constants {
       public static final String NUM_PARTITIONS = "numPartitions";
       public static final String PARTITION_VALUES = "partitionValues";
       public static final String PARTITION_FUNCTION_CONFIG = "partitionFunctionConfig";
+      /**
+       * Reserved sentinel value written into {@link #PARTITION_FUNCTION} for expression-mode segments. This
+       * intentionally does not match any real {@code PartitionFunctionType} enum constant, so older readers loading
+       * a new segment trip {@code IllegalArgumentException("No enum constant for: FunctionExpr")} and fail fast
+       * rather than silently dropping partition pruning. New readers detect expression-mode via the presence of
+       * {@link #PARTITION_FUNCTION_EXPR} and ignore this sentinel.
+       *
+       * <p>Must stay in sync with {@code PartitionPipelineFunction.NAME}. Do <b>not</b> add an enum constant with
+       * this name to {@code PartitionFunctionType} — doing so would silently break the cross-version fail-fast
+       * contract.
+       */
+      public static final String PARTITION_FUNCTION_EXPR_SENTINEL = "FunctionExpr";
 
       /// Old key maintained for backward compatibility
       // Replaced by LENGTH_OF_LONGEST_ELEMENT

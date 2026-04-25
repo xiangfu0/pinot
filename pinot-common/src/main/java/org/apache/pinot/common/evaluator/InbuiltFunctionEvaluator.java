@@ -39,9 +39,11 @@ import org.apache.pinot.spi.data.readers.GenericRow;
  * The expression is compiled once into an {@link ExecutableFunctionEvaluator.ExecutableNode} tree
  * whose nodes handle constants, column reads, logical operators, and function calls.
  *
- * <p><b>Thread-safety:</b> Instances are thread-safe for all node types except
- * {@link FunctionExecutionNode}, which uses a shared argument scratch array per node instance
- * and therefore must not be invoked concurrently on the same node.
+ * <p><b>Thread-safety:</b> Instances are thread-safe for concurrent invocation. Each
+ * {@link FunctionExecutionNode} maintains a per-thread argument scratch array via
+ * {@link ThreadLocal}, so multiple threads can call {@code evaluate} on the same compiled tree
+ * without sharing mutable state. A single call chain on one thread must not invoke {@code evaluate}
+ * recursively on the same node instance.
  */
 public class InbuiltFunctionEvaluator extends ExecutableFunctionEvaluator {
 
@@ -112,43 +114,44 @@ public class InbuiltFunctionEvaluator extends ExecutableFunctionEvaluator {
 
   /**
    * Executes a Pinot-registry function via {@link FunctionInvoker}, with null propagation and
-   * type conversion.  Uses a shared argument scratch array (not thread-safe for concurrent
-   * invocations of the same node instance).
+   * type conversion.  Uses a per-thread argument scratch array via {@link ThreadLocal} so that concurrent
+   * invocations of the same node instance from multiple threads do not share mutable state.
    */
   private static class FunctionExecutionNode implements ExecutableNode {
     final FunctionInvoker _functionInvoker;
     final FunctionInfo _functionInfo;
     final ExecutableNode[] _argumentNodes;
-    final Object[] _arguments;
+    final ThreadLocal<Object[]> _arguments;
 
     FunctionExecutionNode(FunctionInfo functionInfo, ExecutableNode[] argumentNodes) {
       _functionInvoker = new FunctionInvoker(functionInfo);
       _functionInfo = functionInfo;
       _argumentNodes = argumentNodes;
-      _arguments = new Object[_argumentNodes.length];
+      _arguments = ThreadLocal.withInitial(() -> new Object[argumentNodes.length]);
     }
 
     @Override
     public Object execute(GenericRow row) {
       try {
+        Object[] arguments = _arguments.get();
         int numArguments = _argumentNodes.length;
         for (int i = 0; i < numArguments; i++) {
-          _arguments[i] = _argumentNodes[i].execute(row);
+          arguments[i] = _argumentNodes[i].execute(row);
         }
         if (!_functionInfo.hasNullableParameters()) {
           // Preserve null values during ingestion transformation if function is an inbuilt
           // scalar function that cannot handle nulls, and invoked with null parameter(s).
-          for (Object argument : _arguments) {
+          for (Object argument : arguments) {
             if (argument == null) {
               return null;
             }
           }
         }
         if (_functionInvoker.getMethod().isVarArgs()) {
-          return _functionInvoker.invoke(new Object[]{_arguments});
+          return _functionInvoker.invoke(new Object[]{arguments});
         }
-        _functionInvoker.convertTypes(_arguments);
-        return _functionInvoker.invoke(_arguments);
+        _functionInvoker.convertTypes(arguments);
+        return _functionInvoker.invoke(arguments);
       } catch (Exception e) {
         throw new RuntimeException("Caught exception while executing function: " + this + ": " + e.getMessage(), e);
       }
@@ -157,24 +160,25 @@ public class InbuiltFunctionEvaluator extends ExecutableFunctionEvaluator {
     @Override
     public Object execute(Object[] values) {
       try {
+        Object[] arguments = _arguments.get();
         int numArguments = _argumentNodes.length;
         for (int i = 0; i < numArguments; i++) {
-          _arguments[i] = _argumentNodes[i].execute(values);
+          arguments[i] = _argumentNodes[i].execute(values);
         }
         if (!_functionInfo.hasNullableParameters()) {
           // Preserve null values during ingestion transformation if function is an inbuilt
           // scalar function that cannot handle nulls, and invoked with null parameter(s).
-          for (Object argument : _arguments) {
+          for (Object argument : arguments) {
             if (argument == null) {
               return null;
             }
           }
         }
         if (_functionInvoker.getMethod().isVarArgs()) {
-          return _functionInvoker.invoke(new Object[]{_arguments});
+          return _functionInvoker.invoke(new Object[]{arguments});
         }
-        _functionInvoker.convertTypes(_arguments);
-        return _functionInvoker.invoke(_arguments);
+        _functionInvoker.convertTypes(arguments);
+        return _functionInvoker.invoke(arguments);
       } catch (Exception e) {
         throw new RuntimeException("Caught exception while executing function: " + this + ": " + e.getMessage(), e);
       }

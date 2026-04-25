@@ -25,6 +25,7 @@ import org.testng.annotations.Test;
 
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNull;
+import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
 
@@ -75,20 +76,35 @@ public class PartitionFunctionExprCommonScalarFunctionTest {
   }
 
   /**
-   * Regression: Float/Double whose absolute value exceeds 2^53 must be rejected even if the value is "integral",
-   * because mantissa precision loss causes silent partition-id collapse.
+   * Regression: Float/Double whose absolute value reaches 2^53 must be rejected even if the value is "integral",
+   * because mantissa precision loss causes silent partition-id collapse. The bound is strict: 2^53 itself is
+   * representable but 2^53+1 collapses onto 2^53, so admitting 2^53 would let 2^53+1 silently collide with it.
    */
   @Test
   public void testDoubleBeyondMantissaPrecisionIsRejected() {
     PartitionPipelineFunction partitionFunction =
         PartitionFunctionExprCompiler.compilePartitionFunction("col", "plus(col, 0)", 128);
-    // 2^53 + 1 cannot be represented exactly as Double — the function returns 9007199254740992.0 (== 2^53)
-    // for both 9007199254740992 and 9007199254740993. Reject to avoid silent collisions. The check fires when
-    // |d| > 2^53.
+    // 2^54 — clearly past the boundary
     IllegalStateException error = expectThrows(IllegalStateException.class,
-        () -> partitionFunction.getPartition("18014398509481984"));  // 2^54
-    assertEquals(error.getMessage().contains("|x| <= 2^53"), true,
+        () -> partitionFunction.getPartition("18014398509481984"));
+    assertTrue(error.getMessage().contains("|x| < 2^53"),
         "Expected precision-bound error, got: " + error.getMessage());
+  }
+
+  /**
+   * Boundary regression for the off-by-one in the precision check: 2^53+1 (long) silently rounds to 2^53.0
+   * (Double); admitting 2^53 would let 2^53+1 collide with 2^53 onto the same partition id. Strict {@code < 2^53}
+   * is required.
+   */
+  @Test
+  public void testDoubleAtMantissaBoundaryIsRejected() {
+    PartitionPipelineFunction partitionFunction =
+        PartitionFunctionExprCompiler.compilePartitionFunction("col", "plus(col, 0)", 128);
+    // 2^53 itself — boundary value where "integral" check passes but next integer collides
+    IllegalStateException error = expectThrows(IllegalStateException.class,
+        () -> partitionFunction.getPartition("9007199254740992"));
+    assertTrue(error.getMessage().contains("|x| < 2^53"),
+        "Expected precision-bound error at 2^53 boundary, got: " + error.getMessage());
   }
 
   /**
@@ -119,7 +135,7 @@ public class PartitionFunctionExprCommonScalarFunctionTest {
         PartitionFunctionExprCompiler.compilePartitionFunction("col", "md5(col)", 8);
     IllegalArgumentException error = expectThrows(IllegalArgumentException.class,
         partitionFunction::validateOutputType);
-    assertEquals(error.getMessage().contains("STRING"), true,
+    assertTrue(error.getMessage().contains("STRING"),
         "Expected error to mention STRING output, got: " + error.getMessage());
   }
 }

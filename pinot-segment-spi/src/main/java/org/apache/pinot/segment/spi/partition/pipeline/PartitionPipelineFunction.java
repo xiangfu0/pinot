@@ -71,9 +71,12 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
    * {@code md5(col)}), or if every probe throws (cannot determine output type — likely a misconfigured pipeline).
    */
   public void validateOutputType() {
+    // Probe set covers numeric strings, alpha strings, raw bytes (for BYTES input), and null. The null sample
+    // mirrors the runtime ingestion path that already handles nulls, so the validation also exercises that the
+    // pipeline does not blow up on null input. Non-null samples are checked for non-numeric output types.
     Object[] samples = _pipeline.isBytesInput()
-        ? new Object[]{new byte[]{0}, new byte[]{1, 2, 3}, new byte[0]}
-        : new Object[]{"1", "0", "abc"};
+        ? new Object[]{new byte[]{0}, new byte[]{1, 2, 3}, new byte[0], null}
+        : new Object[]{"1", "0", "abc", null};
     boolean anyProbeSucceeded = false;
     RuntimeException lastFailure = null;
     for (Object sample : samples) {
@@ -157,16 +160,16 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
         _pipeline.getRawColumn(), result.getClass().getSimpleName());
     Number num = (Number) result;
     // Pinot scalar functions commonly box integral arithmetic to Double (e.g. plus(long, long) → Double). Accept
-    // Float/Double iff the value is integral (no fractional part) AND fits within Double's 53-bit mantissa, since
-    // any double with absolute value > 2^53 is implicitly "integral" (mantissa cannot represent the fractional bit)
-    // but maps multiple distinct longs to the same double — silently collapsing partition ids. Reject these and
-    // require the user to cast to LONG explicitly in the expression.
+    // Float/Double iff the value is integral (no fractional part) AND strictly fits within Double's 53-bit mantissa.
+    // The bound is strict (|x| < 2^53) because the next representable integer above 2^53 is 2^53+2: the long
+    // value 2^53+1 silently rounds to 2^53.0, which would collide with 2^53 itself if we admitted it. Require the
+    // user to cast to LONG explicitly in the expression to opt into the wider integer range.
     if (num instanceof Float || num instanceof Double) {
       double d = num.doubleValue();
       Preconditions.checkState(!Double.isNaN(d) && !Double.isInfinite(d) && d == Math.floor(d)
-              && Math.abs(d) <= MAX_PRECISE_DOUBLE_INTEGRAL,
+              && Math.abs(d) < MAX_PRECISE_DOUBLE_INTEGRAL,
           "Partition expression for column '%s' must return an integral value within Double precision "
-              + "(|x| <= 2^53), got: %s (%s); cast the expression result to LONG explicitly to avoid this",
+              + "(|x| < 2^53), got: %s (%s); cast the expression result to LONG explicitly to avoid this",
           _pipeline.getRawColumn(), result, result.getClass().getSimpleName());
     }
     PartitionIntNormalizer intNormalizer = _pipeline.getIntNormalizer();
