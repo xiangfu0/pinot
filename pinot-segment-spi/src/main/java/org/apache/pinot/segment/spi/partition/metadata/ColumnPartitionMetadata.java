@@ -264,8 +264,15 @@ public class ColumnPartitionMetadata {
       JsonNode functionExprNode = jsonMetadata.get(FUNCTION_EXPR_KEY);
       JsonNode partitionIdNormalizerNode = jsonMetadata.get(PARTITION_ID_NORMALIZER_KEY);
       JsonNode inputTypeNode = jsonMetadata.get(INPUT_TYPE_KEY);
+      // numPartitions is mandatory in segment partition metadata. Surface a clear error if absent rather than
+      // letting the caller's catch handler log an opaque NPE.
+      JsonNode numPartitionsNode = jsonMetadata.get(NUM_PARTITIONS_KEY);
+      if (numPartitionsNode == null || numPartitionsNode.isNull()) {
+        throw new IllegalArgumentException(
+            "'" + NUM_PARTITIONS_KEY + "' is required in segment partition metadata");
+      }
       return new ColumnPartitionMetadata(readOptionalText(functionNameNode),
-          jsonMetadata.get(NUM_PARTITIONS_KEY).asInt(), partitions, functionConfig,
+          numPartitionsNode.asInt(), partitions, functionConfig,
           readOptionalText(functionExprNode), readOptionalText(partitionIdNormalizerNode),
           readOptionalText(inputTypeNode));
     }

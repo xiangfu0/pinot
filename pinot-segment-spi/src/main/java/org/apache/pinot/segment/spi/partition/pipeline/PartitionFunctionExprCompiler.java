@@ -33,6 +33,8 @@ import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 import org.apache.pinot.spi.config.table.ColumnPartitionConfig;
 import org.apache.pinot.spi.function.FunctionEvaluator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 /**
@@ -40,6 +42,7 @@ import org.apache.pinot.spi.function.FunctionEvaluator;
  * {@link org.apache.pinot.spi.function.FunctionEvaluator} provided by {@link PartitionEvaluatorFactory}.
  */
 public final class PartitionFunctionExprCompiler {
+  private static final Logger LOGGER = LoggerFactory.getLogger(PartitionFunctionExprCompiler.class);
   // Cap on user-supplied expression length, sized to fit comfortably within ZK / segment metadata size budgets while
   // allowing realistic chained expressions (e.g. fnv1a_32(md5(lower(trim(col))))).
   private static final int MAX_EXPRESSION_LENGTH = 256;
@@ -93,10 +96,15 @@ public final class PartitionFunctionExprCompiler {
       }
       for (PartitionEvaluatorFactory f : factories) {
         if (f.getClass().getSimpleName().equals("InbuiltPartitionEvaluatorFactory")) {
+          LOGGER.info("Found {} PartitionEvaluatorFactory implementations on the classpath: {}; preferring {}",
+              factories.size(), factories, f.getClass().getName());
           return f;
         }
       }
-      return factories.get(0);
+      PartitionEvaluatorFactory chosen = factories.get(0);
+      LOGGER.info("Found {} PartitionEvaluatorFactory implementations on the classpath: {}; using first: {}",
+          factories.size(), factories, chosen.getClass().getName());
+      return chosen;
     }
   }
 

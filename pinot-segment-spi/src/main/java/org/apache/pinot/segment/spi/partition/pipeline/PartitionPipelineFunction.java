@@ -64,6 +64,12 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
   public PartitionPipelineFunction(PartitionPipeline pipeline, int numPartitions) {
     Preconditions.checkNotNull(pipeline, "Partition pipeline must be configured");
     Preconditions.checkArgument(numPartitions > 0, "Number of partitions must be > 0");
+    // PartitionPipeline._intNormalizer is @Nullable for compile-time flexibility; this wrapper requires it because
+    // normalizeResult depends on the normalizer to map raw integer outputs into [0, numPartitions). Surface the
+    // contract violation at construction time rather than crashing on the first row.
+    Preconditions.checkArgument(pipeline.getIntNormalizer() != null,
+        "Partition pipeline for column '%s' must have an INT normalizer when wrapped as a PartitionPipelineFunction",
+        pipeline.getRawColumn());
     _pipeline = pipeline;
     _numPartitions = numPartitions;
     _numPartitionsBig = BigInteger.valueOf(numPartitions);
@@ -240,13 +246,11 @@ public class PartitionPipelineFunction implements PartitionFunction, FunctionEva
 
   @Override
   public Object evaluate(GenericRow genericRow) {
-    Object inputValue = genericRow.getValue(_pipeline.getRawColumn());
-    if (inputValue == null) {
-      return null;
-    }
-    int partitionId = (inputValue instanceof byte[] && _pipeline.isBytesInput())
-        ? getPartition((byte[]) inputValue)
-        : getPartition(FieldSpec.getStringValue(inputValue));
+    // Delegate to the underlying pipeline directly: it already handles the column lookup, the BYTES-vs-STRING
+    // dispatch, and the null-input early return. Avoids duplicating that logic here and saves one Object[]
+    // allocation per row vs the getPartition(...) path.
+    Object rawResult = _pipeline.evaluate(genericRow);
+    int partitionId = normalizeResult(rawResult);
     return partitionId == NULL_RESULT_PARTITION_ID ? null : partitionId;
   }
 

@@ -2044,8 +2044,11 @@ public class RealtimeSegmentDataManager extends SegmentDataManager {
         }
 
         realtimeSegmentConfigBuilder.setPartitionColumn(partitionColumn);
+        // Use the stream-derived numPartitions (may differ from the table-config value if the stream has been
+        // resharded). The FieldSpec-aware 4-arg overload threads numPartitions through to expression-mode
+        // pipelines on BYTES columns, preserving the override.
         realtimeSegmentConfigBuilder.setPartitionFunction(
-            PartitionFunctionFactory.getPartitionFunction(partitionColumn, columnPartitionConfig,
+            PartitionFunctionFactory.getPartitionFunction(partitionColumn, columnPartitionConfig, numPartitions,
                 _schema.getFieldSpecFor(partitionColumn)));
         realtimeSegmentConfigBuilder.setPartitionId(_partitionGroupId);
       } else {
