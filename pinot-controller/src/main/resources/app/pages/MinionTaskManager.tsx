@@ -263,6 +263,7 @@ const MinionTaskManager = () => {
             {periodicTaskCount > 0 && (
               <Box mt={2}>
                 <CustomizedTables
+                  title="Registered Periodic Tasks"
                   data={periodicTaskNames}
                   showSearchBox={true}
                   inAccordionFormat={false}

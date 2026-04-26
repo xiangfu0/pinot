@@ -1416,7 +1416,13 @@ const getInstanceLogFilesData = (instanceName: string): Promise<string[]> => {
     if (Array.isArray(data)) {
       return data as string[];
     }
-    return [];
+    // Anything that isn't a JSON array is treated as a backend error. Returning
+    // [] here silently would render "No log files reported by minion." on the UI,
+    // which masks proxy misconfiguration or controller errors. Surface it instead.
+    const embeddedError = (data && typeof data === 'object' && 'error' in (data as Record<string, unknown>))
+      ? String((data as Record<string, unknown>).error)
+      : null;
+    throw new Error(embeddedError || 'Unexpected log-file response shape');
   });
 };
 
