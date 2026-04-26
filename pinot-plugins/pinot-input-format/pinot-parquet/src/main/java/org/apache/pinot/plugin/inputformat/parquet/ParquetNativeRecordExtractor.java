@@ -18,14 +18,17 @@
  */
 package org.apache.pinot.plugin.inputformat.parquet;
 
-import com.google.common.collect.Maps;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import javax.annotation.Nullable;
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.io.api.Binary;
@@ -215,7 +218,7 @@ public class ParquetNativeRecordExtractor extends BaseRecordExtractor<Group> {
     // Plain Parquet group (no LIST/MAP annotation) — surfaces as a Map keyed by child field name. Reached for
     // nested struct fields and for groups read with the legacy/un-annotated branch.
     int numValues = group.getType().getFieldCount();
-    Map<String, Object> map = Maps.newHashMapWithExpectedSize(numValues);
+    Map<String, Object> map = new TreeMap<>();
     for (int i = 0; i < numValues; i++) {
       map.put(group.getType().getType(i).getName(), extractValue(group, i));
     }
@@ -234,10 +237,8 @@ public class ParquetNativeRecordExtractor extends BaseRecordExtractor<Group> {
     // The repeated wrapper name (`key_value` / `map`) and field order vary across writers, so we resolve the
     // key/value field indices from the schema once and reuse them for every entry.
     //
-    // NOTE: Parquet does NOT guarantee that MAP entries are returned in any particular order on read — neither
-    // sorted nor in insertion order. Writers, page boundaries, and dictionary encodings can all reorder entries.
-    // If you need a stable order, write the data as a LIST of STRUCT<key, value> instead of using the native MAP
-    // logical type. We therefore use a plain HashMap here and make no ordering promise to downstream consumers.
+    // Parquet does NOT guarantee that MAP entries are returned in any particular order on read, so sort by key before
+    // returning the map. Downstream ingestion transforms often iterate map entries while serializing or flattening.
     int numValues = group.getFieldRepetitionCount(0);
     if (numValues == 0) {
       return Map.of();
@@ -245,7 +246,7 @@ public class ParquetNativeRecordExtractor extends BaseRecordExtractor<Group> {
     GroupType keyValueType = group.getType().getType(0).asGroupType();
     int keyIndex = keyValueType.getFieldIndex("key");
     int valueIndex = keyValueType.getFieldIndex("value");
-    Map<String, Object> map = Maps.newHashMapWithExpectedSize(numValues);
+    Map<String, Object> map = new TreeMap<>();
     for (int i = 0; i < numValues; i++) {
       Group keyValueGroup = group.getGroup(0, i);
       Object key = extractValue(keyValueGroup, keyIndex);
@@ -253,6 +254,23 @@ public class ParquetNativeRecordExtractor extends BaseRecordExtractor<Group> {
       map.put(key.toString(), value);
     }
     return map;
+  }
+
+  @Override
+  @SuppressWarnings("unchecked")
+  protected Map<Object, Object> convertMap(Object value) {
+    Map<Object, Object> map = (Map<Object, Object>) value;
+    List<Map.Entry<Object, Object>> entries = new ArrayList<>(map.entrySet());
+    entries.removeIf(entry -> entry.getKey() == null);
+    entries.sort(Comparator.comparing(entry -> String.valueOf(convertSingleValue(entry.getKey()))));
+
+    Map<Object, Object> convertedMap = new LinkedHashMap<>(entries.size());
+    for (Map.Entry<Object, Object> entry : entries) {
+      Object mapValue = entry.getValue();
+      Object convertedMapValue = mapValue != null ? convert(mapValue) : null;
+      convertedMap.put(convertSingleValue(entry.getKey()), convertedMapValue);
+    }
+    return convertedMap;
   }
 
   private boolean isStandardListWrapper(Type repeatedField, String parentListName) {

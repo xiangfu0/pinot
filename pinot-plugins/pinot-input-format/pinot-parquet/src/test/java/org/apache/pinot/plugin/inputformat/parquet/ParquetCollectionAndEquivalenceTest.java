@@ -26,6 +26,7 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -286,6 +287,62 @@ public class ParquetCollectionAndEquivalenceTest {
     }
   }
 
+  @Test
+  @SuppressWarnings("unchecked")
+  public void testParquetAvroMapKeysAreSorted()
+      throws IOException {
+    Schema avroSchema = new Schema.Parser().parse(String.join("\n",
+        "{",
+        "  \"type\": \"record\",",
+        "  \"name\": \"AvroMapOrdering\",",
+        "  \"namespace\": \"com.example\",",
+        "  \"fields\": [",
+        "    {\"name\": \"properties\", \"type\": {\"type\": \"map\", \"values\": \"string\"}},",
+        "    {\"name\": \"nested\", \"type\": {",
+        "      \"type\": \"record\",",
+        "      \"name\": \"Nested\",",
+        "      \"fields\": [",
+        "        {\"name\": \"b\", \"type\": \"string\"},",
+        "        {\"name\": \"a\", \"type\": \"string\"}",
+        "      ]",
+        "    }}",
+        "  ]",
+        "}"));
+    FileUtils.forceMkdir(_tempDir);
+    File dataFile = new File(_tempDir, "avro-map-ordering.parquet");
+    FileUtils.deleteQuietly(dataFile);
+
+    GenericRecord row = new GenericData.Record(avroSchema);
+    Map<String, String> properties = new LinkedHashMap<>();
+    properties.put("z", "last");
+    properties.put("a", "first");
+    properties.put("m", "middle");
+    row.put("properties", properties);
+    GenericRecord nested = new GenericData.Record(avroSchema.getField("nested").schema());
+    nested.put("b", "bee");
+    nested.put("a", "aye");
+    row.put("nested", nested);
+
+    try (ParquetWriter<GenericRecord> writer = ParquetTestUtils.getParquetAvroWriter(
+        new Path(dataFile.getAbsolutePath()), avroSchema)) {
+      writer.write(row);
+    }
+    try (ParquetRecordReader recordReader = new ParquetRecordReader()) {
+      recordReader.init(dataFile, null, null);
+      assertTrue(recordReader.useAvroParquetRecordReader());
+      assertTrue(recordReader.hasNext());
+      GenericRow out = recordReader.next();
+      Map<String, Object> propertiesOut = (Map<String, Object>) out.getValue("properties");
+      assertKeyOrder(propertiesOut, "a", "m", "z");
+      assertEquals(propertiesOut, Map.of("a", "first", "m", "middle", "z", "last"));
+
+      Map<String, Object> nestedOut = (Map<String, Object>) out.getValue("nested");
+      assertKeyOrder(nestedOut, "a", "b");
+      assertEquals(nestedOut, Map.of("a", "aye", "b", "bee"));
+      assertFalse(recordReader.hasNext());
+    }
+  }
+
   /**
    * Cross-checks every existing Parquet test resource through both readers and asserts the two produce the
    * same Pinot rows. Locks in that any encoding subtlety in the fixtures (LIST/MAP variants, INT96, decimals,
@@ -354,8 +411,8 @@ public class ParquetCollectionAndEquivalenceTest {
       topLevelTags.addGroup("list").append("element", "top-a");
       topLevelTags.addGroup("list").append("element", "top-b");
       Group topLevelProperties = group.addGroup("topLevelProperties");
-      topLevelProperties.addGroup("key_value").append("key", "top-key-a").append("value", "top-value-a");
       topLevelProperties.addGroup("key_value").append("key", "top-key-b").append("value", "top-value-b");
+      topLevelProperties.addGroup("key_value").append("key", "top-key-a").append("value", "top-value-a");
       group.addGroup("emptyProperties");
       Group metadata = group.addGroup("metadata");
       metadata.append("element", "real-element-field");
@@ -371,8 +428,8 @@ public class ParquetCollectionAndEquivalenceTest {
       metadata.addGroup("tagStructs").addGroup("list").addGroup("element").append("element", "inner-a");
       metadata.getGroup("tagStructs", 0).addGroup("list").addGroup("element").append("element", "inner-b");
       Group properties = metadata.addGroup("properties");
-      properties.addGroup("key_value").append("key", "key-a").append("value", "value-a");
       properties.addGroup("key_value").append("key", "key-b").append("value", "value-b");
+      properties.addGroup("key_value").append("key", "key-a").append("value", "value-a");
       writer.write(group);
     }
     return dataFile;
@@ -384,14 +441,18 @@ public class ParquetCollectionAndEquivalenceTest {
     assertTrue(recordReader.hasNext());
     GenericRow row = recordReader.next();
     assertEquals(Arrays.asList((Object[]) row.getValue("topLevelTags")), Arrays.asList("top-a", "top-b"));
-    assertEquals(row.getValue("topLevelProperties"), Map.of("top-key-a", "top-value-a", "top-key-b", "top-value-b"));
+    Map<String, Object> topLevelProperties = (Map<String, Object>) row.getValue("topLevelProperties");
+    assertKeyOrder(topLevelProperties, "top-key-a", "top-key-b");
+    assertEquals(topLevelProperties, Map.of("top-key-a", "top-value-a", "top-key-b", "top-value-b"));
     assertEquals(row.getValue("emptyProperties"), Map.of());
 
     Map<String, Object> metadata = (Map<String, Object>) row.getValue("metadata");
     assertEquals(metadata.get("element"), "real-element-field");
     assertEquals(Arrays.asList((Object[]) metadata.get("tags")), Arrays.asList("abc", "xyz"));
     assertEquals(Arrays.asList((Object[]) metadata.get("nullableTags")), Arrays.asList(null, "nonnull"));
-    assertEquals(metadata.get("properties"), Map.of("key-a", "value-a", "key-b", "value-b"));
+    Map<String, Object> properties = (Map<String, Object>) metadata.get("properties");
+    assertKeyOrder(properties, "key-a", "key-b");
+    assertEquals(properties, Map.of("key-a", "value-a", "key-b", "value-b"));
 
     // Per the Parquet LogicalTypes spec backward-compat rules, a single-field repeated wrapper whose name is
     // NOT `array` or `<list>_tuple` is a wrapper — its inner field is the element regardless of the inner
@@ -494,6 +555,10 @@ public class ParquetCollectionAndEquivalenceTest {
       reader.close();
     }
     return rows;
+  }
+
+  private static void assertKeyOrder(Map<?, ?> map, String... expectedKeys) {
+    assertEquals(new ArrayList<>(map.keySet()), Arrays.asList(expectedKeys));
   }
 
   /**

@@ -18,9 +18,15 @@
  */
 package org.apache.pinot.plugin.inputformat.parquet;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.avro.Schema;
+import org.apache.avro.generic.GenericRecord;
 import org.apache.pinot.plugin.inputformat.avro.AvroRecordExtractor;
 import org.apache.pinot.spi.data.readers.RecordExtractorConfig;
 
@@ -44,6 +50,39 @@ public class ParquetAvroRecordExtractor extends AvroRecordExtractor {
   @Override
   protected Object transformValue(Object value, Schema.Field field) {
     return handleDeprecatedTypes(convert(value), field);
+  }
+
+  @Override
+  @SuppressWarnings("unchecked")
+  protected Map<Object, Object> convertMap(Object value) {
+    Map<Object, Object> map = (Map<Object, Object>) value;
+    List<Map.Entry<Object, Object>> entries = new ArrayList<>(map.entrySet());
+    entries.removeIf(entry -> entry.getKey() == null);
+    entries.sort(Comparator.comparing(entry -> String.valueOf(convertSingleValue(entry.getKey()))));
+
+    Map<Object, Object> convertedMap = new LinkedHashMap<>(entries.size());
+    for (Map.Entry<Object, Object> entry : entries) {
+      Object mapValue = entry.getValue();
+      Object convertedMapValue = mapValue != null ? convert(mapValue) : null;
+      convertedMap.put(convertSingleValue(entry.getKey()), convertedMapValue);
+    }
+    return convertedMap;
+  }
+
+  @Override
+  protected Map<Object, Object> convertRecord(Object value) {
+    GenericRecord record = (GenericRecord) value;
+    List<Schema.Field> fields = new ArrayList<>(record.getSchema().getFields());
+    fields.sort(Comparator.comparing(Schema.Field::name));
+
+    Map<Object, Object> convertedMap = new LinkedHashMap<>(fields.size());
+    for (Schema.Field field : fields) {
+      String fieldName = field.name();
+      Object fieldValue = record.get(fieldName);
+      Object convertedValue = fieldValue != null ? transformValue(fieldValue, field) : null;
+      convertedMap.put(fieldName, convertedValue);
+    }
+    return convertedMap;
   }
 
   Object handleDeprecatedTypes(Object value, Schema.Field field) {
