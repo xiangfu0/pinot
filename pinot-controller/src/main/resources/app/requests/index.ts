@@ -221,6 +221,40 @@ export const getTaskGeneratorDebug = (taskName: string, taskType: string): Promi
 export const getTaskTypeDebug = (taskType: string): Promise<AxiosResponse<OperationResponse>> =>
   baseApi.get(`/tasks/${taskType}/debug?verbosity=1`, { headers: { ...headers, Accept: 'application/json' } });
 
+export const getTasksSummary = (tenant?: string): Promise<AxiosResponse<OperationResponse>> =>
+  baseApi.get(`/tasks/summary`, { headers: { ...headers, Accept: 'application/json' }, params: tenant ? { tenant } : {} });
+
+export const getTaskCounts = (taskType: string): Promise<AxiosResponse<OperationResponse>> =>
+  baseApi.get(`/tasks/${taskType}/taskcounts`, { headers: { ...headers, Accept: 'application/json' } });
+
+export const getTaskStates = (taskType: string): Promise<AxiosResponse<OperationResponse>> =>
+  baseApi.get(`/tasks/${taskType}/taskstates`, { headers: { ...headers, Accept: 'application/json' } });
+
+export const getCronSchedulerInformation = (): Promise<AxiosResponse<OperationResponse>> =>
+  baseApi.get(`/tasks/scheduler/information`, { headers: { ...headers, Accept: 'application/json' } });
+
+export const deleteSingleTask = (taskName: string, forceDelete = false): Promise<AxiosResponse<OperationResponse>> =>
+  baseApi.delete(`/tasks/task/${taskName}`, {
+    headers: { ...headers, Accept: 'application/json' },
+    params: { forceDelete }
+  });
+
+export const getInstanceLogFiles = (instanceName: string): Promise<AxiosResponse<string[]>> =>
+  baseApi.get(`/loggers/instances/${instanceName}`, { headers: { ...headers, Accept: 'application/json' } });
+
+// Fetches the log file as a Blob through the authenticated axios client so that
+// auth headers (basic / bearer) attached by the request interceptor are preserved.
+// Plain anchor downloads cannot reuse those headers, so we route through axios
+// and trigger a download via createObjectURL on the client side.
+export const downloadInstanceLogFile = (
+  instanceName: string,
+  filePath: string
+): Promise<AxiosResponse<Blob>> =>
+  baseApi.get(`/loggers/instances/${instanceName}/download`, {
+    params: { filePath },
+    responseType: 'blob',
+  });
+
 export const getTables = (params): Promise<AxiosResponse<OperationResponse>> =>
   baseApi.get(`/tables`, { params, headers: { ...headers, Accept: 'application/json' } });
 

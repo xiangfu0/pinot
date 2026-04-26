@@ -59,6 +59,13 @@ import {
   getTasks,
   getTaskDebug,
   getTaskGeneratorDebug,
+  getTasksSummary,
+  getTaskCounts,
+  getTaskStates,
+  getCronSchedulerInformation,
+  deleteSingleTask,
+  getInstanceLogFiles,
+  downloadInstanceLogFile,
   updateInstanceTags,
   getClusterConfig,
   getQueryTables,
@@ -1375,6 +1382,68 @@ const getScheduleJobDetail = (tableName, taskType)=>{
   })
 };
 
+// Returns a TaskSummaryResponse covering all task types across all tenants.
+// Shape: { tasks: { tenant: { taskType: TaskCount } } } depending on backend version.
+const getTasksSummaryData = (tenant?: string) => {
+  return getTasksSummary(tenant).then(response => response.data);
+};
+
+// Returns a map from task name to TaskCount {total, running, waiting, error, completed, ...}
+const getTaskCountsData = (taskType: string) => {
+  return getTaskCounts(taskType).then(response => response.data);
+};
+
+// Returns a map from task name to TaskState (NOT_STARTED, IN_PROGRESS, COMPLETED, FAILED, ABORTED, ...).
+const getTaskStatesData = (taskType: string) => {
+  return getTaskStates(taskType).then(response => response.data);
+};
+
+const getCronSchedulerInformationData = () => {
+  return getCronSchedulerInformation().then(response => response.data).catch(() => null);
+};
+
+const deleteSingleTaskOp = (taskName: string, forceDelete = false) => {
+  return deleteSingleTask(taskName, forceDelete).then(response => response.data);
+};
+
+const runPeriodicTaskAction = (taskName: string, tableName?: string, tableType?: string) => {
+  return runPeriodicTask(taskName, tableName || undefined, tableType || undefined).then(response => response.data);
+};
+
+const getInstanceLogFilesData = (instanceName: string): Promise<string[]> => {
+  return getInstanceLogFiles(instanceName).then(response => {
+    const data = response.data;
+    if (Array.isArray(data)) {
+      return data as string[];
+    }
+    return [];
+  });
+};
+
+// Fetches the requested minion log file as a Blob through the authenticated axios
+// client and triggers a browser download via a temporary anchor + createObjectURL.
+// This avoids the auth header gap that a plain `<a href>` open would have hit on
+// the controller's `/loggers/instances/{name}/download` endpoint.
+const downloadInstanceLogFileToBrowser = async (instanceName: string, filePath: string): Promise<void> => {
+  const response = await downloadInstanceLogFile(instanceName, filePath);
+  const blob: Blob = response.data instanceof Blob ? response.data : new Blob([response.data]);
+  const objectUrl = window.URL.createObjectURL(blob);
+  try {
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    // Last path component for filename; controller serves the whole file path so
+    // we slash-strip locally for a sane saved name.
+    const nameParts = filePath.split('/');
+    a.download = nameParts[nameParts.length - 1] || 'minion.log';
+    document.body.appendChild(a);
+    a.click();
+    a.parentNode?.removeChild(a);
+  } finally {
+    // Defer revoke to next tick so the browser has time to start the download.
+    setTimeout(() => window.URL.revokeObjectURL(objectUrl), 0);
+  }
+};
+
 const getUserList = ()=>{
   return requestUserList().then(response=>{
     return response.data;
@@ -1544,6 +1613,14 @@ export default {
   scheduleTaskAction,
   executeTaskAction,
   getScheduleJobDetail,
+  getTasksSummaryData,
+  getTaskCountsData,
+  getTaskStatesData,
+  getCronSchedulerInformationData,
+  deleteSingleTaskOp,
+  runPeriodicTaskAction,
+  getInstanceLogFilesData,
+  downloadInstanceLogFileToBrowser,
   getMinionMetaData,
   getElapsedTime,
   getTasksList,
