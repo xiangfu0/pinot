@@ -43,6 +43,7 @@ import {
   dropInstance,
   getPeriodicTaskNames,
   runPeriodicTask,
+  runPeriodicTaskWithErrors,
   getTaskTypes,
   getTaskTypeDebug,
   getTables,
@@ -1398,8 +1399,20 @@ const getTaskStatesData = (taskType: string) => {
   return getTaskStates(taskType).then(response => response.data);
 };
 
+// Returns null only when the controller has the scheduler disabled (404 or
+// "Task scheduler is disabled" 500). Other errors propagate so the caller can
+// distinguish "scheduler off" from "controller unreachable" / "auth failed".
 const getCronSchedulerInformationData = () => {
-  return getCronSchedulerInformation().then(response => response.data).catch(() => null);
+  return getCronSchedulerInformation()
+    .then(response => response.data)
+    .catch((err) => {
+      const status = get(err, 'response.status');
+      const message = String(get(err, 'response.data.error') || get(err, 'response.data.message') || '');
+      if (status === 404 || (status === 500 && /scheduler is disabled/i.test(message))) {
+        return null;
+      }
+      throw err;
+    });
 };
 
 const deleteSingleTaskOp = (taskName: string, forceDelete = false) => {
@@ -1407,7 +1420,7 @@ const deleteSingleTaskOp = (taskName: string, forceDelete = false) => {
 };
 
 const runPeriodicTaskAction = (taskName: string, tableName?: string, tableType?: string) => {
-  return runPeriodicTask(taskName, tableName || undefined, tableType || undefined).then(response => response.data);
+  return runPeriodicTaskWithErrors(taskName, tableName || undefined, tableType || undefined).then(response => response.data);
 };
 
 const getInstanceLogFilesData = (instanceName: string): Promise<string[]> => {

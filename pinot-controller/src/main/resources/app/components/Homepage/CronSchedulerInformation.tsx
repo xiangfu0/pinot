@@ -18,6 +18,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { get } from 'lodash';
 import { Grid, makeStyles, Typography } from '@material-ui/core';
 import SimpleAccordion from '../SimpleAccordion';
 import PinotMethodUtils from '../../utils/PinotMethodUtils';
@@ -56,21 +57,37 @@ const CronSchedulerInformation = () => {
   const classes = useStyles();
   const { currentTimezone } = useTimezone();
   const [schedulerInfo, setSchedulerInfo] = useState<SchedulerInfo | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
-    PinotMethodUtils.getCronSchedulerInformationData().then((res) => {
-      if (!isMounted) {
-        return;
-      }
-      setSchedulerInfo(res as SchedulerInfo | null);
-    });
+    PinotMethodUtils.getCronSchedulerInformationData()
+      .then((res) => {
+        if (!isMounted) {
+          return;
+        }
+        setSchedulerInfo(res as SchedulerInfo | null);
+        setError(null);
+      })
+      .catch((err) => {
+        if (!isMounted) {
+          return;
+        }
+        setError(
+          String(get(err, 'response.data.error')
+            || get(err, 'response.data.message')
+            || (err && err.message)
+            || 'Unable to load cron scheduler information')
+        );
+      });
     return () => { isMounted = false; };
   }, []);
 
-  const status = schedulerInfo
-    ? (schedulerInfo.InStandbyMode ? 'Standby' : 'Running')
-    : 'Disabled';
+  const status = error
+    ? 'Unknown'
+    : (schedulerInfo
+      ? (schedulerInfo.InStandbyMode ? 'Standby' : 'Running')
+      : 'Disabled');
   const runningSince = schedulerInfo?.RunningSince
     ? formatTimeInTimezone(schedulerInfo.RunningSince, 'YYYY-MM-DD HH:mm:ss z', currentTimezone)
     : '-';
@@ -88,9 +105,16 @@ const CronSchedulerInformation = () => {
           <Grid item xs={6}><strong>Running Since:</strong> {runningSince}</Grid>
           <Grid item xs={6}><strong>State:</strong> {status}</Grid>
           <Grid item xs={6}><strong>Scheduled Jobs:</strong> {schedulerInfo?.JobDetails?.length ?? '-'}</Grid>
-          {!schedulerInfo && (
+          {error && (
             <Grid item xs={12}>
-              <Typography variant='caption'>Cron scheduler is disabled or unavailable on this controller.</Typography>
+              <Typography variant='caption' color='error'>
+                Failed to load cron scheduler information: {error}
+              </Typography>
+            </Grid>
+          )}
+          {!error && !schedulerInfo && (
+            <Grid item xs={12}>
+              <Typography variant='caption'>Cron scheduler is disabled on this controller.</Typography>
             </Grid>
           )}
         </Grid>

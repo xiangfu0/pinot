@@ -61,14 +61,25 @@ const PeriodicTasks = () => {
 
   useEffect(() => {
     let isMounted = true;
-    PinotMethodUtils.getAllPeriodicTaskNames().then((res) => {
-      if (!isMounted) {
-        return;
-      }
-      setPeriodicTaskNames(res);
-    });
+    PinotMethodUtils.getAllPeriodicTaskNames()
+      .then((res) => {
+        if (!isMounted) {
+          return;
+        }
+        setPeriodicTaskNames(res);
+      })
+      .catch((err) => {
+        if (!isMounted) {
+          return;
+        }
+        dispatch({
+          type: 'error',
+          message: `Failed to load periodic tasks: ${get(err, 'response.data.error') || (err as Error).message || 'unknown error'}`,
+          show: true,
+        });
+      });
     return () => { isMounted = false; };
-  }, []);
+  }, [dispatch]);
 
   const handleRunPeriodicTask = async () => {
     if (!selectedPeriodicTask) {
