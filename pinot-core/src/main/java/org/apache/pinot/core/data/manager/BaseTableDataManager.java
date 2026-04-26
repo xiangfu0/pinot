@@ -142,7 +142,14 @@ public abstract class BaseTableDataManager implements TableDataManager {
   protected File _resourceTmpDir;
   protected Logger _logger;
   protected SegmentReloadSemaphore _segmentReloadSemaphore;
+  /**
+   * @deprecated Use {@link #_segmentReloadExecutor} or {@link #_segmentRefreshExecutor} instead. Kept for binary
+   * compatibility with downstream extensions; refers to the shared underlying executor pool.
+   */
+  @Deprecated
   protected ExecutorService _segmentReloadRefreshExecutor;
+  protected ExecutorService _segmentReloadExecutor;
+  protected ExecutorService _segmentRefreshExecutor;
   @Nullable
   protected ExecutorService _segmentPreloadExecutor;
   protected AuthProvider _authProvider;
@@ -188,8 +195,12 @@ public abstract class BaseTableDataManager implements TableDataManager {
     _propertyStore = helixManager.getHelixPropertyStore();
     _segmentLocks = segmentLocks;
     _segmentReloadSemaphore = segmentReloadSemaphore;
-    _segmentReloadRefreshExecutor = new SegmentOperationsExecutorService(segmentReloadRefreshExecutor,
-        SegmentOperationsTaskType.REFRESH_OR_RELOAD, tableConfig.getTableName());
+    _segmentReloadRefreshExecutor = segmentReloadRefreshExecutor;
+    // These two executors are using the same underlying thread pool, only that they're wrapped with different decorator
+    _segmentReloadExecutor = new SegmentOperationsExecutorService(segmentReloadRefreshExecutor,
+        SegmentOperationsTaskType.RELOAD, tableConfig.getTableName());
+    _segmentRefreshExecutor = new SegmentOperationsExecutorService(segmentReloadRefreshExecutor,
+        SegmentOperationsTaskType.REFRESH, tableConfig.getTableName());
     _segmentPreloadExecutor = segmentPreloadExecutor != null
         ? new SegmentOperationsExecutorService(segmentPreloadExecutor, SegmentOperationsTaskType.PRELOAD,
         tableConfig.getTableName())
@@ -498,7 +509,7 @@ public abstract class BaseTableDataManager implements TableDataManager {
       return;
     }
     _logger.info("Enqueuing segment: {} to be replaced", segmentName);
-    _segmentReloadRefreshExecutor.submit(() -> {
+    _segmentRefreshExecutor.submit(() -> {
       try {
         replaceSegmentInternal(segmentName);
       } catch (Exception e) {
@@ -948,7 +959,7 @@ public abstract class BaseTableDataManager implements TableDataManager {
           _reloadJobStatusCache.recordFailure(reloadJobId, segmentName, t);
         }
       }
-    }, _segmentReloadRefreshExecutor)).toArray(CompletableFuture[]::new)).get();
+    }, _segmentReloadExecutor)).toArray(CompletableFuture[]::new)).get();
     if (sampleException.get() != null) {
       throw new RuntimeException(
           String.format("Failed to reload %d/%d segments: %s in table: %s", failedSegments.size(),
