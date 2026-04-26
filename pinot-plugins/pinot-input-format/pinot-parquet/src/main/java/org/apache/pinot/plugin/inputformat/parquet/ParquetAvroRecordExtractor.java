@@ -46,6 +46,14 @@ public class ParquetAvroRecordExtractor extends AvroRecordExtractor {
     return handleDeprecatedTypes(convert(value), field);
   }
 
+  @Override
+  protected Object convertSingleValue(Object value) {
+    if (value instanceof Boolean) {
+      return value;
+    }
+    return super.convertSingleValue(value);
+  }
+
   Object handleDeprecatedTypes(Object value, Schema.Field field) {
     Schema.Type avroColumnType = field.schema().getType();
     if (avroColumnType == Schema.Type.UNION) {

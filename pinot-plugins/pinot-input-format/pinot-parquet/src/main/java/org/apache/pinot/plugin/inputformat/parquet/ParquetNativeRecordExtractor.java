@@ -135,7 +135,7 @@ public class ParquetNativeRecordExtractor extends BaseRecordExtractor<Group> {
         case DOUBLE:
           return from.getDouble(fieldIndex, index);
         case BOOLEAN:
-          return from.getValueToString(fieldIndex, index);
+          return from.getBoolean(fieldIndex, index);
         case INT96:
           Binary int96 = from.getInt96(fieldIndex, index);
           return convertInt96ToLong(int96.getBytes());
@@ -173,6 +173,14 @@ public class ParquetNativeRecordExtractor extends BaseRecordExtractor<Group> {
     ByteBuffer buf = ByteBuffer.wrap(int96Bytes).order(ByteOrder.LITTLE_ENDIAN);
     return (buf.getInt(8) - JULIAN_DAY_NUMBER_FOR_UNIX_EPOCH) * DateTimeConstants.MILLIS_PER_DAY
         + buf.getLong(0) / NANOS_PER_MILLISECOND;
+  }
+
+  @Override
+  protected Object convertSingleValue(Object value) {
+    if (value instanceof Boolean) {
+      return value;
+    }
+    return super.convertSingleValue(value);
   }
 
   public Object[] extractList(Group group) {

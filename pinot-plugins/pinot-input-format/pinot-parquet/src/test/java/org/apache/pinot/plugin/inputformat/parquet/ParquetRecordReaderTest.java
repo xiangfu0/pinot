@@ -28,7 +28,13 @@ import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.hadoop.fs.Path;
+import org.apache.parquet.example.data.Group;
+import org.apache.parquet.example.data.simple.SimpleGroupFactory;
 import org.apache.parquet.hadoop.ParquetWriter;
+import org.apache.parquet.hadoop.example.ExampleParquetWriter;
+import org.apache.parquet.hadoop.metadata.CompressionCodecName;
+import org.apache.parquet.schema.MessageType;
+import org.apache.parquet.schema.MessageTypeParser;
 import org.apache.pinot.plugin.inputformat.avro.AvroUtils;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.readers.AbstractRecordReaderTest;
@@ -123,6 +129,17 @@ public class ParquetRecordReaderTest extends AbstractRecordReaderTest {
   }
 
   @Test
+  public void testBooleanValuesPreserved()
+      throws IOException {
+    try (ParquetRecordReader recordReader = new ParquetRecordReader()) {
+      assertBooleanValues(recordReader, writeNativeBooleanParquetFile(), false);
+    }
+    try (ParquetRecordReader recordReader = new ParquetRecordReader()) {
+      assertBooleanValues(recordReader, writeAvroBooleanParquetFile(), true);
+    }
+  }
+
+  @Test
   public void testComparison()
       throws IOException {
     testComparison(_dataFile, SAMPLE_RECORDS_SIZE);
@@ -173,5 +190,56 @@ public class ParquetRecordReaderTest extends AbstractRecordReaderTest {
     Assert.assertFalse(nativeRecordReader.hasNext());
     Assert.assertEquals(recordsRead, totalRecords,
         "Message read from ParquetRecordReader doesn't match the expected number.");
+  }
+
+  private File writeNativeBooleanParquetFile()
+      throws IOException {
+    File outputFile = new File(_tempDir, "boolean-native-" + System.nanoTime() + ".parquet");
+    Path outputPath = new Path(outputFile.getAbsolutePath());
+    MessageType schema = MessageTypeParser.parseMessageType("message BooleanExample {"
+        + "required boolean bool_true;"
+        + "required boolean bool_false;"
+        + "}");
+    try (ParquetWriter<Group> writer = ExampleParquetWriter.builder(outputPath)
+        .withType(schema)
+        .withCompressionCodec(CompressionCodecName.SNAPPY)
+        .build()) {
+      Group group = new SimpleGroupFactory(schema).newGroup();
+      group.append("bool_true", true);
+      group.append("bool_false", false);
+      writer.write(group);
+    }
+    return outputFile;
+  }
+
+  private File writeAvroBooleanParquetFile()
+      throws IOException {
+    File outputFile = new File(_tempDir, "boolean-avro-" + System.nanoTime() + ".parquet");
+    Schema schema = new Schema.Parser().parse("{"
+        + "\"type\":\"record\","
+        + "\"name\":\"BooleanExample\","
+        + "\"fields\":["
+        + "{\"name\":\"bool_true\",\"type\":\"boolean\"},"
+        + "{\"name\":\"bool_false\",\"type\":\"boolean\"}"
+        + "]}");
+    GenericRecord record = new GenericData.Record(schema);
+    record.put("bool_true", true);
+    record.put("bool_false", false);
+    try (ParquetWriter<GenericRecord> writer = ParquetTestUtils.getParquetAvroWriter(
+        new Path(outputFile.getAbsolutePath()), schema)) {
+      writer.write(record);
+    }
+    return outputFile;
+  }
+
+  private void assertBooleanValues(ParquetRecordReader recordReader, File dataFile, boolean useAvroParquetRecordReader)
+      throws IOException {
+    recordReader.init(dataFile, null, null);
+    Assert.assertEquals(recordReader.useAvroParquetRecordReader(), useAvroParquetRecordReader);
+    Assert.assertTrue(recordReader.hasNext());
+    GenericRow row = recordReader.next();
+    Assert.assertEquals(row.getValue("bool_true"), Boolean.TRUE);
+    Assert.assertEquals(row.getValue("bool_false"), Boolean.FALSE);
+    Assert.assertFalse(recordReader.hasNext());
   }
 }
