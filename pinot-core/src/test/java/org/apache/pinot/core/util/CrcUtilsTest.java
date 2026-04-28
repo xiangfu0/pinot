@@ -105,10 +105,12 @@ public class CrcUtilsTest {
     driver.build();
 
     File indexDir = driver.getOutputDirectory();
-    assertEquals(CrcUtils.computeCrc(indexDir), 1243018203L);
+    // CRC values reflect the exact segment byte content. They will change whenever the segment metadata format changes
+    // (e.g. adding FORWARD_INDEX_ENCODING to metadata). Update these values after such changes.
+    assertEquals(CrcUtils.computeCrc(indexDir), 1355959378L);
 
     new SegmentV1V2ToV3FormatConverter().convert(indexDir);
-    assertEquals(CrcUtils.computeCrc(indexDir), 2321393542L);
+    assertEquals(CrcUtils.computeCrc(indexDir), 4049141742L);
   }
 
   @Test
@@ -135,10 +137,11 @@ public class CrcUtilsTest {
     driver.build();
 
     File indexDir = driver.getOutputDirectory();
-    assertEquals(CrcUtils.computeCrc(indexDir), 1921721469L);
+    // CRC values reflect the exact segment byte content; see testCrc() comment above for why they differ from master.
+    assertEquals(CrcUtils.computeCrc(indexDir), 3952508133L);
 
     new SegmentV1V2ToV3FormatConverter().convert(indexDir);
-    assertEquals(CrcUtils.computeCrc(indexDir), 809891195L);
+    assertEquals(CrcUtils.computeCrc(indexDir), 3170258418L);
   }
 
   @Test

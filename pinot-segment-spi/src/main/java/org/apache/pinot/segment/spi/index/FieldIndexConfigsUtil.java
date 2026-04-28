@@ -24,8 +24,11 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.apache.pinot.segment.spi.creator.IndexCreationContext;
 import org.apache.pinot.spi.config.table.IndexConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
+import org.apache.pinot.spi.data.ComplexFieldSpec;
+import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
 
 
@@ -46,9 +49,50 @@ public class FieldIndexConfigsUtil {
     for (IndexType<?, ?, ?> indexType : IndexService.getInstance().getAllIndexes()) {
       readConfig(builderMap, indexType, tableConfig, schema, deserializerProvider);
     }
-
-    return builderMap.entrySet().stream()
+    Map<String, FieldIndexConfigs> configsByCol = builderMap.entrySet().stream()
         .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().build()));
+
+    // FieldConfig.encodingType (and the legacy noDictionaryColumns list) is the single source of truth for forward
+    // index encoding. The encoding embedded in ForwardIndexConfig must agree with the derived value; if not, fail
+    // fast so the user fixes their config rather than seeing a silent override.
+    Set<String> rawForwardColumns = ForwardIndexUtils.getRawForwardIndexColumns(tableConfig);
+    for (FieldSpec fieldSpec : schema.getAllFieldSpecs()) {
+      if (fieldSpec instanceof ComplexFieldSpec) {
+        continue;
+      }
+      FieldIndexConfigs fieldIndexConfigs = configsByCol.get(fieldSpec.getName());
+      if (fieldIndexConfigs == null) {
+        continue;
+      }
+      ForwardIndexConfig forwardIndexConfig = fieldIndexConfigs.getConfig(StandardIndexes.forward());
+      if (forwardIndexConfig.isDisabled()) {
+        continue;
+      }
+      IndexCreationContext.ForwardIndexEncoding derivedEncoding =
+          rawForwardColumns.contains(fieldSpec.getName())
+              ? IndexCreationContext.ForwardIndexEncoding.RAW
+              : IndexCreationContext.ForwardIndexEncoding.DICTIONARY;
+      IndexCreationContext.ForwardIndexEncoding configEncoding = forwardIndexConfig.getForwardIndexEncoding();
+      if (configEncoding == derivedEncoding) {
+        continue;
+      }
+      // The deserialized config may differ from the derived encoding only when the deserializer produced its
+      // default DICTIONARY value (no explicit user-supplied forwardIndexEncoding). In that case, set the encoding
+      // to the derived value. If the user explicitly supplied a value that disagrees with the derived encoding,
+      // fail-fast.
+      if (configEncoding != ForwardIndexConfig.DEFAULT_FORWARD_INDEX_ENCODING) {
+        throw new IllegalStateException(String.format(
+            "Inconsistent forward index encoding for column '%s': FieldConfig.encodingType (or noDictionaryColumns) "
+                + "implies %s but ForwardIndexConfig.forwardIndexEncoding is %s. Remove one of the two settings or "
+                + "make them agree.", fieldSpec.getName(), derivedEncoding, configEncoding));
+      }
+      FieldIndexConfigs.Builder builder = new FieldIndexConfigs.Builder(fieldIndexConfigs);
+      builder.add(StandardIndexes.forward(),
+          new ForwardIndexConfig.Builder(forwardIndexConfig).withForwardIndexEncoding(derivedEncoding).build());
+      configsByCol.put(fieldSpec.getName(), builder.build());
+    }
+
+    return configsByCol;
   }
 
   @FunctionalInterface

@@ -22,10 +22,13 @@ package org.apache.pinot.segment.spi.index;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import javax.annotation.Nullable;
 import org.apache.pinot.spi.config.table.IndexConfig;
 import org.apache.pinot.spi.config.table.Intern;
+import org.apache.pinot.spi.data.FieldSpec;
 
 
 public class DictionaryIndexConfig extends IndexConfig {
@@ -112,5 +115,65 @@ public class DictionaryIndexConfig extends IndexConfig {
     } else {
       return "DictionaryIndexConfig{" + "\"disabled\": true}";
     }
+  }
+
+  /**
+   * Returns {@code true} if a dictionary must be created for the given column based on the configured indexes.
+   * Iterates over the index types registered in the global {@link IndexService} singleton; tests that need to
+   * exercise a custom set of index types should call
+   * {@link #isDictionaryRequired(FieldSpec, FieldIndexConfigs, Iterable)} directly.
+   */
+  public static boolean isDictionaryRequired(FieldSpec fieldSpec, FieldIndexConfigs fieldIndexConfigs) {
+    return isDictionaryRequired(fieldSpec, fieldIndexConfigs, IndexService.getInstance().getAllIndexes());
+  }
+
+  /**
+   * Test/plugin-friendly variant: returns {@code true} if any of the supplied {@code indexTypes} requires a
+   * dictionary for the column. Decoupled from {@link IndexService#getInstance()} so callers can pass a controlled
+   * set of index types.
+   */
+  public static boolean isDictionaryRequired(FieldSpec fieldSpec, FieldIndexConfigs fieldIndexConfigs,
+      Iterable<IndexType<?, ?, ?>> indexTypes) {
+    for (IndexType<?, ?, ?> indexType : indexTypes) {
+      if (indexType == StandardIndexes.dictionary()) {
+        continue;
+      }
+      IndexConfig indexConfig = fieldIndexConfigs.getConfig(indexType);
+      if (indexConfig != null && indexConfig.isEnabled()
+          && indexType.requiresDictionary(fieldSpec, indexConfig)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Returns the list of index types that require a dictionary for the given column based on the configured indexes.
+   * See {@link #isDictionaryRequired(FieldSpec, FieldIndexConfigs)} for the singleton-vs-injected discussion.
+   */
+  public static List<IndexType<?, ?, ?>> getIndexTypesWithDictionaryRequired(FieldSpec fieldSpec,
+      FieldIndexConfigs fieldIndexConfigs) {
+    return getIndexTypesWithDictionaryRequired(fieldSpec, fieldIndexConfigs,
+        IndexService.getInstance().getAllIndexes());
+  }
+
+  /**
+   * Test/plugin-friendly variant: returns the list of index types from the supplied iterable that require a
+   * dictionary for the column.
+   */
+  public static List<IndexType<?, ?, ?>> getIndexTypesWithDictionaryRequired(FieldSpec fieldSpec,
+      FieldIndexConfigs fieldIndexConfigs, Iterable<IndexType<?, ?, ?>> indexTypes) {
+    List<IndexType<?, ?, ?>> result = new ArrayList<>();
+    for (IndexType<?, ?, ?> indexType : indexTypes) {
+      if (indexType == StandardIndexes.dictionary()) {
+        continue;
+      }
+      IndexConfig indexConfig = fieldIndexConfigs.getConfig(indexType);
+      if (indexConfig != null && indexConfig.isEnabled()
+          && indexType.requiresDictionary(fieldSpec, indexConfig)) {
+        result.add(indexType);
+      }
+    }
+    return result;
   }
 }

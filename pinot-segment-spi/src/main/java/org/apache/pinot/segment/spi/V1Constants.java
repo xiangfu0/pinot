@@ -138,6 +138,7 @@ public class V1Constants {
       public static final String CARDINALITY = "cardinality";
       // Mandatory, treated as `true` when missing for backward compatibility
       public static final String HAS_DICTIONARY = "hasDictionary";
+      public static final String FORWARD_INDEX_ENCODING = "forwardIndexEncoding";
       // Mandatory, treated as `false` when missing for backward compatibility
       public static final String IS_SORTED = "isSorted";
       // Optional

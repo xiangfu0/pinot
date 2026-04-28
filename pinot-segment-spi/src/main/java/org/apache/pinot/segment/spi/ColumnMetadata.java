@@ -22,6 +22,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.Set;
 import javax.annotation.Nullable;
+import org.apache.pinot.segment.spi.creator.IndexCreationContext;
 import org.apache.pinot.segment.spi.index.IndexType;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.spi.annotations.InterfaceAudience;
@@ -35,6 +36,9 @@ import org.apache.pinot.spi.data.FieldSpec.FieldType;
 @SuppressWarnings("rawtypes")
 public interface ColumnMetadata {
   int UNAVAILABLE = -1;
+  /** @deprecated Use {@link #UNAVAILABLE} instead. */
+  @Deprecated
+  int INDEX_NOT_FOUND = UNAVAILABLE;
 
   FieldSpec getFieldSpec();
 
@@ -65,6 +69,19 @@ public interface ColumnMetadata {
   /// Returns `true` when the column is dictionary-encoded, `false` otherwise.
   @JsonProperty("hasDictionary")
   boolean hasDictionary();
+
+  /// Returns the forward index encoding (DICTIONARY or RAW).
+  /// Segment-backed implementations must override this to return the stored {@code FORWARD_INDEX_ENCODING} metadata
+  /// property (reading FORWARD_INDEX_ENCODING first; falling back to {@code hasDictionary()} only for old segments
+  /// that predate that property). This default is only for in-memory stubs that do not support shared dictionaries.
+  default IndexCreationContext.ForwardIndexEncoding getForwardIndexEncoding() {
+    return hasDictionary() ? IndexCreationContext.ForwardIndexEncoding.DICTIONARY
+        : IndexCreationContext.ForwardIndexEncoding.RAW;
+  }
+
+  default boolean isForwardIndexDictionaryEncoded() {
+    return getForwardIndexEncoding() == IndexCreationContext.ForwardIndexEncoding.DICTIONARY;
+  }
 
   /// Returns `true` when all values in a SV column are sorted in ascending order, `false` otherwise.
   boolean isSorted();
