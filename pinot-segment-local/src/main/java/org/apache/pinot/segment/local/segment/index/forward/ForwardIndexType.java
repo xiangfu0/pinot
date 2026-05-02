@@ -41,6 +41,7 @@ import org.apache.pinot.segment.spi.index.ColumnConfigDeserializer;
 import org.apache.pinot.segment.spi.index.DictionaryIndexConfig;
 import org.apache.pinot.segment.spi.index.FieldIndexConfigs;
 import org.apache.pinot.segment.spi.index.ForwardIndexConfig;
+import org.apache.pinot.segment.spi.index.IndexConfigDeserializer;
 import org.apache.pinot.segment.spi.index.IndexHandler;
 import org.apache.pinot.segment.spi.index.IndexReaderFactory;
 import org.apache.pinot.segment.spi.index.IndexUtil;
@@ -167,27 +168,24 @@ public class ForwardIndexType extends AbstractIndexType<ForwardIndexConfig, Forw
   }
 
   @Override
-  protected ColumnConfigDeserializer<ForwardIndexConfig> createDeserializerForLegacyConfigs() {
-    // reads tableConfig.fieldConfigList and decides what to create using the FieldConfig properties and encoding
+  protected ColumnConfigDeserializer<ForwardIndexConfig> createDeserializer() {
+    ColumnConfigDeserializer<ForwardIndexConfig> fromIndexes =
+        IndexConfigDeserializer.fromIndexes(getPrettyName(), getIndexConfigClass());
     return (tableConfig, schema) -> {
-      Map<String, DictionaryIndexConfig> dictConfigs = StandardIndexes.dictionary().getConfig(tableConfig, schema);
-
-      Map<String, ForwardIndexConfig> fwdConfig =
-          Maps.newHashMapWithExpectedSize(Math.max(dictConfigs.size(), schema.size()));
+      Map<String, ForwardIndexConfig> fwdConfig = Maps.newHashMap(fromIndexes.deserialize(tableConfig, schema));
 
       Collection<FieldConfig> fieldConfigs = tableConfig.getFieldConfigList();
       if (fieldConfigs != null) {
         for (FieldConfig fieldConfig : fieldConfigs) {
-          Map<String, String> properties = fieldConfig.getProperties();
-          if (properties != null && isDisabled(properties)) {
-            fwdConfig.put(fieldConfig.getName(), ForwardIndexConfig.getDisabled());
+          ForwardIndexConfig config = fwdConfig.get(fieldConfig.getName());
+          if (config == null) {
+            config = createConfigFromLegacyFieldConfig(fieldConfig);
+          }
+          config = new ForwardIndexConfig.Builder(config).withEncodingType(fieldConfig.getEncodingType()).build();
+          if (!config.equals(ForwardIndexConfig.getDefault())) {
+            fwdConfig.put(fieldConfig.getName(), config);
           } else {
-            ForwardIndexConfig config = createConfigFromFieldConfig(fieldConfig);
-            if (!config.equals(ForwardIndexConfig.getDefault())) {
-              fwdConfig.put(fieldConfig.getName(), config);
-            }
-            // It is important to do not explicitly add the default value here in order to avoid exclusive problems with
-            // the default `fromIndexes` deserializer.
+            fwdConfig.remove(fieldConfig.getName());
           }
         }
       }
@@ -200,10 +198,13 @@ public class ForwardIndexType extends AbstractIndexType<ForwardIndexConfig, Forw
         props.getOrDefault(FieldConfig.FORWARD_INDEX_DISABLED, FieldConfig.DEFAULT_FORWARD_INDEX_DISABLED));
   }
 
-  private ForwardIndexConfig createConfigFromFieldConfig(FieldConfig fieldConfig) {
+  private ForwardIndexConfig createConfigFromLegacyFieldConfig(FieldConfig fieldConfig) {
+    Map<String, String> properties = fieldConfig.getProperties();
+    if (properties != null && isDisabled(properties)) {
+      return ForwardIndexConfig.getDisabled();
+    }
     ForwardIndexConfig.Builder builder = new ForwardIndexConfig.Builder();
     builder.withCompressionCodec(fieldConfig.getCompressionCodec());
-    Map<String, String> properties = fieldConfig.getProperties();
     if (properties != null) {
       builder.withLegacyProperties(properties);
     }

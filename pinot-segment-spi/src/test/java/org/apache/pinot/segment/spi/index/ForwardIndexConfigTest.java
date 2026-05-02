@@ -20,6 +20,7 @@ package org.apache.pinot.segment.spi.index;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.pinot.segment.spi.compression.ChunkCompressionType;
+import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.utils.JsonUtils;
 import org.testng.annotations.Test;
 
@@ -35,6 +36,7 @@ public class ForwardIndexConfigTest {
     ForwardIndexConfig config = JsonUtils.stringToObject(confStr, ForwardIndexConfig.class);
 
     assertFalse(config.isDisabled(), "Unexpected disabled");
+    assertEquals(config.getEncodingType(), FieldConfig.EncodingType.DICTIONARY, "Unexpected encodingType");
     assertNull(config.getChunkCompressionType(), "Unexpected chunkCompressionType");
     assertFalse(config.isDeriveNumDocsPerChunk(), "Unexpected deriveNumDocsPerChunk");
     assertEquals(config.getRawIndexWriterVersion(), ForwardIndexConfig.getDefaultRawWriterVersion(),
@@ -48,6 +50,7 @@ public class ForwardIndexConfigTest {
     ForwardIndexConfig config = JsonUtils.stringToObject(confStr, ForwardIndexConfig.class);
 
     assertFalse(config.isDisabled(), "Unexpected disabled");
+    assertEquals(config.getEncodingType(), FieldConfig.EncodingType.DICTIONARY, "Unexpected encodingType");
     assertNull(config.getChunkCompressionType(), "Unexpected chunkCompressionType");
     assertFalse(config.isDeriveNumDocsPerChunk(), "Unexpected deriveNumDocsPerChunk");
     assertEquals(config.getRawIndexWriterVersion(), ForwardIndexConfig.getDefaultRawWriterVersion(),
@@ -61,6 +64,7 @@ public class ForwardIndexConfigTest {
     ForwardIndexConfig config = JsonUtils.stringToObject(confStr, ForwardIndexConfig.class);
 
     assertFalse(config.isDisabled(), "Unexpected disabled");
+    assertEquals(config.getEncodingType(), FieldConfig.EncodingType.DICTIONARY, "Unexpected encodingType");
     assertNull(config.getChunkCompressionType(), "Unexpected chunkCompressionType");
     assertFalse(config.isDeriveNumDocsPerChunk(), "Unexpected deriveNumDocsPerChunk");
     assertEquals(config.getRawIndexWriterVersion(), ForwardIndexConfig.getDefaultRawWriterVersion(),
@@ -74,6 +78,7 @@ public class ForwardIndexConfigTest {
     ForwardIndexConfig config = JsonUtils.stringToObject(confStr, ForwardIndexConfig.class);
 
     assertTrue(config.isDisabled(), "Unexpected disabled");
+    assertEquals(config.getEncodingType(), FieldConfig.EncodingType.DICTIONARY, "Unexpected encodingType");
     assertNull(config.getChunkCompressionType(), "Unexpected chunkCompressionType");
     assertFalse(config.isDeriveNumDocsPerChunk(), "Unexpected deriveNumDocsPerChunk");
     assertEquals(config.getRawIndexWriterVersion(), ForwardIndexConfig.getDefaultRawWriterVersion(),
@@ -87,6 +92,16 @@ public class ForwardIndexConfigTest {
     ForwardIndexConfig config = JsonUtils.stringToObject(confStr, ForwardIndexConfig.class);
 
     assertEquals(config.getTargetDocsPerChunk(), -1, "Unexpected defaultTargetDocsPerChunk");
+  }
+
+  @Test
+  public void withEncodingType()
+      throws JsonProcessingException {
+    String confStr = "{\"encodingType\": \"RAW\"}";
+    ForwardIndexConfig config = JsonUtils.stringToObject(confStr, ForwardIndexConfig.class);
+
+    assertFalse(config.isDisabled(), "Unexpected disabled");
+    assertEquals(config.getEncodingType(), FieldConfig.EncodingType.RAW, "Unexpected encodingType");
   }
 
   @Test

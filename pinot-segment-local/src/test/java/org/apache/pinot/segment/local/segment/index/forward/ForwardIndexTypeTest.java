@@ -202,7 +202,9 @@ public class ForwardIndexTypeTest {
                   + " }"
       );
 
-      assertEquals(ForwardIndexConfig.getDefault());
+      assertEquals(new ForwardIndexConfig.Builder()
+          .withEncodingType(FieldConfig.EncodingType.RAW)
+          .build());
     }
 
     @Test(dataProvider = "allCompressionCodec", dataProviderClass = ForwardIndexTypeTest.class)
@@ -221,6 +223,7 @@ public class ForwardIndexTypeTest {
 
       assertEquals(
             new ForwardIndexConfig.Builder()
+                .withEncodingType(FieldConfig.EncodingType.RAW)
                 .withCompressionCodec(compression == null ? null : FieldConfig.CompressionCodec.valueOf(compression))
                 .withCompressionType(expectedChunkCompression)
                 .withDictIdCompressionType(expectedDictCompression)
@@ -244,6 +247,7 @@ public class ForwardIndexTypeTest {
       );
 
       assertEquals(new ForwardIndexConfig.Builder()
+          .withEncodingType(FieldConfig.EncodingType.RAW)
           .withCompressionType(null)
           .withDeriveNumDocsPerChunk(true)
           .withRawIndexWriterVersion(ForwardIndexConfig.getDefaultRawWriterVersion())
@@ -264,6 +268,7 @@ public class ForwardIndexTypeTest {
       );
 
       assertEquals(new ForwardIndexConfig.Builder()
+          .withEncodingType(FieldConfig.EncodingType.RAW)
           .withCompressionType(null)
           .withDeriveNumDocsPerChunk(false)
           .withRawIndexWriterVersion(3)
@@ -314,6 +319,27 @@ public class ForwardIndexTypeTest {
       );
       assertEquals(
           new ForwardIndexConfig.Builder().withDictIdCompressionType(DictIdCompressionType.MV_ENTRY_DICT).build());
+    }
+
+    @Test
+    public void newConfigUsesFieldConfigEncodingType()
+        throws IOException {
+      addFieldIndexConfig(""
+          + "{"
+          + "  \"name\": \"dimInt\","
+          + "  \"encodingType\": \"RAW\","
+          + "  \"indexes\" : {"
+          + "    \"forward\": {"
+          + "      \"deriveNumDocsPerChunk\": true"
+          + "    }"
+          + "  }"
+          + "}"
+      );
+      assertEquals(
+          new ForwardIndexConfig.Builder()
+              .withEncodingType(FieldConfig.EncodingType.RAW)
+              .withDeriveNumDocsPerChunk(true)
+              .build());
     }
 
     @Test(dataProvider = "allChunkCompression", dataProviderClass = ForwardIndexTypeTest.class)

@@ -74,9 +74,10 @@ public class ForwardIndexConfig extends IndexConfig {
   }
 
   public static ForwardIndexConfig getDisabled() {
-    return new ForwardIndexConfig(true, null, null, null, null, null, null, null, null);
+    return new ForwardIndexConfig(true, FieldConfig.EncodingType.DICTIONARY, null, null, null, null, null, null);
   }
 
+  private final FieldConfig.EncodingType _encodingType;
   @Nullable
   private final CompressionCodec _compressionCodec;
   private final boolean _deriveNumDocsPerChunk;
@@ -96,7 +97,16 @@ public class ForwardIndexConfig extends IndexConfig {
       @Nullable Boolean deriveNumDocsPerChunk, @Nullable Integer rawIndexWriterVersion,
       @Nullable String targetMaxChunkSize, @Nullable Integer targetDocsPerChunk,
       @Nullable Map<String, Object> configs) {
+    this(disabled, FieldConfig.EncodingType.DICTIONARY, compressionCodec, deriveNumDocsPerChunk, rawIndexWriterVersion,
+        targetMaxChunkSize, targetDocsPerChunk, configs);
+  }
+
+  public ForwardIndexConfig(@Nullable Boolean disabled, FieldConfig.EncodingType encodingType,
+      @Nullable CompressionCodec compressionCodec, @Nullable Boolean deriveNumDocsPerChunk,
+      @Nullable Integer rawIndexWriterVersion, @Nullable String targetMaxChunkSize,
+      @Nullable Integer targetDocsPerChunk, @Nullable Map<String, Object> configs) {
     super(disabled);
+    _encodingType = Preconditions.checkNotNull(encodingType, "encodingType must not be null");
     _compressionCodec = compressionCodec;
     _deriveNumDocsPerChunk = Boolean.TRUE.equals(deriveNumDocsPerChunk);
 
@@ -155,6 +165,7 @@ public class ForwardIndexConfig extends IndexConfig {
 
   @JsonCreator
   public ForwardIndexConfig(@JsonProperty("disabled") @Nullable Boolean disabled,
+      @JsonProperty("encodingType") @Nullable FieldConfig.EncodingType encodingType,
       @JsonProperty("compressionCodec") @Nullable CompressionCodec compressionCodec,
       @Deprecated @JsonProperty("chunkCompressionType") @Nullable ChunkCompressionType chunkCompressionType,
       @Deprecated @JsonProperty("dictIdCompressionType") @Nullable DictIdCompressionType dictIdCompressionType,
@@ -163,8 +174,9 @@ public class ForwardIndexConfig extends IndexConfig {
       @JsonProperty("targetMaxChunkSize") @Nullable String targetMaxChunkSize,
       @JsonProperty("targetDocsPerChunk") @Nullable Integer targetDocsPerChunk,
       @JsonProperty("configs") @Nullable Map<String, Object> configs) {
-    this(disabled, getActualCompressionCodec(compressionCodec, chunkCompressionType, dictIdCompressionType),
-        deriveNumDocsPerChunk, rawIndexWriterVersion, targetMaxChunkSize, targetDocsPerChunk, configs);
+    this(disabled, encodingType != null ? encodingType : FieldConfig.EncodingType.DICTIONARY,
+        getActualCompressionCodec(compressionCodec, chunkCompressionType, dictIdCompressionType), deriveNumDocsPerChunk,
+        rawIndexWriterVersion, targetMaxChunkSize, targetDocsPerChunk, configs);
   }
 
   public static CompressionCodec getActualCompressionCodec(@Nullable CompressionCodec compressionCodec,
@@ -207,6 +219,11 @@ public class ForwardIndexConfig extends IndexConfig {
   @Nullable
   public CompressionCodec getCompressionCodec() {
     return _compressionCodec;
+  }
+
+  @JsonIgnore
+  public FieldConfig.EncodingType getEncodingType() {
+    return _encodingType;
   }
 
   public boolean isDeriveNumDocsPerChunk() {
@@ -260,18 +277,22 @@ public class ForwardIndexConfig extends IndexConfig {
       return false;
     }
     ForwardIndexConfig that = (ForwardIndexConfig) o;
-    return _compressionCodec == that._compressionCodec && _deriveNumDocsPerChunk == that._deriveNumDocsPerChunk
-        && _rawIndexWriterVersion == that._rawIndexWriterVersion && Objects.equals(_targetMaxChunkSize,
-        that._targetMaxChunkSize) && _targetDocsPerChunk == that._targetDocsPerChunk;
+    return _encodingType == that._encodingType && _compressionCodec == that._compressionCodec
+        && _deriveNumDocsPerChunk == that._deriveNumDocsPerChunk
+        && _rawIndexWriterVersion == that._rawIndexWriterVersion
+        && Objects.equals(_targetMaxChunkSize, that._targetMaxChunkSize)
+        && _targetDocsPerChunk == that._targetDocsPerChunk;
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(super.hashCode(), _compressionCodec, _deriveNumDocsPerChunk, _rawIndexWriterVersion,
-        _targetMaxChunkSize, _targetDocsPerChunk);
+    return Objects.hash(super.hashCode(), _encodingType, _compressionCodec, _deriveNumDocsPerChunk,
+        _rawIndexWriterVersion, _targetMaxChunkSize, _targetDocsPerChunk);
   }
 
   public static class Builder {
+    private boolean _disabled = false;
+    private FieldConfig.EncodingType _encodingType = FieldConfig.EncodingType.DICTIONARY;
     @Nullable
     private CompressionCodec _compressionCodec;
     private boolean _deriveNumDocsPerChunk = false;
@@ -284,12 +305,19 @@ public class ForwardIndexConfig extends IndexConfig {
     }
 
     public Builder(ForwardIndexConfig other) {
+      _disabled = other.isDisabled();
+      _encodingType = other._encodingType;
       _compressionCodec = other._compressionCodec;
       _deriveNumDocsPerChunk = other._deriveNumDocsPerChunk;
       _rawIndexWriterVersion = other._rawIndexWriterVersion;
       _targetMaxChunkSize = other._targetMaxChunkSize;
       _targetDocsPerChunk = other._targetDocsPerChunk;
       _configs = other._configs;
+    }
+
+    public Builder withEncodingType(FieldConfig.EncodingType encodingType) {
+      _encodingType = encodingType;
+      return this;
     }
 
     public Builder withCompressionCodec(CompressionCodec compressionCodec) {
@@ -376,8 +404,8 @@ public class ForwardIndexConfig extends IndexConfig {
     }
 
     public ForwardIndexConfig build() {
-      return new ForwardIndexConfig(false, _compressionCodec, _deriveNumDocsPerChunk, _rawIndexWriterVersion,
-          _targetMaxChunkSize, _targetDocsPerChunk, _configs);
+      return new ForwardIndexConfig(_disabled, _encodingType, _compressionCodec, _deriveNumDocsPerChunk,
+          _rawIndexWriterVersion, _targetMaxChunkSize, _targetDocsPerChunk, _configs);
     }
   }
 }
