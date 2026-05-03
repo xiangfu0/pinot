@@ -52,6 +52,7 @@ import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.readers.GenericRow;
 import org.apache.pinot.spi.filesystem.PinotFS;
 import org.apache.pinot.spi.filesystem.PinotFSFactory;
+import org.apache.pinot.spi.ingest.InsertErrorCode;
 import org.apache.pinot.spi.ingest.InsertExecutor;
 import org.apache.pinot.spi.ingest.InsertRequest;
 import org.apache.pinot.spi.ingest.InsertResult;
@@ -138,7 +139,7 @@ public class ControllerRowInsertExecutor implements InsertExecutor {
     // EMPTY_ROWS, so this check is defense-in-depth for direct executor.execute callers (tests,
     // future programmatic SPI consumers) that bypass the coordinator.
     if (rows == null || rows.isEmpty()) {
-      return buildErrorResult(statementId, "No rows provided in the insert request.", "EMPTY_ROWS");
+      return buildErrorResult(statementId, "No rows provided in the insert request.", InsertErrorCode.EMPTY_ROWS);
     }
 
     // 2. Resolve the fully-qualified table name
@@ -147,25 +148,26 @@ public class ControllerRowInsertExecutor implements InsertExecutor {
     // 3. Look up table config and schema
     TableConfig tableConfig = _resourceManager.getTableConfig(tableNameWithType);
     if (tableConfig == null) {
-      return buildErrorResult(statementId, "Table not found: " + tableNameWithType, "TABLE_NOT_FOUND");
+      return buildErrorResult(statementId, "Table not found: " + tableNameWithType, InsertErrorCode.TABLE_NOT_FOUND);
     }
 
     // 3a. Validate table mode safety (same rules as FileInsertExecutor)
     String safetyError = validateTableModeSafety(tableConfig);
     if (safetyError != null) {
-      return buildErrorResult(statementId, safetyError, "TABLE_MODE_REJECTED");
+      return buildErrorResult(statementId, safetyError, InsertErrorCode.TABLE_MODE_REJECTED);
     }
 
     Schema schema = _resourceManager.getTableSchema(tableNameWithType);
     if (schema == null) {
-      return buildErrorResult(statementId, "Schema not found for table: " + tableNameWithType, "SCHEMA_NOT_FOUND");
+      return buildErrorResult(statementId, "Schema not found for table: " + tableNameWithType,
+          InsertErrorCode.SCHEMA_NOT_FOUND);
     }
 
     // 3b. Reject null primary-key values for full upsert tables. PK columns are tracked on the
     // schema, NOT on the partition config — a previous version of this code conflated the two.
     String pkValidationError = validatePrimaryKeyValues(rows, tableConfig, schema);
     if (pkValidationError != null) {
-      return buildErrorResult(statementId, pkValidationError, "PRIMARY_KEY_REJECTED");
+      return buildErrorResult(statementId, pkValidationError, InsertErrorCode.PRIMARY_KEY_REJECTED);
     }
 
     // 4. Split rows by partition to produce correctly partitioned segments
@@ -176,7 +178,7 @@ public class ControllerRowInsertExecutor implements InsertExecutor {
     try {
       partitionedRows = partitionRows(rows, tableConfig, schema);
     } catch (IllegalArgumentException e) {
-      return buildErrorResult(statementId, e.getMessage(), "PARTITION_VALUE_REJECTED");
+      return buildErrorResult(statementId, e.getMessage(), InsertErrorCode.PARTITION_VALUE_REJECTED);
     }
 
     // 5. Build all segments first (staging phase), then upload all atomically.
@@ -256,7 +258,7 @@ public class ControllerRowInsertExecutor implements InsertExecutor {
           return buildErrorResult(statementId,
               "Failed to upload segment (rolled back " + uploadedSegmentNames.size() + " segments): "
                   + uploadEx.getMessage(),
-              "SEGMENT_UPLOAD_FAILED");
+              InsertErrorCode.SEGMENT_UPLOAD_FAILED);
         }
         // Default: do NOT call deleteSegment on already-registered segments — that would yank
         // segments out from under live queries on the table. Surface the partial set in the
@@ -271,7 +273,7 @@ public class ControllerRowInsertExecutor implements InsertExecutor {
             .setState(InsertStatementState.ABORTED)
             .setMessage("Failed to upload segment after registering " + uploadedSegmentNames.size()
                 + " segments; left in IdealState for operator reconciliation: " + uploadEx.getMessage())
-            .setErrorCode("SEGMENT_UPLOAD_FAILED_PARTIAL")
+            .setErrorCode(InsertErrorCode.SEGMENT_UPLOAD_FAILED_PARTIAL)
             .setSegmentNames(uploadedSegmentNames)
             .build();
       }
@@ -286,7 +288,7 @@ public class ControllerRowInsertExecutor implements InsertExecutor {
     } catch (Exception e) {
       LOGGER.error("Failed to execute row insert for statement {} on table {}", statementId, tableNameWithType, e);
       return buildErrorResult(statementId, "Failed to build segment: " + e.getMessage(),
-          "SEGMENT_BUILD_FAILED");
+          InsertErrorCode.SEGMENT_BUILD_FAILED);
     } finally {
       FileUtils.deleteQuietly(workingDir);
     }

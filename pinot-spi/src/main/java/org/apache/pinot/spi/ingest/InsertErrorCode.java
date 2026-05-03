@@ -83,6 +83,44 @@ public final class InsertErrorCode {
   public static final String WRONG_EXECUTOR = "WRONG_EXECUTOR";
   /** Failed to persist Minion task name to the manifest after task creation. */
   public static final String TASK_NAME_PERSIST_ERROR = "TASK_NAME_PERSIST_ERROR";
+  /**
+   * Execution succeeded and data is durably visible, but post-success bookkeeping (e.g., releasing
+   * the idempotency reservation) failed. The statement state is authoritative; the bookkeeping
+   * artifact will be reconciled by the cleanup sweep.
+   */
+  public static final String POST_SUCCESS_BOOKKEEPING_ERROR = "POST_SUCCESS_BOOKKEEPING_ERROR";
+
+  // ---- Executor-tier (raised by InsertExecutor implementations) -----------------------------
+
+  /** Target table does not exist when the executor looked it up. */
+  public static final String TABLE_NOT_FOUND = "TABLE_NOT_FOUND";
+  /** Table mode (e.g., dedup/upsert configuration) rejects this insert per safety rules. */
+  public static final String TABLE_MODE_REJECTED = "TABLE_MODE_REJECTED";
+  /** Schema is missing for the target table. */
+  public static final String SCHEMA_NOT_FOUND = "SCHEMA_NOT_FOUND";
+  /** Row had a null primary-key value for an upsert table. */
+  public static final String PRIMARY_KEY_REJECTED = "PRIMARY_KEY_REJECTED";
+  /** Row had an invalid value for a partition column (e.g., null or wrong type). */
+  public static final String PARTITION_VALUE_REJECTED = "PARTITION_VALUE_REJECTED";
+  /** Segment generation failed during the row-insert path. */
+  public static final String SEGMENT_BUILD_FAILED = "SEGMENT_BUILD_FAILED";
+  /** Segment upload failed; rollback policy was applied (best-effort delete or registered-as-orphan). */
+  public static final String SEGMENT_UPLOAD_FAILED = "SEGMENT_UPLOAD_FAILED";
+  /**
+   * Multi-partition upload partially succeeded; rollback was disabled by config so already-uploaded
+   * segments remain registered. Uploaded segment names are returned in {@code result.segmentNames}.
+   */
+  public static final String SEGMENT_UPLOAD_FAILED_PARTIAL = "SEGMENT_UPLOAD_FAILED_PARTIAL";
+  /** /insert FROM FILE was given a URI that could not be parsed or resolved. */
+  public static final String INVALID_FILE_URI = "INVALID_FILE_URI";
+  /** Minion task could not be scheduled or produced no subtasks. */
+  public static final String TASK_SCHEDULE_FAILED = "TASK_SCHEDULE_FAILED";
+  /** /insert/complete was called for a statement that the executor cannot find. */
+  public static final String STATEMENT_NOT_FOUND = "STATEMENT_NOT_FOUND";
+  /** /insert/complete was called for a statement already in ABORTED state. */
+  public static final String STATEMENT_ABORTED = "STATEMENT_ABORTED";
+  /** /insert/complete was called from a state that cannot transition to VISIBLE. */
+  public static final String INVALID_STATE_FOR_COMPLETION = "INVALID_STATE_FOR_COMPLETION";
 
   // ---- Query-side ---------------------------------------------------------------------------
 

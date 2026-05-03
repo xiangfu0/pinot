@@ -20,6 +20,7 @@ package org.apache.pinot.controller.helix.core.ingest;
 
 import com.google.common.annotations.VisibleForTesting;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashSet;
@@ -338,7 +339,7 @@ public class InsertStatementCoordinator {
       type = InsertType.valueOf(executorType);
     } catch (IllegalArgumentException e) {
       throw new IllegalArgumentException("Unknown InsertExecutor type: '" + executorType
-          + "'. Supported values: " + java.util.Arrays.toString(InsertType.values()), e);
+          + "'. Supported values: " + Arrays.toString(InsertType.values()), e);
     }
     if (type == InsertType.FILE && !(executor instanceof FileInsertExecutor)) {
       throw new UnsupportedOperationException("InsertType.FILE requires a FileInsertExecutor (or subclass) in v1. "
@@ -527,8 +528,12 @@ public class InsertStatementCoordinator {
       }
     }
 
-    // 6. Create manifest. By construction, if needsRebind=true we won the rebind above, so this
-    // create is the only manifest publish for this requestId.
+    // 6. Create manifest. If needsRebind=true we won the rebind above, but a concurrent retry
+    // arriving between our rebind and our createStatement can observe the reservation pointing at
+    // our statementId, look up the manifest (not yet persisted), treat our statementId as stale,
+    // and rebind the reservation to its own statementId. We close that residual race below by
+    // re-reading the reservation after createStatement and self-rolling-back if it no longer
+    // points at us.
     long now = System.currentTimeMillis();
     InsertStatementManifest manifest =
         new InsertStatementManifest(request.getStatementId(), request.getRequestId(),
@@ -561,6 +566,36 @@ public class InsertStatementCoordinator {
       }
       return rejectResult(request.getStatementId(), InsertErrorCode.STORE_ERROR,
           "Failed to persist statement manifest in ZooKeeper");
+    }
+
+    // 6a. Close the rebind-vs-create residual race for the needsRebind path. Between our
+    // successful rebindRequestIdIfEquals (step 5) and the createStatement above, a concurrent
+    // retry of the SAME requestId can:
+    //   1) read the reservation, observe it points at our statementId,
+    //   2) call getStatement(our_statementId) which returns null (not yet persisted),
+    //   3) enter the stale-reservation branch with staleStatementId=our_statementId,
+    //   4) rebindRequestIdIfEquals(our_statementId, retry_statementId) — and win the CAS.
+    // The reservation now points at the retry; our manifest is an orphan that does not match the
+    // current reservation. Self-rollback by deleting our manifest and returning REBIND_RACE_LOST.
+    // Skipping this check on the ownReservation path is safe: there, the reservation was created
+    // atomically by reserveRequestId (ZK create-only) so no concurrent caller can have rebound it.
+    if (needsRebind) {
+      String currentReservedStatementId =
+          _statementStore.peekReservedStatementId(tableNameWithType, request.getRequestId());
+      if (!request.getStatementId().equals(currentReservedStatementId)) {
+        LOGGER.warn("Rebind-vs-create race lost for requestId={}: reservation now points at {}, "
+                + "rolling back orphan manifest at statementId={}",
+            request.getRequestId(), currentReservedStatementId, request.getStatementId());
+        try {
+          _statementStore.deleteStatement(tableNameWithType, request.getStatementId());
+        } catch (Exception ex) {
+          LOGGER.warn("Failed to delete orphan manifest for statementId={} after rebind race; "
+                  + "cleanup sweep will reap it.", request.getStatementId(), ex);
+        }
+        return rejectResult(request.getStatementId(), InsertErrorCode.REBIND_RACE_LOST,
+            "Lost the rebind-vs-create race; reservation rebound to a concurrent retry. "
+                + "Retry the request to observe the winner's manifest.");
+      }
     }
 
     _tablesWithStatements.add(tableNameWithType);
@@ -749,7 +784,7 @@ public class InsertStatementCoordinator {
             request.getStatementId());
         InsertStatementState durableState = latest != null ? latest.getState()
             : InsertStatementState.VISIBLE;
-        return errorResult(request.getStatementId(), durableState, "POST_SUCCESS_BOOKKEEPING_ERROR",
+        return errorResult(request.getStatementId(), durableState, InsertErrorCode.POST_SUCCESS_BOOKKEEPING_ERROR,
             "Insert succeeded (state=" + durableState + ") but post-success bookkeeping threw: "
                 + e.getMessage());
       }

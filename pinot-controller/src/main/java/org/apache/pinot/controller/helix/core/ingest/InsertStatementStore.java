@@ -457,6 +457,40 @@ public class InsertStatementStore {
   }
 
   /**
+   * Reads the raw statementId value currently stored in the reservation node, without dereferencing
+   * to a manifest. Returns the value verbatim — including {@code __TOMBSTONE_*} and
+   * {@code __GC_PENDING_*} prefixes — so callers can distinguish "still points at me" from "rebound
+   * to someone else", "tombstoned", or "node missing".
+   *
+   * <p>Used by {@code submitInsertInternal} to close the rebind-vs-create race: between a successful
+   * {@link #rebindRequestIdIfEquals} and a successful {@link #createStatement}, a concurrent retry
+   * for the same requestId can observe our reservation, see no manifest, treat our statementId as
+   * stale, and rebind to itself. Re-reading the reservation after createStatement detects that
+   * theft and lets the caller self-rollback.
+   *
+   * @return the raw statementId value, or {@code null} if the reservation does not exist or cannot
+   *   be read
+   */
+  @Nullable
+  public String peekReservedStatementId(String tableNameWithType, String requestId) {
+    if (requestId == null) {
+      return null;
+    }
+    String path = REQUEST_IDS_PREFIX + "/" + tableNameWithType + "/" + requestId;
+    try {
+      ZNRecord existing = _propertyStore.get(path, null, AccessOption.PERSISTENT);
+      if (existing == null) {
+        return null;
+      }
+      return existing.getSimpleField(STATEMENT_ID_FIELD);
+    } catch (Exception e) {
+      LOGGER.debug("Failed to peek requestId reservation for table={} requestId={}",
+          tableNameWithType, requestId, e);
+      return null;
+    }
+  }
+
+  /**
    * Deletes reservation tombstones older than {@code olderThanMs} for the given table.
    *
    * <p>{@link #releaseRequestIdIfEquals} writes a soft-delete tombstone instead of doing an

@@ -34,6 +34,7 @@ import org.apache.pinot.controller.helix.core.minion.PinotTaskManager;
 import org.apache.pinot.core.common.MinionConstants;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableType;
+import org.apache.pinot.spi.ingest.InsertErrorCode;
 import org.apache.pinot.spi.ingest.InsertExecutor;
 import org.apache.pinot.spi.ingest.InsertRequest;
 import org.apache.pinot.spi.ingest.InsertResult;
@@ -122,19 +123,20 @@ public class FileInsertExecutor implements InsertExecutor {
     TableConfig tableConfig = getTableConfig(tableNameWithType);
     if (tableConfig == null) {
       return buildErrorResult(statementId, InsertStatementState.ABORTED,
-          "Table not found: " + tableNameWithType, "TABLE_NOT_FOUND");
+          "Table not found: " + tableNameWithType, InsertErrorCode.TABLE_NOT_FOUND);
     }
 
     // 3. Validate table mode safety rules
     String safetyError = validateTableModeSafety(tableConfig);
     if (safetyError != null) {
-      return buildErrorResult(statementId, InsertStatementState.ABORTED, safetyError, "TABLE_MODE_REJECTED");
+      return buildErrorResult(statementId, InsertStatementState.ABORTED, safetyError,
+          InsertErrorCode.TABLE_MODE_REJECTED);
     }
 
     // 4. Validate file URI
     String uriError = validateFileUri(fileUri);
     if (uriError != null) {
-      return buildErrorResult(statementId, InsertStatementState.ABORTED, uriError, "INVALID_FILE_URI");
+      return buildErrorResult(statementId, InsertStatementState.ABORTED, uriError, InsertErrorCode.INVALID_FILE_URI);
     }
 
     // 5. Schedule Minion SegmentGenerationAndPushTask.
@@ -158,14 +160,15 @@ public class FileInsertExecutor implements InsertExecutor {
         LOGGER.error("PinotTaskManager returned no task name for statement {} table {} (result={}). "
             + "Task may be unschedulable or generated zero subtasks.", statementId, tableNameWithType, taskResult);
         return buildErrorResult(statementId, InsertStatementState.ABORTED,
-            "Minion task was not created (unschedulable or no subtasks generated)", "TASK_SCHEDULE_FAILED");
+            "Minion task was not created (unschedulable or no subtasks generated)",
+            InsertErrorCode.TASK_SCHEDULE_FAILED);
       }
       _taskNames.put(statementId, taskName);
       LOGGER.info("Scheduled Minion task for statement {}: {}", statementId, taskResult);
     } catch (Exception e) {
       LOGGER.error("Failed to schedule Minion task for statement {}", statementId, e);
       return buildErrorResult(statementId, InsertStatementState.ABORTED,
-          "Failed to schedule Minion task: " + e.getMessage(), "TASK_SCHEDULE_FAILED");
+          "Failed to schedule Minion task: " + e.getMessage(), InsertErrorCode.TASK_SCHEDULE_FAILED);
     }
 
     return new InsertResult.Builder()
@@ -202,7 +205,7 @@ public class FileInsertExecutor implements InsertExecutor {
       @Nullable InsertStatementManifest zkManifest) {
     if (zkManifest == null) {
       return buildErrorResult(statementId, InsertStatementState.ABORTED,
-          "Unknown statement: " + statementId, "STATEMENT_NOT_FOUND");
+          "Unknown statement: " + statementId, InsertErrorCode.STATEMENT_NOT_FOUND);
     }
 
     InsertStatementState state = zkManifest.getState();
@@ -213,12 +216,13 @@ public class FileInsertExecutor implements InsertExecutor {
     if (state == InsertStatementState.ABORTED) {
       LOGGER.warn("Ignoring completeFileInsert for already-ABORTED statement {}", statementId);
       return buildErrorResult(statementId, InsertStatementState.ABORTED,
-          "Statement already aborted; completion ignored.", "STATEMENT_ABORTED");
+          "Statement already aborted; completion ignored.", InsertErrorCode.STATEMENT_ABORTED);
     }
     if (state != InsertStatementState.ACCEPTED) {
       LOGGER.warn("Ignoring completeFileInsert for statement {} in unexpected state {}", statementId, state);
       return buildErrorResult(statementId, state,
-          "Statement is in state " + state + "; cannot transition to VISIBLE.", "INVALID_STATE_FOR_COMPLETION");
+          "Statement is in state " + state + "; cannot transition to VISIBLE.",
+          InsertErrorCode.INVALID_STATE_FOR_COMPLETION);
     }
 
     LOGGER.info("Signalling file insert statement {} for table {} as ready to transition to VISIBLE "

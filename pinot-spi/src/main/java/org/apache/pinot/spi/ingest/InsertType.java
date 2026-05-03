@@ -47,8 +47,9 @@ public enum InsertType {
   /**
    * Strict deserializer for the {@code insertType} JSON field. Uses {@link Locale#ROOT} to match
    * sibling SPI enums ({@code InsertConsistencyMode}, {@code InsertStatementState}). Throws
-   * {@link IllegalArgumentException} on unknown values rather than silently defaulting — wire
-   * mismatches across controller versions must surface as deserialization failures.
+   * {@link IllegalArgumentException} with an actionable message on unknown values rather than
+   * silently defaulting — wire mismatches across controller versions must surface as
+   * deserialization failures.
    */
   @JsonCreator
   @Nullable
@@ -56,6 +57,13 @@ public enum InsertType {
     if (value == null) {
       return null;
     }
-    return InsertType.valueOf(value.toUpperCase(Locale.ROOT));
+    try {
+      return InsertType.valueOf(value.toUpperCase(Locale.ROOT));
+    } catch (IllegalArgumentException e) {
+      throw new IllegalArgumentException(
+          "Unknown InsertType: '" + value + "'. This controller version supports: ROW, FILE. "
+              + "Future versions may add additional types; until then, unknown values are rejected "
+              + "to surface forward-compat mismatches loudly.");
+    }
   }
 }

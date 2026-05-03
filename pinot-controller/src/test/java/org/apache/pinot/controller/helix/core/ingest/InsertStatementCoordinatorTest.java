@@ -608,6 +608,9 @@ public class InsertStatementCoordinatorTest {
     when(_statementStore.createStatement(any())).thenReturn(true);
     when(_statementStore.rebindRequestIdIfEquals(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(true);
+    // Post-create reservation re-read confirms our statementId still owns the reservation (no
+    // concurrent retry stole it after our rebind).
+    when(_statementStore.peekReservedStatementId("testTable_OFFLINE", "req-stale")).thenReturn("stmt-new");
 
     InsertResult executorResult = new InsertResult.Builder()
         .setStatementId("stmt-new")
