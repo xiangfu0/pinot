@@ -43,6 +43,7 @@ import org.apache.pinot.common.metrics.ControllerMetrics;
 import org.apache.pinot.controller.helix.core.PinotHelixResourceManager;
 import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.ingest.InsertConsistencyMode;
+import org.apache.pinot.spi.ingest.InsertErrorCode;
 import org.apache.pinot.spi.ingest.InsertExecutor;
 import org.apache.pinot.spi.ingest.InsertRequest;
 import org.apache.pinot.spi.ingest.InsertResult;
@@ -395,7 +396,7 @@ public class InsertStatementCoordinator {
         // Feature flag is off OR coordinator is mid-startup/shutdown. Fail fast for in-process
         // callers (e.g., the local SqlQueryExecutor wrapper) — REST callers see HTTP 503 via
         // InsertStatementResource.checkEnabled(). Both paths must reject submissions consistently.
-        return rejectResult(request.getStatementId(), "COORDINATOR_NOT_READY",
+        return rejectResult(request.getStatementId(), InsertErrorCode.COORDINATOR_NOT_READY,
             "InsertStatementCoordinator is not started (feature disabled or controller starting/stopping)");
       }
       return submitInsertInternal(request);
@@ -411,7 +412,7 @@ public class InsertStatementCoordinator {
     try {
       tableNameWithType = resolveTableName(request.getTableName(), request.getTableType());
     } catch (IllegalArgumentException e) {
-      return rejectResult(request.getStatementId(), "TABLE_RESOLUTION_ERROR", e.getMessage());
+      return rejectResult(request.getStatementId(), InsertErrorCode.TABLE_RESOLUTION_ERROR, e.getMessage());
     }
 
     // 2. Idempotency check — atomic reservation via ZK to prevent concurrent retries from
@@ -430,7 +431,7 @@ public class InsertStatementCoordinator {
             tableNameWithType, request.getRequestId(), request.getStatementId());
       } catch (RuntimeException e) {
         LOGGER.error("RequestId reservation failed for requestId={}", request.getRequestId(), e);
-        return rejectResult(request.getStatementId(), "IDEMPOTENCY_ERROR",
+        return rejectResult(request.getStatementId(), InsertErrorCode.IDEMPOTENCY_ERROR,
             "Cannot verify idempotency due to ZK failure: " + e.getMessage());
       }
       if (existingStatementId != null) {
@@ -440,7 +441,7 @@ public class InsertStatementCoordinator {
         if (existingStatementId.startsWith("__GC_PENDING_")) {
           LOGGER.info("RequestId={} reservation is pending GC; client should retry shortly",
               request.getRequestId());
-          return rejectResult(request.getStatementId(), "REBIND_RACE_LOST",
+          return rejectResult(request.getStatementId(), InsertErrorCode.REBIND_RACE_LOST,
               "Reservation for requestId is being garbage-collected; retry the request");
         }
         // A prior request created this reservation — we do not own it and must not delete it.
@@ -469,7 +470,7 @@ public class InsertStatementCoordinator {
       if (ownReservation) {
         releaseRequestIdOnFailure(tableNameWithType, request.getRequestId(), request.getStatementId());
       }
-      return rejectResult(request.getStatementId(), "UNSUPPORTED_CONSISTENCY_MODE",
+      return rejectResult(request.getStatementId(), InsertErrorCode.UNSUPPORTED_CONSISTENCY_MODE,
           "Only WAIT_FOR_ACCEPT consistency mode is supported in this version. "
               + "Received: " + request.getConsistencyMode());
     }
@@ -481,7 +482,7 @@ public class InsertStatementCoordinator {
       if (ownReservation) {
         releaseRequestIdOnFailure(tableNameWithType, request.getRequestId(), request.getStatementId());
       }
-      return rejectResult(request.getStatementId(), "NO_EXECUTOR",
+      return rejectResult(request.getStatementId(), InsertErrorCode.NO_EXECUTOR,
           "No InsertExecutor registered for type: " + executorType);
     }
 
@@ -493,7 +494,7 @@ public class InsertStatementCoordinator {
       if (ownReservation) {
         releaseRequestIdOnFailure(tableNameWithType, request.getRequestId(), request.getStatementId());
       }
-      return rejectResult(request.getStatementId(), "EMPTY_ROWS",
+      return rejectResult(request.getStatementId(), InsertErrorCode.EMPTY_ROWS,
           "INSERT INTO ... VALUES requires at least one row");
     }
 
@@ -521,7 +522,7 @@ public class InsertStatementCoordinator {
         }
         // Winner manifest still not visible after polling — fail closed. Caller can retry; the
         // retry will see the now-rebound reservation in handleIdempotency on the first read.
-        return rejectResult(request.getStatementId(), "REBIND_RACE_LOST",
+        return rejectResult(request.getStatementId(), InsertErrorCode.REBIND_RACE_LOST,
             "Lost the rebind race; winner's manifest not yet visible. Retry the request.");
       }
     }
@@ -558,7 +559,8 @@ public class InsertStatementCoordinator {
               + "manual cleanup or wait for retention-based prune.", request.getRequestId(), ex);
         }
       }
-      return rejectResult(request.getStatementId(), "STORE_ERROR", "Failed to persist statement manifest in ZooKeeper");
+      return rejectResult(request.getStatementId(), InsertErrorCode.STORE_ERROR,
+          "Failed to persist statement manifest in ZooKeeper");
     }
 
     _tablesWithStatements.add(tableNameWithType);
@@ -641,7 +643,7 @@ public class InsertStatementCoordinator {
             // fresh statementId and schedule a SECOND task against the same input file, producing
             // duplicate segments. Keep the reservation; it will be GC'd by the cleanup sweep
             // along with the ABORTED manifest after visibleRetentionMs.
-            return errorResult(request.getStatementId(), "TASK_NAME_PERSIST_ERROR",
+            return errorResult(request.getStatementId(), InsertErrorCode.TASK_NAME_PERSIST_ERROR,
                 "Could not persist Minion task name to ZK. Manifest aborted but the underlying Minion task may "
                     + "still push segments — operator cleanup may be required. RequestId reservation kept to "
                     + "prevent duplicate task scheduling on retry.");
@@ -676,7 +678,7 @@ public class InsertStatementCoordinator {
           // Surface that state to the caller; do not overwrite it.
           LOGGER.warn("State transition to {} for statementId={} rejected — concurrent writer won.",
               resultState, request.getStatementId());
-          return errorResult(request.getStatementId(), "CONCURRENT_STATE_CHANGE",
+          return errorResult(request.getStatementId(), InsertErrorCode.CONCURRENT_STATE_CHANGE,
               "Another actor (abort/cleanup) already transitioned this statement to a terminal state");
         }
         if (result != CasResult.SUCCESS) {
@@ -689,7 +691,7 @@ public class InsertStatementCoordinator {
             // reservation is GC'd by the cleanup sweep after the retention period.
             // Surface the actual executor state (VISIBLE) — using ABORTED here would mislead
             // callers since the data may be queryable.
-            return errorResult(request.getStatementId(), resultState, "STATE_PERSIST_ERROR",
+            return errorResult(request.getStatementId(), resultState, InsertErrorCode.STATE_PERSIST_ERROR,
                 "Statement executed but ZK state update failed. Segments may be visible but state is uncertain. "
                     + "Do not retry — data may already be queryable");
           }
@@ -698,7 +700,7 @@ public class InsertStatementCoordinator {
           // state — cannot safely release because a concurrent writer may have moved it to a
           // durable terminal state).
           if (result == CasResult.VERSION_CONFLICT) {
-            return errorResult(request.getStatementId(), "STATE_PERSIST_ERROR",
+            return errorResult(request.getStatementId(), InsertErrorCode.STATE_PERSIST_ERROR,
                 "Could not persist ABORTED state after CAS retries; leaving requestId reserved so a concurrent "
                     + "writer can be reconciled by the cleanup sweep");
           }
@@ -770,7 +772,8 @@ public class InsertStatementCoordinator {
         bumpActiveStatementCount(-1);  // ACCEPTED → ABORTED
         activeCounterDecremented = true;
         releaseRequestIdOnFailure(tableNameWithType, request.getRequestId(), request.getStatementId());
-        return errorResult(request.getStatementId(), "EXECUTOR_ERROR", "Executor failed: " + e.getMessage());
+        return errorResult(request.getStatementId(), InsertErrorCode.EXECUTOR_ERROR,
+            "Executor failed: " + e.getMessage());
       }
       // PRECHECK_FAILED: a concurrent writer (e.g., the success path moments earlier) reached a
       // terminal state. Surface that state to the caller; data may be visible.
@@ -799,7 +802,7 @@ public class InsertStatementCoordinator {
       if (isTerminal && !activeCounterDecremented) {
         bumpActiveStatementCount(-1);
       }
-      return errorResult(request.getStatementId(), currentState, "EXECUTOR_ERROR_BUT_DURABLE",
+      return errorResult(request.getStatementId(), currentState, InsertErrorCode.EXECUTOR_ERROR_BUT_DURABLE,
           "Executor threw but manifest is in state " + currentState + ": " + e.getMessage());
     }
   }
@@ -813,7 +816,7 @@ public class InsertStatementCoordinator {
    */
   public InsertResult abortStatement(String statementId, @Nullable String tableNameWithType) {
     if (!_started) {
-      return rejectResult(statementId, "COORDINATOR_NOT_READY",
+      return rejectResult(statementId, InsertErrorCode.COORDINATOR_NOT_READY,
           "InsertStatementCoordinator is not started (feature disabled or controller starting/stopping)");
     }
     // If tableNameWithType is not provided, search across all tables
@@ -828,7 +831,7 @@ public class InsertStatementCoordinator {
     }
 
     if (manifest == null) {
-      return rejectResult(statementId, "NOT_FOUND", "Statement not found: " + statementId);
+      return rejectResult(statementId, InsertErrorCode.NOT_FOUND, "Statement not found: " + statementId);
     }
 
     InsertStatementState currentState = manifest.getState();
@@ -842,7 +845,7 @@ public class InsertStatementCoordinator {
     // Cannot abort a VISIBLE statement (data is already queryable). Surface the real state so the
     // caller can distinguish "abort failed because already visible" from "abort succeeded".
     if (currentState == InsertStatementState.VISIBLE) {
-      return errorResult(statementId, InsertStatementState.VISIBLE, "INVALID_STATE",
+      return errorResult(statementId, InsertStatementState.VISIBLE, InsertErrorCode.INVALID_STATE,
           "Cannot abort a VISIBLE statement. Data is already queryable.");
     }
 
@@ -861,14 +864,16 @@ public class InsertStatementCoordinator {
       // Concurrent writer already reached VISIBLE or ABORTED — return the current state.
       InsertStatementManifest latest = _statementStore.getStatement(tableNameWithType, statementId);
       if (latest != null && latest.getState() == InsertStatementState.VISIBLE) {
-        return errorResult(statementId, "INVALID_STATE",
+        // Use the 4-arg overload to surface the actual VISIBLE state in the response. The 3-arg
+        // overload defaults state=ABORTED, which would contradict the message saying VISIBLE.
+        return errorResult(statementId, InsertStatementState.VISIBLE, InsertErrorCode.INVALID_STATE,
             "Cannot abort a VISIBLE statement. Data is already queryable.");
       }
       return new InsertResult.Builder().setStatementId(statementId).setState(InsertStatementState.ABORTED)
           .setMessage("Statement already in terminal state").build();
     }
     if (abortResult != CasResult.SUCCESS) {
-      return errorResult(statementId, "STATE_PERSIST_ERROR",
+      return errorResult(statementId, InsertErrorCode.STATE_PERSIST_ERROR,
           "Could not persist ABORTED state: " + abortResult);
     }
 
@@ -903,7 +908,7 @@ public class InsertStatementCoordinator {
    */
   public InsertResult getStatus(String statementId, @Nullable String tableNameWithType) {
     if (!_started) {
-      return rejectResult(statementId, "COORDINATOR_NOT_READY",
+      return rejectResult(statementId, InsertErrorCode.COORDINATOR_NOT_READY,
           "InsertStatementCoordinator is not started (feature disabled or controller starting/stopping)");
     }
     InsertStatementManifest manifest;
@@ -915,7 +920,7 @@ public class InsertStatementCoordinator {
       manifest = _statementStore.findStatementAcrossTables(statementId);
     }
     if (manifest == null) {
-      return rejectResult(statementId, "NOT_FOUND", "Statement not found: " + statementId);
+      return rejectResult(statementId, InsertErrorCode.NOT_FOUND, "Statement not found: " + statementId);
     }
 
     return new InsertResult.Builder().setStatementId(statementId).setState(manifest.getState())
@@ -962,7 +967,7 @@ public class InsertStatementCoordinator {
   public InsertResult completeFileInsert(String statementId, @Nullable String tableNameWithType,
       List<String> segmentNames) {
     if (!_started) {
-      return rejectResult(statementId, "COORDINATOR_NOT_READY",
+      return rejectResult(statementId, InsertErrorCode.COORDINATOR_NOT_READY,
           "InsertStatementCoordinator is not started (feature disabled or controller starting/stopping)");
     }
     // Sanity-validate segment names. Real names come from the Minion task and follow standard
@@ -974,18 +979,18 @@ public class InsertStatementCoordinator {
       // Bound the list size and per-name length so a caller with UPDATE access cannot balloon
       // the manifest's ZNRecord beyond ZK's 1MB-per-znode limit.
       if (segmentNames.size() > MAX_SEGMENT_NAMES_PER_COMPLETION) {
-        return rejectResult(statementId, "INVALID_SEGMENT_NAME",
+        return rejectResult(statementId, InsertErrorCode.INVALID_SEGMENT_NAME,
             "segmentNames list size " + segmentNames.size() + " exceeds the per-completion cap "
                 + MAX_SEGMENT_NAMES_PER_COMPLETION + ". Split the upload into multiple inserts.");
       }
       for (String segmentName : segmentNames) {
         if (segmentName == null || segmentName.isEmpty() || !SEGMENT_NAME_PATTERN.matcher(segmentName).matches()) {
-          return rejectResult(statementId, "INVALID_SEGMENT_NAME",
+          return rejectResult(statementId, InsertErrorCode.INVALID_SEGMENT_NAME,
               "Segment name '" + segmentName + "' is not a valid Pinot segment identifier "
                   + "(allowed: alphanumeric, underscore, dash, dot)");
         }
         if (segmentName.length() > MAX_SEGMENT_NAME_LENGTH) {
-          return rejectResult(statementId, "INVALID_SEGMENT_NAME",
+          return rejectResult(statementId, InsertErrorCode.INVALID_SEGMENT_NAME,
               "Segment name length " + segmentName.length() + " exceeds the cap "
                   + MAX_SEGMENT_NAME_LENGTH + " (segment-name-prefix: '"
                   + segmentName.substring(0, Math.min(64, segmentName.length())) + "...')");
@@ -1001,7 +1006,7 @@ public class InsertStatementCoordinator {
     if (tableNameWithType != null && !tableNameWithType.isEmpty()) {
       manifest = _statementStore.getStatement(tableNameWithType, statementId);
       if (manifest == null) {
-        return rejectResult(statementId, "NOT_FOUND",
+        return rejectResult(statementId, InsertErrorCode.NOT_FOUND,
             "Statement not found in table " + tableNameWithType + ": " + statementId);
       }
       // Defense-in-depth: assert the manifest's actual table matches the auth-scoped parameter.
@@ -1013,13 +1018,13 @@ public class InsertStatementCoordinator {
         LOGGER.error("completeFileInsert table mismatch: caller supplied {} but manifest belongs "
                 + "to {} (statementId={})",
             tableNameWithType, manifest.getTableNameWithType(), statementId);
-        return rejectResult(statementId, "NOT_FOUND",
+        return rejectResult(statementId, InsertErrorCode.NOT_FOUND,
             "Statement not found in table " + tableNameWithType + ": " + statementId);
       }
     } else {
       manifest = _statementStore.findStatementAcrossTables(statementId);
       if (manifest == null) {
-        return rejectResult(statementId, "NOT_FOUND", "Statement not found: " + statementId);
+        return rejectResult(statementId, InsertErrorCode.NOT_FOUND, "Statement not found: " + statementId);
       }
     }
 
@@ -1042,7 +1047,7 @@ public class InsertStatementCoordinator {
         LOGGER.error("completeFileInsert failed-closed: could not read IdealState for table {} "
             + "during segment anti-hijack cross-check (statementId={})",
             tableNameWithType, statementId, e);
-        return rejectResult(statementId, "STORE_ERROR",
+        return rejectResult(statementId, InsertErrorCode.STORE_ERROR,
             "Could not verify supplied segments against IdealState for table " + tableNameWithType
                 + " — retry /insert/complete after ZK recovers, or wait for the cleanup sweep "
                 + "auto-complete path. Reason: " + e.getMessage());
@@ -1051,7 +1056,7 @@ public class InsertStatementCoordinator {
         if (!registered.contains(name)) {
           LOGGER.warn("completeFileInsert rejected: segment '{}' is not registered in IdealState "
                   + "for table {} (statementId={})", name, tableNameWithType, statementId);
-          return rejectResult(statementId, "INVALID_SEGMENT_NAME",
+          return rejectResult(statementId, InsertErrorCode.INVALID_SEGMENT_NAME,
               "Segment '" + name + "' is not registered in IdealState for table " + tableNameWithType
                   + ". The Minion task's segments must be visible before /insert/complete.");
         }
@@ -1061,11 +1066,11 @@ public class InsertStatementCoordinator {
     // Delegate to the file executor for lineage finalization
     InsertExecutor executor = lookupExecutor(InsertType.FILE.name());
     if (executor == null) {
-      return rejectResult(statementId, "NO_EXECUTOR", "No FILE executor registered");
+      return rejectResult(statementId, InsertErrorCode.NO_EXECUTOR, "No FILE executor registered");
     }
 
     if (!(executor instanceof FileInsertExecutor)) {
-      return rejectResult(statementId, "WRONG_EXECUTOR", "FILE executor is not a FileInsertExecutor");
+      return rejectResult(statementId, InsertErrorCode.WRONG_EXECUTOR, "FILE executor is not a FileInsertExecutor");
     }
 
     // Pass the ZK manifest so the executor can recover lineage state after controller failover
@@ -1085,11 +1090,11 @@ public class InsertStatementCoordinator {
       if (cas == CasResult.PRECHECK_FAILED) {
         LOGGER.warn("completeFileInsert: statement {} was already in a terminal state; ignoring completion",
             statementId);
-        return errorResult(statementId, "CONCURRENT_STATE_CHANGE",
+        return errorResult(statementId, InsertErrorCode.CONCURRENT_STATE_CHANGE,
             "Statement was already in a terminal state; completion ignored");
       }
       if (cas != CasResult.SUCCESS) {
-        return errorResult(statementId, "STATE_PERSIST_ERROR",
+        return errorResult(statementId, InsertErrorCode.STATE_PERSIST_ERROR,
             "Could not persist VISIBLE state: " + cas);
       }
       // Persist succeeded — safe to drop the in-memory task-name cache so a future stale poll
@@ -1127,11 +1132,11 @@ public class InsertStatementCoordinator {
         InsertStatementState actual = latest != null ? latest.getState() : InsertStatementState.ABORTED;
         LOGGER.info("completeFileInsert ABORTED CAS skipped for {}: manifest already in state {}",
             statementId, actual);
-        return errorResult(statementId, actual, "CONCURRENT_STATE_CHANGE",
+        return errorResult(statementId, actual, InsertErrorCode.CONCURRENT_STATE_CHANGE,
             "Statement already reached terminal state " + actual + "; abort skipped");
       } else if (cas == CasResult.NOT_FOUND) {
         LOGGER.warn("completeFileInsert ABORTED CAS could not find manifest for statementId={}", statementId);
-        return errorResult(statementId, "NOT_FOUND",
+        return errorResult(statementId, InsertErrorCode.NOT_FOUND,
             "Manifest disappeared during ABORTED transition: " + statementId);
       } else if (cas == CasResult.VERSION_CONFLICT) {
         LOGGER.error("completeFileInsert ABORTED CAS exhausted retries for statementId={}", statementId);
@@ -1141,7 +1146,7 @@ public class InsertStatementCoordinator {
         if (executor instanceof FileInsertExecutor) {
           ((FileInsertExecutor) executor).taskCompleted(statementId);
         }
-        return errorResult(statementId, "STATE_PERSIST_ERROR",
+        return errorResult(statementId, InsertErrorCode.STATE_PERSIST_ERROR,
             "Could not persist ABORTED state after CAS retries; cleanup sweep will reconcile");
       }
     }
@@ -1237,7 +1242,7 @@ public class InsertStatementCoordinator {
     // accepted request was aborted." Matches the InsertErrorCode pre-acceptance contract.
     LOGGER.warn("Duplicate requestId={} with different payloadHash. Existing={}, new={}", request.getRequestId(),
         existing.getPayloadHash(), request.getPayloadHash());
-    return rejectResult(request.getStatementId(), "IDEMPOTENCY_CONFLICT",
+    return rejectResult(request.getStatementId(), InsertErrorCode.IDEMPOTENCY_CONFLICT,
         "Request id '" + request.getRequestId() + "' already used with a different payload");
   }
 
@@ -1433,7 +1438,7 @@ public class InsertStatementCoordinator {
                   manifest.getStatementId());
               if (current == null || current.getState() != InsertStatementState.ACCEPTED) {
                 LOGGER.info("Stuck-ACCEPTED ROW GC skipped for {}: state changed to {} concurrently",
-                    manifest.getStatementId(), current == null ? "NOT_FOUND" : current.getState());
+                    manifest.getStatementId(), current == null ? InsertErrorCode.NOT_FOUND : current.getState());
                 break;
               }
               // KEEP the requestId reservation (do NOT release). Same rationale as the VISIBLE

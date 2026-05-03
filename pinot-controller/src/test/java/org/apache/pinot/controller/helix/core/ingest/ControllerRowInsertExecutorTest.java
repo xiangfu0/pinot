@@ -87,7 +87,10 @@ public class ControllerRowInsertExecutorTest {
    */
   private ControllerRowInsertExecutor createTestExecutor(AtomicInteger uploadCallCount,
       List<String> uploadedSegmentNames, int failOnCallNumber) {
-    return new ControllerRowInsertExecutor(_resourceManager) {
+    // Use allowDestructiveRollback=true to preserve the legacy v1 test that pins the rollback
+    // path's deleteSegment behavior. Production controllers default to false; the gate is
+    // exercised by a dedicated test below.
+    return new ControllerRowInsertExecutor(_resourceManager, true) {
       @Override
       File createWorkingDir(String tableNameWithType) {
         return new File(_tempDir, "work_" + System.nanoTime());
@@ -248,6 +251,76 @@ public class ControllerRowInsertExecutorTest {
     assertEquals(uploadedNames.size(), 1, "Exactly one segment should have completed upload before failure");
     // deleteSegment called for the one fully-uploaded segment
     verify(_resourceManager, times(1)).deleteSegment(eq(TABLE_NAME), anyString());
+  }
+
+  @Test
+  public void testMultiPartitionUploadFailureDoesNotRollbackByDefault() {
+    // With destructive rollback DISABLED (the production default), a partial-batch upload
+    // failure must NOT call deleteSegment on already-registered segments. Surface the partial
+    // set in the result with errorCode=SEGMENT_UPLOAD_FAILED_PARTIAL so operators can reconcile.
+    Map<String, ColumnPartitionConfig> partitionMap = new HashMap<>();
+    partitionMap.put("col1", new ColumnPartitionConfig("murmur3", 2));
+    SegmentPartitionConfig partitionConfig = new SegmentPartitionConfig(partitionMap);
+    IndexingConfig indexingConfig = new IndexingConfig();
+    indexingConfig.setSegmentPartitionConfig(partitionConfig);
+
+    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE)
+        .setTableName("testTable")
+        .build();
+    tableConfig.setIndexingConfig(indexingConfig);
+
+    Schema schema = new Schema.SchemaBuilder()
+        .setSchemaName("testTable")
+        .addSingleValueDimension("col1", FieldSpec.DataType.STRING)
+        .build();
+    when(_resourceManager.getTableConfig(TABLE_NAME)).thenReturn(tableConfig);
+    when(_resourceManager.getTableSchema(TABLE_NAME)).thenReturn(schema);
+
+    AtomicInteger uploadCallCount = new AtomicInteger();
+    List<String> uploadedNames = new ArrayList<>();
+    // Build executor with allowDestructiveRollback=false (production default).
+    ControllerRowInsertExecutor executor =
+        new ControllerRowInsertExecutor(_resourceManager, false) {
+          @Override
+          File createWorkingDir(String tableNameWithType) {
+            return new File(_tempDir, "work_" + System.nanoTime());
+          }
+
+          @Override
+          void uploadSegment(String tableNameWithType, File segmentDir, File segmentTarFile, String segmentName)
+              throws Exception {
+            int callNum = uploadCallCount.incrementAndGet();
+            if (callNum >= 2) {
+              throw new RuntimeException("Simulated upload failure on call " + callNum);
+            }
+            uploadedNames.add(segmentName);
+          }
+        };
+
+    List<GenericRow> rows = new ArrayList<>();
+    for (int i = 0; i < 100; i++) {
+      GenericRow row = new GenericRow();
+      row.putValue("col1", "key_" + i);
+      rows.add(row);
+    }
+
+    InsertRequest request = new InsertRequest.Builder()
+        .setStatementId("stmt-no-rollback")
+        .setTableName(TABLE_NAME)
+        .setTableType(TableType.OFFLINE)
+        .setInsertType(InsertType.ROW)
+        .setRows(rows)
+        .build();
+
+    InsertResult result = executor.execute(request);
+
+    assertEquals(result.getState(), InsertStatementState.ABORTED);
+    assertEquals(result.getErrorCode(), "SEGMENT_UPLOAD_FAILED_PARTIAL");
+    assertEquals(uploadedNames.size(), 1, "Exactly one segment completed upload before failure");
+    // The successfully-uploaded segment must remain in IdealState; deleteSegment is NOT called.
+    verify(_resourceManager, times(0)).deleteSegment(eq(TABLE_NAME), anyString());
+    // The result surfaces the partial set so operators can reconcile.
+    assertEquals(result.getSegmentNames().size(), 1);
   }
 
   // --- Table mode safety validation ---

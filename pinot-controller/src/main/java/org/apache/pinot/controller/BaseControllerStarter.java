@@ -654,7 +654,8 @@ public abstract class BaseControllerStarter implements ServiceStartable {
       // Register the ROW executor so broker-issued INSERTs are routed correctly.
       // FILE executor is registered later (once _taskManager is available); start() is deferred
       // until ALL executors are registered so isStarted()=true means "ready for any insert type".
-      ControllerRowInsertExecutor rowInsertExecutor = new ControllerRowInsertExecutor(_helixResourceManager);
+      ControllerRowInsertExecutor rowInsertExecutor =
+          new ControllerRowInsertExecutor(_helixResourceManager, _config.isInsertRowAllowDestructiveRollback());
       _insertStatementCoordinator.registerExecutor(InsertType.ROW.name(), rowInsertExecutor);
 
       // Wire the coordinator (not the raw executor) so that controller-local INSERTs go through

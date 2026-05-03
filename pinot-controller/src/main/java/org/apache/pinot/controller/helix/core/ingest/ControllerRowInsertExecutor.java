@@ -99,14 +99,29 @@ public class ControllerRowInsertExecutor implements InsertExecutor {
   private static final String SEGMENT_TAR_DIR = "segment_tar";
 
   private final PinotHelixResourceManager _resourceManager;
+  private final boolean _allowDestructiveRollback;
 
   /**
-   * Creates a new executor backed by the given resource manager.
-   *
-   * @param resourceManager the Helix resource manager for table config lookup and segment upload
+   * Creates a new executor with destructive rollback DISABLED. Partial-batch upload failures
+   * leave already-registered segments in IdealState; operators reconcile manually.
    */
   public ControllerRowInsertExecutor(PinotHelixResourceManager resourceManager) {
+    this(resourceManager, false);
+  }
+
+  /**
+   * Creates a new executor.
+   *
+   * @param resourceManager           the Helix resource manager for table config lookup and segment upload
+   * @param allowDestructiveRollback  if {@code true}, partial-batch upload failure deletes
+   *     already-registered segments via {@code _resourceManager.deleteSegment}. This can yank
+   *     segments out from under live queries and is OFF by default. Set via
+   *     {@code controller.insert.row.allow.destructive.rollback} on interactive/quickstart-tier
+   *     controllers only.
+   */
+  public ControllerRowInsertExecutor(PinotHelixResourceManager resourceManager, boolean allowDestructiveRollback) {
     _resourceManager = resourceManager;
+    _allowDestructiveRollback = allowDestructiveRollback;
   }
 
   @Override
@@ -232,15 +247,33 @@ public class ControllerRowInsertExecutor implements InsertExecutor {
               staged._segmentName, staged._rowCount, staged._partitionId);
         }
       } catch (Exception uploadEx) {
+        if (_allowDestructiveRollback) {
+          LOGGER.error("Failed to upload segment during row insert for statement {} on table {}. "
+              + "Rolling back {} already-uploaded segments (destructive rollback enabled). Pending "
+              + "segment {} may have left orphan tar in deep store (operator cleanup may be required).",
+              statementId, tableNameWithType, uploadedSegmentNames.size(), pendingSegmentName, uploadEx);
+          rollbackUploadedSegments(tableNameWithType, uploadedSegmentNames);
+          return buildErrorResult(statementId,
+              "Failed to upload segment (rolled back " + uploadedSegmentNames.size() + " segments): "
+                  + uploadEx.getMessage(),
+              "SEGMENT_UPLOAD_FAILED");
+        }
+        // Default: do NOT call deleteSegment on already-registered segments — that would yank
+        // segments out from under live queries on the table. Surface the partial set in the
+        // result so operators can reconcile manually. The pending segment (if any) may have
+        // left an orphan tar in deep store and an unregistered segment in IdealState.
         LOGGER.error("Failed to upload segment during row insert for statement {} on table {}. "
-            + "Rolling back {} already-uploaded segments. Pending segment {} may have left orphan "
-            + "tar in deep store (operator cleanup may be required).", statementId, tableNameWithType,
-            uploadedSegmentNames.size(), pendingSegmentName, uploadEx);
-        rollbackUploadedSegments(tableNameWithType, uploadedSegmentNames);
-        return buildErrorResult(statementId,
-            "Failed to upload segment (rolled back " + uploadedSegmentNames.size() + " segments): "
-                + uploadEx.getMessage(),
-            "SEGMENT_UPLOAD_FAILED");
+            + "Leaving {} already-uploaded segments registered (destructive rollback disabled). "
+            + "Operator must reconcile. Pending segment {} may have left orphan tar in deep store.",
+            statementId, tableNameWithType, uploadedSegmentNames.size(), pendingSegmentName, uploadEx);
+        return new InsertResult.Builder()
+            .setStatementId(statementId)
+            .setState(InsertStatementState.ABORTED)
+            .setMessage("Failed to upload segment after registering " + uploadedSegmentNames.size()
+                + " segments; left in IdealState for operator reconciliation: " + uploadEx.getMessage())
+            .setErrorCode("SEGMENT_UPLOAD_FAILED_PARTIAL")
+            .setSegmentNames(uploadedSegmentNames)
+            .build();
       }
 
       return new InsertResult.Builder()

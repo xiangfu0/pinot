@@ -27,6 +27,7 @@ import org.apache.helix.AccessOption;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
 import org.apache.helix.zookeeper.datamodel.ZNRecord;
 import org.apache.helix.zookeeper.zkclient.exception.ZkBadVersionException;
+import org.apache.pinot.common.metadata.ZKMetadataProvider;
 import org.apache.zookeeper.data.Stat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -69,8 +70,10 @@ import org.slf4j.LoggerFactory;
 public class InsertStatementStore {
   private static final Logger LOGGER = LoggerFactory.getLogger(InsertStatementStore.class);
 
-  private static final String INSERT_STATEMENTS_PREFIX = "/INSERT_STATEMENTS";
-  private static final String REQUEST_IDS_PREFIX = "/INSERT_REQUEST_IDS";
+  // Top-level propertyStore prefixes are owned by ZKMetadataProvider so the full reserved
+  // namespace stays in one file. Local aliases keep call sites short.
+  private static final String INSERT_STATEMENTS_PREFIX = ZKMetadataProvider.PROPERTYSTORE_INSERT_STATEMENTS_PREFIX;
+  private static final String REQUEST_IDS_PREFIX = ZKMetadataProvider.PROPERTYSTORE_INSERT_REQUEST_IDS_PREFIX;
   private static final String MANIFEST_FIELD = "manifest";
   private static final String STATEMENT_ID_FIELD = "statementId";
   /**
