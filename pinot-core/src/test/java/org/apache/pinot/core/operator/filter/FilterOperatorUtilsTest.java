@@ -25,16 +25,27 @@ import java.util.Collections;
 import java.util.List;
 import java.util.OptionalInt;
 import org.apache.pinot.common.request.context.ExpressionContext;
+import org.apache.pinot.common.request.context.predicate.Predicate;
 import org.apache.pinot.common.request.context.predicate.TextMatchPredicate;
 import org.apache.pinot.core.common.Operator;
 import org.apache.pinot.core.operator.blocks.FilterBlock;
+import org.apache.pinot.core.operator.filter.predicate.PredicateEvaluator;
 import org.apache.pinot.core.query.request.context.QueryContext;
+import org.apache.pinot.segment.spi.datasource.DataSource;
+import org.apache.pinot.segment.spi.datasource.DataSourceMetadata;
+import org.apache.pinot.segment.spi.index.reader.Dictionary;
+import org.apache.pinot.segment.spi.index.reader.InvertedIndexReader;
+import org.apache.pinot.segment.spi.index.reader.NullValueVectorReader;
 import org.apache.pinot.segment.spi.index.reader.TextIndexReader;
+import org.apache.pinot.spi.config.table.FieldConfig;
+import org.apache.pinot.spi.data.DimensionFieldSpec;
+import org.apache.pinot.spi.data.FieldSpec;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 import org.roaringbitmap.buffer.MutableRoaringBitmap;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.testng.Assert.assertEquals;
@@ -327,5 +338,84 @@ public class FilterOperatorUtilsTest {
       // This filter operator does not support AND/OR/NOT operations.
       super(0, false);
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Leaf operator selection: the dead raw-value-inverted branch must not fire.
+  // -------------------------------------------------------------------------
+
+  /// With inverted-index-requires-dictionary now enforced at the SPI layer (apache/pinot#18365), a non-dict-based
+  /// predicate evaluator must NOT fall into the inverted-index branch — that path used to dispatch to the now-dead
+  /// `RawValueInvertedIndexFilterOperator`. The expected fall-through is to a [ScanBasedFilterOperator].
+  @Test
+  public void testRawValuePredicateWithInvertedIndexFallsThroughToScan() {
+    QueryContext queryContext = mock(QueryContext.class);
+    when(queryContext.isIndexUseAllowed(any(DataSource.class), any(FieldConfig.IndexType.class))).thenReturn(true);
+    when(queryContext.isIndexUseAllowed(any(String.class), any(FieldConfig.IndexType.class))).thenReturn(true);
+    when(queryContext.isNullHandlingEnabled()).thenReturn(false);
+
+    DataSource dataSource = mock(DataSource.class);
+    DataSourceMetadata metadata = mock(DataSourceMetadata.class);
+    FieldSpec fieldSpec = new DimensionFieldSpec("col", FieldSpec.DataType.STRING, true);
+    when(metadata.isSorted()).thenReturn(false);
+    when(metadata.isSingleValue()).thenReturn(true);
+    when(metadata.getFieldSpec()).thenReturn(fieldSpec);
+    when(dataSource.getDataSourceMetadata()).thenReturn(metadata);
+    when(dataSource.getColumnName()).thenReturn("col");
+    // Dictionary is present (the column carries a dictionary for the inverted index) but the predicate evaluator is
+    // raw-value-based — exactly the configuration the dead branch used to handle.
+    when(dataSource.getDictionary()).thenReturn(mock(Dictionary.class));
+    when(dataSource.getInvertedIndex()).thenReturn(mock(InvertedIndexReader.class));
+    when(dataSource.getNullValueVector()).thenReturn((NullValueVectorReader) null);
+    when(dataSource.getRangeIndex()).thenReturn(null);
+    when(dataSource.getForwardIndex()).thenReturn(
+        mock(org.apache.pinot.segment.spi.index.reader.ForwardIndexReader.class));
+
+    PredicateEvaluator predicateEvaluator = mock(PredicateEvaluator.class);
+    when(predicateEvaluator.isAlwaysFalse()).thenReturn(false);
+    when(predicateEvaluator.isAlwaysTrue()).thenReturn(false);
+    when(predicateEvaluator.isDictionaryBased()).thenReturn(false);
+    when(predicateEvaluator.getPredicateType()).thenReturn(Predicate.Type.EQ);
+
+    BaseFilterOperator op = FilterOperatorUtils.getLeafFilterOperator(queryContext, predicateEvaluator, dataSource,
+        NUM_DOCS);
+    assertTrue(op instanceof ScanBasedFilterOperator,
+        "raw-value predicate evaluator must fall through to ScanBasedFilterOperator (not RawValueInvertedIndex)");
+  }
+
+  /// A dict-based predicate evaluator on a column with an inverted index still picks the inverted-index path. This
+  /// pins down that the previous edit only removed the raw-value branch, not the dictionary-based one.
+  @Test
+  public void testDictionaryPredicateWithInvertedIndexUsesInvertedIndexFilter() {
+    QueryContext queryContext = mock(QueryContext.class);
+    when(queryContext.isIndexUseAllowed(any(DataSource.class), any(FieldConfig.IndexType.class))).thenReturn(true);
+    when(queryContext.isIndexUseAllowed(any(String.class), any(FieldConfig.IndexType.class))).thenReturn(true);
+    when(queryContext.isNullHandlingEnabled()).thenReturn(false);
+
+    DataSource dataSource = mock(DataSource.class);
+    DataSourceMetadata metadata = mock(DataSourceMetadata.class);
+    FieldSpec fieldSpec = new DimensionFieldSpec("col", FieldSpec.DataType.STRING, true);
+    when(metadata.isSorted()).thenReturn(false);
+    when(metadata.isSingleValue()).thenReturn(true);
+    when(metadata.getFieldSpec()).thenReturn(fieldSpec);
+    when(dataSource.getDataSourceMetadata()).thenReturn(metadata);
+    when(dataSource.getColumnName()).thenReturn("col");
+    when(dataSource.getDictionary()).thenReturn(mock(Dictionary.class));
+    when(dataSource.getInvertedIndex()).thenReturn(mock(InvertedIndexReader.class));
+    when(dataSource.getNullValueVector()).thenReturn((NullValueVectorReader) null);
+    when(dataSource.getRangeIndex()).thenReturn(null);
+    when(dataSource.getForwardIndex()).thenReturn(
+        mock(org.apache.pinot.segment.spi.index.reader.ForwardIndexReader.class));
+
+    PredicateEvaluator predicateEvaluator = mock(PredicateEvaluator.class);
+    when(predicateEvaluator.isAlwaysFalse()).thenReturn(false);
+    when(predicateEvaluator.isAlwaysTrue()).thenReturn(false);
+    when(predicateEvaluator.isDictionaryBased()).thenReturn(true);
+    when(predicateEvaluator.getPredicateType()).thenReturn(Predicate.Type.EQ);
+
+    BaseFilterOperator op = FilterOperatorUtils.getLeafFilterOperator(queryContext, predicateEvaluator, dataSource,
+        NUM_DOCS);
+    assertTrue(op instanceof InvertedIndexFilterOperator,
+        "dict-based predicate evaluator must select InvertedIndexFilterOperator");
   }
 }

@@ -29,6 +29,8 @@ import org.apache.pinot.common.request.context.predicate.RegexpLikePredicate;
 import org.apache.pinot.core.query.request.context.QueryContext;
 import org.apache.pinot.segment.spi.datasource.DataSource;
 import org.apache.pinot.segment.spi.index.reader.Dictionary;
+import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
+import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.apache.pinot.spi.exception.BadQueryRequestException;
 
@@ -37,11 +39,12 @@ public class PredicateEvaluatorProvider {
   private PredicateEvaluatorProvider() {
   }
 
-  public static PredicateEvaluator getPredicateEvaluator(Predicate predicate, @Nullable Dictionary dictionary,
-      DataType dataType) {
-    return getPredicateEvaluator(predicate, dictionary, dataType, null);
-  }
-
+  /// Returns a [PredicateEvaluator] for the given predicate against a column with the supplied dictionary and data
+  /// type. When `dictionary` is non-null the dictionary-based factory is used; otherwise the raw-value-based
+  /// factory is used. Callers are responsible for deciding which dictionary (if any) to pass — the
+  /// [DataSource]-aware overload [#getPredicateEvaluator(Predicate, DataSource, QueryContext)] handles the
+  /// "RAW forward + standalone dictionary" decision and is the preferred entry point for any caller that has a
+  /// data source at hand.
   public static PredicateEvaluator getPredicateEvaluator(Predicate predicate, @Nullable Dictionary dictionary,
       DataType dataType, @Nullable QueryContext queryContext) {
     try {
@@ -95,9 +98,70 @@ public class PredicateEvaluatorProvider {
     }
   }
 
+  /// Returns a [PredicateEvaluator] for the given predicate against the given data source. Computes the effective
+  /// dictionary to drive predicate evaluation based on the column's forward-index encoding and the set of usable
+  /// dict-backed secondary indexes (sorted / inverted / FST / IFST), then delegates to the per-column overload.
+  ///
+  /// For columns whose forward index is DICTIONARY-encoded, the dictionary is always used — values can only be
+  /// materialized via the dictionary, so there is no choice.
+  ///
+  /// For columns with a RAW forward index AND a standalone dictionary (e.g. the dictionary exists purely to
+  /// support a secondary index), the dictionary is dropped — and a raw-value-based predicate evaluator is used —
+  /// when no dict-using filter operator is expected to fire for this predicate. The decision is per-predicate-type:
+  ///
+  ///   - EQ / NOT_EQ / IN / NOT_IN — keep the dictionary if a sorted or inverted index can fire.
+  ///   - RANGE — keep the dictionary if a sorted index can fire. Range index works on raw or dict values, so its
+  ///     presence alone does not justify dictionary-driven evaluation.
+  ///   - REGEXP_LIKE — keep the dictionary if a sorted, inverted, FST, or IFST index can fire.
+  ///   - Other types — keep the dictionary (conservative default).
+  ///
+  /// The `skipIndexes` query option (if set in `queryContext`) is honored: an index is considered usable only
+  /// when [QueryContext#isIndexUseAllowed] returns `true` for it.
   public static PredicateEvaluator getPredicateEvaluator(Predicate predicate, DataSource dataSource,
       QueryContext queryContext) {
-    return getPredicateEvaluator(predicate, dataSource.getDictionary(),
+    Dictionary dictionary = dataSource.getDictionary();
+    Dictionary effectiveDictionary = dictionary;
+    if (dictionary != null) {
+      ForwardIndexReader<?> forwardIndex = dataSource.getForwardIndex();
+      // Transform/expression sources without a forward index are treated as DICTIONARY-encoded (the dictionary,
+      // if any, is the only way to materialize values).
+      boolean dictEncoded = forwardIndex == null || forwardIndex.isDictionaryEncoded();
+      if (!dictEncoded) {
+        // RAW forward index + standalone dictionary: keep the dictionary only when a dict-using secondary index
+        // is expected to fire for this predicate type. Also honor the `skipIndexes` query option.
+        boolean sortedUsable = dataSource.getDataSourceMetadata().isSorted()
+            && queryContext.isIndexUseAllowed(dataSource, FieldConfig.IndexType.SORTED);
+        boolean invertedUsable = dataSource.getInvertedIndex() != null
+            && queryContext.isIndexUseAllowed(dataSource, FieldConfig.IndexType.INVERTED);
+        boolean useDict;
+        switch (predicate.getType()) {
+          case EQ:
+          case NOT_EQ:
+          case IN:
+          case NOT_IN:
+            useDict = sortedUsable || invertedUsable;
+            break;
+          case RANGE:
+            // Range index works on raw values too — only the sorted index path strictly requires the dictionary.
+            useDict = sortedUsable;
+            break;
+          case REGEXP_LIKE:
+            useDict = sortedUsable || invertedUsable
+                || (dataSource.getFSTIndex() != null
+                    && queryContext.isIndexUseAllowed(dataSource, FieldConfig.IndexType.FST))
+                || (dataSource.getIFSTIndex() != null
+                    && queryContext.isIndexUseAllowed(dataSource, FieldConfig.IndexType.IFST));
+            break;
+          default:
+            useDict = true;
+            break;
+        }
+        if (!useDict) {
+          effectiveDictionary = null;
+        }
+      }
+    }
+    return getPredicateEvaluator(predicate, effectiveDictionary,
         dataSource.getDataSourceMetadata().getDataType(), queryContext);
   }
 }

@@ -123,11 +123,12 @@ public class FilterOperatorUtils {
           return new SortedIndexBasedFilterOperator(queryContext, predicateEvaluator, dataSource, numDocs);
         }
         if (dataSource.getInvertedIndex() != null
-            && queryContext.isIndexUseAllowed(dataSource, FieldConfig.IndexType.INVERTED)) {
-          // Use raw value inverted index filter operator for raw encoded columns
-          if (!predicateEvaluator.isDictionaryBased()) {
-            return new RawValueInvertedIndexFilterOperator(queryContext, predicateEvaluator, dataSource, numDocs);
-          }
+            && queryContext.isIndexUseAllowed(dataSource, FieldConfig.IndexType.INVERTED)
+            && predicateEvaluator.isDictionaryBased()) {
+          // Inverted index filtering requires dictionary IDs. With shared-dictionary support, a column may carry
+          // a dictionary while exposing a raw-value-based predicate evaluator (when the dictionary is not deemed
+          // usable for filtering); in that case the inverted index path does not apply and we fall through to
+          // the next operator.
           return new InvertedIndexFilterOperator(queryContext, predicateEvaluator, dataSource, numDocs);
         }
         if (RangeIndexBasedFilterOperator.canEvaluate(predicateEvaluator, dataSource)
@@ -225,8 +226,7 @@ public class FilterOperatorUtils {
             return PrioritizedFilterOperator.HIGH_PRIORITY;
           }
           if (filterOperator instanceof BitmapBasedFilterOperator
-              || filterOperator instanceof InvertedIndexFilterOperator
-              || filterOperator instanceof RawValueInvertedIndexFilterOperator) {
+              || filterOperator instanceof InvertedIndexFilterOperator) {
             return PrioritizedFilterOperator.MEDIUM_PRIORITY;
           }
           if (filterOperator instanceof RangeIndexBasedFilterOperator

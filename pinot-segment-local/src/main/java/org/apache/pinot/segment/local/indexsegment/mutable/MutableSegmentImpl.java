@@ -104,6 +104,7 @@ import org.apache.pinot.segment.spi.index.startree.StarTreeV2;
 import org.apache.pinot.segment.spi.memory.PinotDataBufferMemoryManager;
 import org.apache.pinot.segment.spi.partition.PartitionFunction;
 import org.apache.pinot.spi.config.table.ColumnPartitionConfig;
+import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.IndexConfig;
 import org.apache.pinot.spi.config.table.MultiColumnTextIndexConfig;
 import org.apache.pinot.spi.config.table.SegmentPartitionConfig;
@@ -322,8 +323,14 @@ public class MutableSegmentImpl implements MutableSegment {
       FieldIndexConfigs indexConfigs =
           Optional.ofNullable(config.getIndexConfigByCol().get(column)).orElse(FieldIndexConfigs.EMPTY);
       boolean isDictionary = !isNoDictionaryColumn(indexConfigs, fieldSpec, column);
+      // Source the forward-index encoding directly from the column's ForwardIndexConfig (which itself is built from
+      // FieldConfig.getEncodingType()). The encoding is an explicit configured property, not a derived signal —
+      // doing so keeps the mutable-segment context consistent with the immutable contract introduced in #18364
+      // (where shared-dict columns can have hasDictionary == true alongside encoding == RAW).
+      FieldConfig.EncodingType forwardIndexEncoding =
+          indexConfigs.getConfig(StandardIndexes.forward()).getEncodingType();
       MutableIndexContext context =
-          MutableIndexContext.builder()
+          MutableIndexContext.builder(forwardIndexEncoding)
               .withFieldSpec(fieldSpec)
               .withMemoryManager(_memoryManager)
               .withDictionary(isDictionary)

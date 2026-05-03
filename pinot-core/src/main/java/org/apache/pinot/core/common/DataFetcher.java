@@ -32,6 +32,7 @@ import org.apache.pinot.segment.spi.index.reader.ForwardIndexReader;
 import org.apache.pinot.segment.spi.index.reader.ForwardIndexReaderContext;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.apache.pinot.spi.trace.Tracing;
+import org.apache.pinot.spi.utils.ByteArray;
 import org.apache.pinot.spi.utils.MapUtils;
 
 
@@ -319,11 +320,18 @@ public class DataFetcher implements AutoCloseable {
    *
    * TODO: Type conversion for BOOLEAN and TIMESTAMP is not handled
    */
+  /// Per-column read helper. Constructed once per query and shared across operator threads via immutable references.
+  /// Reader-context creation is lazy (see [#getReaderContext()]) and intentionally not thread-safe — the existing
+  /// design assumes a single fetching thread per `ColumnValueReader` instance during query execution.
   private class ColumnValueReader implements AutoCloseable {
-    final ForwardIndexReader _reader;
-    final Dictionary _dictionary;
-    final DataType _storedType;
-    final boolean _singleValue;
+    private final ForwardIndexReader _reader;
+    private final Dictionary _dictionary;
+    private final DataType _storedType;
+    private final boolean _singleValue;
+    /// `true` when the dictionary should be consulted to materialize values, i.e. the column has a dictionary AND
+    /// the forward index stores dictionary IDs. When `false`, values are read directly from the forward index, even
+    /// if [#_dictionary] is non-null (the RAW forward + standalone dictionary case).
+    private final boolean _useDictionary;
 
     boolean _readerContextCreated;
     ForwardIndexReaderContext _readerContext;
@@ -333,6 +341,7 @@ public class DataFetcher implements AutoCloseable {
       _dictionary = dictionary;
       _storedType = reader.getStoredType();
       _singleValue = reader.isSingleValue();
+      _useDictionary = dictionary != null && reader.isDictionaryEncoded();
     }
 
     private ForwardIndexReaderContext getReaderContext() {
@@ -345,13 +354,84 @@ public class DataFetcher implements AutoCloseable {
 
     void readDictIds(int[] docIds, int length, int[] dictIdBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
-      _reader.readDictIds(docIds, length, dictIdBuffer, getReaderContext());
+      if (_useDictionary) {
+        _reader.readDictIds(docIds, length, dictIdBuffer, getReaderContext());
+      } else {
+        // RAW forward index with a standalone dictionary: read raw values from the forward index and translate them
+        // to dictionary IDs via Dictionary.indexOf.
+        readDictIdsFromRawValues(docIds, length, dictIdBuffer);
+      }
+    }
+
+    /// Translates the raw values stored in a RAW forward index to dictionary IDs via [Dictionary#indexOf], for
+    /// single-valued columns. Caller must guarantee the column has a non-null dictionary.
+    ///
+    /// The standalone dictionary on a "RAW forward + dict" column is expected to cover every value in the forward
+    /// index (it is built from the column's full value set during ingestion / reload). If a value is somehow not
+    /// found, [Dictionary#indexOf] returns [Dictionary#NULL_VALUE_INDEX] (`-1`); writing that to the dictId buffer
+    /// would silently corrupt downstream dict-id-keyed group-by / distinct buckets, so this method fails fast with
+    /// [IllegalStateException] in that case.
+    private void readDictIdsFromRawValues(int[] docIds, int length, int[] dictIdBuffer) {
+      ForwardIndexReaderContext readerContext = getReaderContext();
+      switch (_storedType) {
+        case INT:
+          for (int i = 0; i < length; i++) {
+            dictIdBuffer[i] = checkDictId(_dictionary.indexOf(_reader.getInt(docIds[i], readerContext)));
+          }
+          break;
+        case LONG:
+          for (int i = 0; i < length; i++) {
+            dictIdBuffer[i] = checkDictId(_dictionary.indexOf(_reader.getLong(docIds[i], readerContext)));
+          }
+          break;
+        case FLOAT:
+          for (int i = 0; i < length; i++) {
+            dictIdBuffer[i] = checkDictId(_dictionary.indexOf(_reader.getFloat(docIds[i], readerContext)));
+          }
+          break;
+        case DOUBLE:
+          for (int i = 0; i < length; i++) {
+            dictIdBuffer[i] = checkDictId(_dictionary.indexOf(_reader.getDouble(docIds[i], readerContext)));
+          }
+          break;
+        case BIG_DECIMAL:
+          for (int i = 0; i < length; i++) {
+            dictIdBuffer[i] = checkDictId(_dictionary.indexOf(_reader.getBigDecimal(docIds[i], readerContext)));
+          }
+          break;
+        case STRING:
+          for (int i = 0; i < length; i++) {
+            dictIdBuffer[i] = checkDictId(_dictionary.indexOf(_reader.getString(docIds[i], readerContext)));
+          }
+          break;
+        case BYTES:
+          for (int i = 0; i < length; i++) {
+            dictIdBuffer[i] =
+                checkDictId(_dictionary.indexOf(new ByteArray(_reader.getBytes(docIds[i], readerContext))));
+          }
+          break;
+        default:
+          throw new IllegalStateException(
+              "Unsupported stored type for raw-to-dictionary translation: " + _storedType);
+      }
+    }
+
+    /// Asserts the dictionary lookup found the value (i.e. the standalone dictionary is complete). Uses `assert`
+    /// rather than `Preconditions.checkState` because this is a per-row hot-path guard; the standalone dictionary
+    /// is built from the column's full value set during ingestion / reload and is expected to cover every raw
+    /// forward-index value, so the check exists to surface invariant violations during testing without paying the
+    /// cost on production query paths. Static so JIT can inline cleanly at megamorphic call sites.
+    private static int checkDictId(int dictId) {
+      assert dictId != Dictionary.NULL_VALUE_INDEX
+          : "Dictionary lookup miss while translating RAW forward-index values to dictionary IDs; "
+              + "the standalone dictionary must cover every value in the forward index";
+      return dictId;
     }
 
     void readIntValues(int[] docIds, int length, int[] valueBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         int[] dictIdBuffer = THREAD_LOCAL_DICT_IDS.get();
         _reader.readDictIds(docIds, length, dictIdBuffer, readerContext);
         _dictionary.readIntValues(dictIdBuffer, length, valueBuffer);
@@ -363,7 +443,7 @@ public class DataFetcher implements AutoCloseable {
     void readLongValues(int[] docIds, int length, long[] valueBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         int[] dictIdBuffer = THREAD_LOCAL_DICT_IDS.get();
         _reader.readDictIds(docIds, length, dictIdBuffer, readerContext);
         _dictionary.readLongValues(dictIdBuffer, length, valueBuffer);
@@ -375,7 +455,7 @@ public class DataFetcher implements AutoCloseable {
     void readFloatValues(int[] docIds, int length, float[] valueBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         int[] dictIdBuffer = THREAD_LOCAL_DICT_IDS.get();
         _reader.readDictIds(docIds, length, dictIdBuffer, readerContext);
         _dictionary.readFloatValues(dictIdBuffer, length, valueBuffer);
@@ -387,7 +467,7 @@ public class DataFetcher implements AutoCloseable {
     void readDoubleValues(int[] docIds, int length, double[] valueBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         int[] dictIdBuffer = THREAD_LOCAL_DICT_IDS.get();
         _reader.readDictIds(docIds, length, dictIdBuffer, readerContext);
         _dictionary.readDoubleValues(dictIdBuffer, length, valueBuffer);
@@ -399,7 +479,7 @@ public class DataFetcher implements AutoCloseable {
     void readBigDecimalValues(int[] docIds, int length, BigDecimal[] valueBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         int[] dictIdBuffer = THREAD_LOCAL_DICT_IDS.get();
         _reader.readDictIds(docIds, length, dictIdBuffer, readerContext);
         _dictionary.readBigDecimalValues(dictIdBuffer, length, valueBuffer);
@@ -411,7 +491,7 @@ public class DataFetcher implements AutoCloseable {
     void readStringValues(int[] docIds, int length, String[] valueBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         int[] dictIdBuffer = THREAD_LOCAL_DICT_IDS.get();
         _reader.readDictIds(docIds, length, dictIdBuffer, readerContext);
         _dictionary.readStringValues(dictIdBuffer, length, valueBuffer);
@@ -423,7 +503,7 @@ public class DataFetcher implements AutoCloseable {
     void readBytesValues(int[] docIds, int length, byte[][] valueBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         int[] dictIdBuffer = THREAD_LOCAL_DICT_IDS.get();
         _reader.readDictIds(docIds, length, dictIdBuffer, readerContext);
         _dictionary.readBytesValues(dictIdBuffer, length, valueBuffer);
@@ -437,7 +517,7 @@ public class DataFetcher implements AutoCloseable {
     void readMapValues(int[] docIds, int length, Map[] valueBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         int[] dictIdBuffer = THREAD_LOCAL_DICT_IDS.get();
         _reader.readDictIds(docIds, length, dictIdBuffer, readerContext);
         _dictionary.readMapValues(dictIdBuffer, length, valueBuffer);
@@ -451,7 +531,7 @@ public class DataFetcher implements AutoCloseable {
     void read32BitsMurmur3HashValues(int[] docIds, int length, int[] valueBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         int[] dictIdBuffer = THREAD_LOCAL_DICT_IDS.get();
         _reader.readDictIds(docIds, length, dictIdBuffer, readerContext);
         _dictionary.read32BitsMurmur3HashValues(dictIdBuffer, length, valueBuffer);
@@ -465,7 +545,7 @@ public class DataFetcher implements AutoCloseable {
     void read64BitsMurmur3HashValues(int[] docIds, int length, long[] valueBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         int[] dictIdBuffer = THREAD_LOCAL_DICT_IDS.get();
         _reader.readDictIds(docIds, length, dictIdBuffer, readerContext);
         _dictionary.read64BitsMurmur3HashValues(dictIdBuffer, length, valueBuffer);
@@ -479,7 +559,7 @@ public class DataFetcher implements AutoCloseable {
     void read128BitsMurmur3HashValues(int[] docIds, int length, long[][] valueBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         int[] dictIdBuffer = THREAD_LOCAL_DICT_IDS.get();
         _reader.readDictIds(docIds, length, dictIdBuffer, readerContext);
         _dictionary.read128BitsMurmur3HashValues(dictIdBuffer, length, valueBuffer);
@@ -492,17 +572,105 @@ public class DataFetcher implements AutoCloseable {
 
     void readDictIdsMV(int[] docIds, int length, int[][] dictIdsBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
+      if (_useDictionary) {
+        ForwardIndexReaderContext readerContext = getReaderContext();
+        for (int i = 0; i < length; i++) {
+          int numValues = _reader.getDictIdMV(docIds[i], _reusableMVDictIds, readerContext);
+          dictIdsBuffer[i] = Arrays.copyOfRange(_reusableMVDictIds, 0, numValues);
+        }
+      } else {
+        // RAW forward index with a standalone dictionary: read raw MV values from the forward index and translate
+        // them to dictionary IDs via Dictionary.indexOf.
+        readDictIdsFromRawValuesMV(docIds, length, dictIdsBuffer);
+      }
+    }
+
+    /// Translates the raw values stored in a RAW forward index to dictionary IDs via [Dictionary#indexOf], for
+    /// multi-valued columns. Caller must guarantee the column has a non-null dictionary. See
+    /// [#readDictIdsFromRawValues] for the standalone-dictionary completeness contract enforced via [#checkDictId].
+    private void readDictIdsFromRawValuesMV(int[] docIds, int length, int[][] dictIdsBuffer) {
       ForwardIndexReaderContext readerContext = getReaderContext();
-      for (int i = 0; i < length; i++) {
-        int numValues = _reader.getDictIdMV(docIds[i], _reusableMVDictIds, readerContext);
-        dictIdsBuffer[i] = Arrays.copyOfRange(_reusableMVDictIds, 0, numValues);
+      switch (_storedType) {
+        case INT:
+          for (int i = 0; i < length; i++) {
+            int[] values = _reader.getIntMV(docIds[i], readerContext);
+            int[] dictIds = new int[values.length];
+            for (int j = 0; j < values.length; j++) {
+              dictIds[j] = checkDictId(_dictionary.indexOf(values[j]));
+            }
+            dictIdsBuffer[i] = dictIds;
+          }
+          break;
+        case LONG:
+          for (int i = 0; i < length; i++) {
+            long[] values = _reader.getLongMV(docIds[i], readerContext);
+            int[] dictIds = new int[values.length];
+            for (int j = 0; j < values.length; j++) {
+              dictIds[j] = checkDictId(_dictionary.indexOf(values[j]));
+            }
+            dictIdsBuffer[i] = dictIds;
+          }
+          break;
+        case FLOAT:
+          for (int i = 0; i < length; i++) {
+            float[] values = _reader.getFloatMV(docIds[i], readerContext);
+            int[] dictIds = new int[values.length];
+            for (int j = 0; j < values.length; j++) {
+              dictIds[j] = checkDictId(_dictionary.indexOf(values[j]));
+            }
+            dictIdsBuffer[i] = dictIds;
+          }
+          break;
+        case DOUBLE:
+          for (int i = 0; i < length; i++) {
+            double[] values = _reader.getDoubleMV(docIds[i], readerContext);
+            int[] dictIds = new int[values.length];
+            for (int j = 0; j < values.length; j++) {
+              dictIds[j] = checkDictId(_dictionary.indexOf(values[j]));
+            }
+            dictIdsBuffer[i] = dictIds;
+          }
+          break;
+        case BIG_DECIMAL:
+          for (int i = 0; i < length; i++) {
+            BigDecimal[] values = _reader.getBigDecimalMV(docIds[i], readerContext);
+            int[] dictIds = new int[values.length];
+            for (int j = 0; j < values.length; j++) {
+              dictIds[j] = checkDictId(_dictionary.indexOf(values[j]));
+            }
+            dictIdsBuffer[i] = dictIds;
+          }
+          break;
+        case STRING:
+          for (int i = 0; i < length; i++) {
+            String[] values = _reader.getStringMV(docIds[i], readerContext);
+            int[] dictIds = new int[values.length];
+            for (int j = 0; j < values.length; j++) {
+              dictIds[j] = checkDictId(_dictionary.indexOf(values[j]));
+            }
+            dictIdsBuffer[i] = dictIds;
+          }
+          break;
+        case BYTES:
+          for (int i = 0; i < length; i++) {
+            byte[][] values = _reader.getBytesMV(docIds[i], readerContext);
+            int[] dictIds = new int[values.length];
+            for (int j = 0; j < values.length; j++) {
+              dictIds[j] = checkDictId(_dictionary.indexOf(new ByteArray(values[j])));
+            }
+            dictIdsBuffer[i] = dictIds;
+          }
+          break;
+        default:
+          throw new IllegalStateException(
+              "Unsupported stored type for raw-to-dictionary MV translation: " + _storedType);
       }
     }
 
     void readIntValuesMV(int[] docIds, int length, int[][] valuesBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         for (int i = 0; i < length; i++) {
           int numValues = _reader.getDictIdMV(docIds[i], _reusableMVDictIds, readerContext);
           int[] values = new int[numValues];
@@ -517,7 +685,7 @@ public class DataFetcher implements AutoCloseable {
     void readLongValuesMV(int[] docIds, int length, long[][] valuesBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         for (int i = 0; i < length; i++) {
           int numValues = _reader.getDictIdMV(docIds[i], _reusableMVDictIds, readerContext);
           long[] values = new long[numValues];
@@ -532,7 +700,7 @@ public class DataFetcher implements AutoCloseable {
     void readFloatValuesMV(int[] docIds, int length, float[][] valuesBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         for (int i = 0; i < length; i++) {
           int numValues = _reader.getDictIdMV(docIds[i], _reusableMVDictIds, readerContext);
           float[] values = new float[numValues];
@@ -547,7 +715,7 @@ public class DataFetcher implements AutoCloseable {
     void readDoubleValuesMV(int[] docIds, int length, double[][] valuesBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         for (int i = 0; i < length; i++) {
           int numValues = _reader.getDictIdMV(docIds[i], _reusableMVDictIds, readerContext);
           double[] values = new double[numValues];
@@ -562,7 +730,7 @@ public class DataFetcher implements AutoCloseable {
     void readBigDecimalValuesMV(int[] docIds, int length, BigDecimal[][] valuesBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         for (int i = 0; i < length; i++) {
           int numValues = _reader.getDictIdMV(docIds[i], _reusableMVDictIds, readerContext);
           BigDecimal[] values = new BigDecimal[numValues];
@@ -577,7 +745,7 @@ public class DataFetcher implements AutoCloseable {
     void readStringValuesMV(int[] docIds, int length, String[][] valuesBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         for (int i = 0; i < length; i++) {
           int numValues = _reader.getDictIdMV(docIds[i], _reusableMVDictIds, readerContext);
           String[] values = new String[numValues];
@@ -592,7 +760,7 @@ public class DataFetcher implements AutoCloseable {
     void readBytesValuesMV(int[] docIds, int length, byte[][][] valuesBuffer) {
       Tracing.activeRecording().setInputDataType(_storedType, _singleValue);
       ForwardIndexReaderContext readerContext = getReaderContext();
-      if (_dictionary != null) {
+      if (_useDictionary) {
         for (int i = 0; i < length; i++) {
           int numValues = _reader.getDictIdMV(docIds[i], _reusableMVDictIds, readerContext);
           byte[][] values = new byte[numValues][];

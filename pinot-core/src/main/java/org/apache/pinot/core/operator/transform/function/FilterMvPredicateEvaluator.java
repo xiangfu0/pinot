@@ -106,7 +106,7 @@ public final class FilterMvPredicateEvaluator {
               "filterMv does not support predicate type: " + predicate.getType());
         }
         PredicateEvaluator evaluator =
-            PredicateEvaluatorProvider.getPredicateEvaluator(predicate, dictionary, dataType);
+            PredicateEvaluatorProvider.getPredicateEvaluator(predicate, dictionary, dataType, null);
         if (evaluator.isAlwaysTrue()) {
           return EvalNode.constant(true);
         }

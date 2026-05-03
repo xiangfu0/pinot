@@ -21,6 +21,7 @@ package org.apache.pinot.segment.spi.index.mutable.provider;
 import java.io.File;
 import java.util.Objects;
 import org.apache.pinot.segment.spi.memory.PinotDataBufferMemoryManager;
+import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.data.FieldSpec;
 
 
@@ -29,6 +30,7 @@ public class MutableIndexContext {
   private final FieldSpec _fieldSpec;
   private final int _fixedLengthBytes;
   private final boolean _hasDictionary;
+  private final FieldConfig.EncodingType _forwardIndexEncoding;
   private final boolean _offHeap;
   private final int _estimatedColSize;
   private final int _estimatedCardinality;
@@ -37,12 +39,14 @@ public class MutableIndexContext {
   private final PinotDataBufferMemoryManager _memoryManager;
   private final File _consumerDir;
 
-  public MutableIndexContext(FieldSpec fieldSpec, int fixedLengthBytes, boolean hasDictionary, String segmentName,
-      PinotDataBufferMemoryManager memoryManager, int capacity, boolean offHeap, int estimatedColSize,
-      int estimatedCardinality, int avgNumMultiValues, File consumerDir) {
+  public MutableIndexContext(FieldSpec fieldSpec, int fixedLengthBytes, boolean hasDictionary,
+      FieldConfig.EncodingType forwardIndexEncoding, String segmentName, PinotDataBufferMemoryManager memoryManager,
+      int capacity, boolean offHeap, int estimatedColSize, int estimatedCardinality, int avgNumMultiValues,
+      File consumerDir) {
     _fieldSpec = fieldSpec;
     _fixedLengthBytes = fixedLengthBytes;
     _hasDictionary = hasDictionary;
+    _forwardIndexEncoding = Objects.requireNonNull(forwardIndexEncoding);
     _segmentName = segmentName;
     _memoryManager = memoryManager;
     _capacity = capacity;
@@ -73,6 +77,19 @@ public class MutableIndexContext {
     return _hasDictionary;
   }
 
+  /// Returns the forward-index encoding for this column. [FieldConfig.EncodingType#DICTIONARY] means the forward
+  /// index stores dictionary IDs; [FieldConfig.EncodingType#RAW] means the forward index stores raw values, even
+  /// if the column also carries a dictionary (e.g. for a secondary index).
+  ///
+  /// Currently always [FieldConfig.EncodingType#DICTIONARY] for in-tree mutable index providers (mutable segments
+  /// without a dictionary use the raw multi-value implementations directly without consulting this field). The
+  /// signal exists so the upcoming shared-dictionary mutable-segment work can produce a `RAW` mutable forward
+  /// index alongside a `MutableDictionary` from a single context, mirroring the immutable contract introduced in
+  /// apache/pinot#18364.
+  public FieldConfig.EncodingType getForwardIndexEncoding() {
+    return _forwardIndexEncoding;
+  }
+
   public int getCapacity() {
     return _capacity;
   }
@@ -97,11 +114,15 @@ public class MutableIndexContext {
     return _consumerDir;
   }
 
-  public static Builder builder() {
-    return new Builder();
+  /// Constructs a builder for the given forward-index encoding. The encoding is required at construction time to
+  /// avoid implicit defaults that would silently misclassify shared-dictionary columns; callers should typically
+  /// pass `forwardIndexConfig.getEncodingType()` (which itself defaults to `FieldConfig.getEncodingType()`).
+  public static Builder builder(FieldConfig.EncodingType forwardIndexEncoding) {
+    return new Builder(forwardIndexEncoding);
   }
 
   public static class Builder {
+    private final FieldConfig.EncodingType _forwardIndexEncoding;
     private FieldSpec _fieldSpec;
     private int _fixedLengthBytes;
     private String _segmentName;
@@ -113,6 +134,10 @@ public class MutableIndexContext {
     private int _estimatedCardinality;
     private int _avgNumMultiValues;
     private File _consumerDir;
+
+    public Builder(FieldConfig.EncodingType forwardIndexEncoding) {
+      _forwardIndexEncoding = Objects.requireNonNull(forwardIndexEncoding);
+    }
 
     public Builder withMemoryManager(PinotDataBufferMemoryManager memoryManager) {
       _memoryManager = memoryManager;
@@ -171,8 +196,8 @@ public class MutableIndexContext {
 
     public MutableIndexContext build() {
       return new MutableIndexContext(Objects.requireNonNull(_fieldSpec), _fixedLengthBytes, _hasDictionary,
-          Objects.requireNonNull(_segmentName), Objects.requireNonNull(_memoryManager), _capacity, _offHeap,
-          _estimatedColSize, _estimatedCardinality, _avgNumMultiValues, _consumerDir);
+          _forwardIndexEncoding, Objects.requireNonNull(_segmentName), Objects.requireNonNull(_memoryManager),
+          _capacity, _offHeap, _estimatedColSize, _estimatedCardinality, _avgNumMultiValues, _consumerDir);
     }
   }
 }
