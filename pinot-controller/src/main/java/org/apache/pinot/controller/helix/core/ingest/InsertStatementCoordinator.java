@@ -580,10 +580,10 @@ public class InsertStatementCoordinator {
     // Skipping this check on the ownReservation path is safe: there, the reservation was created
     // atomically by reserveRequestId (ZK create-only) so no concurrent caller can have rebound it.
     //
-    // <p>Best-effort detection: peek-then-act is not a closed CAS. The cleanup sweep cannot promote
-    // a fresh (non-tombstone) reservation to GC_PENDING, so the only failure mode is a true rebind
-    // race. peekReservedStatementId throws on transient ZK failures (rather than returning null)
-    // so we do not mis-classify a flake as a rebind loss and incorrectly delete a valid manifest.
+    // Best-effort detection: peek-then-act is not a closed CAS. The cleanup sweep cannot promote a
+    // fresh (non-tombstone) reservation to GC_PENDING, so the only failure mode is a true rebind
+    // race. peekReservedStatementId throws on transient ZK failures (rather than returning null) so
+    // we do not mis-classify a flake as a rebind loss and incorrectly delete a valid manifest.
     if (needsRebind) {
       String currentReservedStatementId;
       try {
@@ -593,12 +593,22 @@ public class InsertStatementCoordinator {
         // Transient ZK failure during the post-create reservation re-read. We cannot prove the
         // reservation was rebound, so we MUST NOT delete the manifest (deleting on a flake would
         // destroy a valid statement). Leave the manifest in place; the cleanup sweep will reconcile
-        // if it really is orphaned. Surface a state-persist error so the caller knows the manifest
-        // is durable but post-create verification did not complete.
+        // if it really is orphaned. Surface a state-persist error annotated with the durable state
+        // (ACCEPTED) so the caller's response state matches what getStatus would observe.
+        // Bump the active-statement counter and submitted meter symmetrically with the normal
+        // success path: the manifest is durable in ACCEPTED, so its eventual cleanup-sweep abort
+        // will decrement the counter — without the +1 here, that decrement drifts the gauge
+        // negative until the periodic ZK reseed reconciles it.
         LOGGER.warn("Failed to verify reservation ownership after createStatement for requestId={} "
                 + "statementId={}; manifest left in place. Cleanup sweep will reconcile if orphaned.",
             request.getRequestId(), request.getStatementId(), ex);
-        return errorResult(request.getStatementId(), InsertErrorCode.STATE_PERSIST_ERROR,
+        _tablesWithStatements.add(tableNameWithType);
+        bumpActiveStatementCount(1);
+        _controllerMetrics.addMeteredGlobalValue(ControllerMeter.INSERT_STATEMENTS_SUBMITTED, 1);
+        _controllerMetrics.setValueOfGlobalGauge(ControllerGauge.INSERT_STATEMENTS_ACTIVE,
+            getActiveStatementCount());
+        return errorResult(request.getStatementId(), InsertStatementState.ACCEPTED,
+            InsertErrorCode.STATE_PERSIST_ERROR,
             "Manifest persisted but post-create reservation re-read failed: " + ex.getMessage());
       }
       if (!request.getStatementId().equals(currentReservedStatementId)) {

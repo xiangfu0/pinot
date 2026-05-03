@@ -731,4 +731,49 @@ public class InsertStatementCoordinatorTest {
     // Reservation owned by the thief must NOT have been released by us.
     verify(_statementStore, never()).releaseRequestIdIfEquals(anyString(), anyString(), anyString());
   }
+
+  /**
+   * Regression test for the transient-ZK-failure branch in the post-create reservation re-read.
+   * If peekReservedStatementId throws (e.g., ZK session expired), the coordinator must NOT delete
+   * the manifest — that would destroy a valid statement on a flake. The response must surface
+   * STATE_PERSIST_ERROR with the durable state (ACCEPTED) so a getStatus call from the caller
+   * agrees with the synchronous response.
+   */
+  @Test
+  public void testRebindVsCreatePeekTransientZkErrorLeavesManifestInPlace() {
+    when(_helixResourceManager.hasOfflineTable("testTable")).thenReturn(true);
+    when(_helixResourceManager.hasRealtimeTable("testTable")).thenReturn(false);
+    when(_helixResourceManager.hasTable("testTable_OFFLINE")).thenReturn(true);
+
+    // Stale-reservation path so the post-create re-read fires.
+    when(_statementStore.reserveRequestId(eq("testTable_OFFLINE"), eq("req-stale"), anyString()))
+        .thenReturn("stmt-gc");
+    when(_statementStore.getStatement("testTable_OFFLINE", "stmt-gc")).thenReturn(null);
+    when(_statementStore.createStatement(any())).thenReturn(true);
+    when(_statementStore.rebindRequestIdIfEquals(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(true);
+    // The post-create peek throws — simulate ZK session expired / connection loss.
+    when(_statementStore.peekReservedStatementId("testTable_OFFLINE", "req-stale"))
+        .thenThrow(new RuntimeException("ZK session expired"));
+
+    InsertRequest request = new InsertRequest.Builder()
+        .setStatementId("stmt-mine")
+        .setRequestId("req-stale")
+        .setPayloadHash("payload-hash")
+        .setTableName("testTable")
+        .setInsertType(InsertType.ROW)
+        .setRows(Collections.singletonList(new GenericRow()))
+        .build();
+
+    InsertResult result = _coordinator.submitInsert(request);
+
+    // Surface durable manifest state, NOT a defaulted ABORTED.
+    assertEquals(result.getState(), InsertStatementState.ACCEPTED);
+    assertEquals(result.getErrorCode(), InsertErrorCode.STATE_PERSIST_ERROR);
+    // The manifest must NOT have been deleted on a flake.
+    verify(_statementStore, never()).deleteStatement(anyString(), anyString());
+    // We must not delegate to the executor in this branch — we don't know if the reservation was
+    // actually rebound, so executing would be unsafe.
+    verify(_mockExecutor, never()).execute(any());
+  }
 }
