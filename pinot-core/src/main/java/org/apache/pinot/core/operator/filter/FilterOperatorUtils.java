@@ -124,9 +124,11 @@ public class FilterOperatorUtils {
         }
         if (dataSource.getInvertedIndex() != null
             && queryContext.isIndexUseAllowed(dataSource, FieldConfig.IndexType.INVERTED)) {
-          // Use raw value inverted index filter operator for raw encoded columns
+          // The legacy raw-value embedded-dictionary inverted index has been removed; without a dictionary the
+          // predicate evaluator cannot be dictionary-based, so we degrade to a scan. After preprocessing migrates
+          // the segment to a dict-id-based inverted index this branch upgrades back to InvertedIndexFilterOperator.
           if (!predicateEvaluator.isDictionaryBased()) {
-            return new RawValueInvertedIndexFilterOperator(queryContext, predicateEvaluator, dataSource, numDocs);
+            return new ScanBasedFilterOperator(queryContext, predicateEvaluator, dataSource, numDocs);
           }
           return new InvertedIndexFilterOperator(queryContext, predicateEvaluator, dataSource, numDocs);
         }
@@ -225,8 +227,7 @@ public class FilterOperatorUtils {
             return PrioritizedFilterOperator.HIGH_PRIORITY;
           }
           if (filterOperator instanceof BitmapBasedFilterOperator
-              || filterOperator instanceof InvertedIndexFilterOperator
-              || filterOperator instanceof RawValueInvertedIndexFilterOperator) {
+              || filterOperator instanceof InvertedIndexFilterOperator) {
             return PrioritizedFilterOperator.MEDIUM_PRIORITY;
           }
           if (filterOperator instanceof RangeIndexBasedFilterOperator

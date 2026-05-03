@@ -30,7 +30,6 @@ import org.apache.pinot.segment.local.segment.creator.impl.inv.OffHeapBitmapInve
 import org.apache.pinot.segment.local.segment.creator.impl.inv.OnHeapBitmapInvertedIndexCreator;
 import org.apache.pinot.segment.local.segment.index.loader.invertedindex.InvertedIndexHandler;
 import org.apache.pinot.segment.local.segment.index.readers.BitmapInvertedIndexReader;
-import org.apache.pinot.segment.local.segment.index.readers.RawValueBitmapInvertedIndexReader;
 import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.creator.IndexCreationContext;
@@ -203,12 +202,15 @@ public class InvertedIndexType
      */
     public InvertedIndexReader createSkippingForward(SegmentDirectory.Reader segmentReader, ColumnMetadata metadata)
         throws IOException {
-      PinotDataBuffer dataBuffer = segmentReader.getIndexFor(metadata.getColumnName(), StandardIndexes.inverted());
-      if (metadata.hasDictionary()) {
-        return new BitmapInvertedIndexReader(dataBuffer, metadata.getCardinality());
-      } else {
-        return new RawValueBitmapInvertedIndexReader(dataBuffer, metadata.getDataType());
+      if (!metadata.hasDictionary()) {
+        // Likely a legacy embedded-dictionary inverted index for which preprocessing did not run (e.g. segment
+        // loaded with `tableConfig == null` / `schema == null`, or with `skipSegmentPreprocess=true`). Returning
+        // null lets the caller fall back to a scan-based filter rather than crashing per-query; the segment can
+        // still be re-preprocessed to rebuild a dict-id-based inverted index.
+        return null;
       }
+      PinotDataBuffer dataBuffer = segmentReader.getIndexFor(metadata.getColumnName(), StandardIndexes.inverted());
+      return new BitmapInvertedIndexReader(dataBuffer, metadata.getCardinality());
     }
   }
 

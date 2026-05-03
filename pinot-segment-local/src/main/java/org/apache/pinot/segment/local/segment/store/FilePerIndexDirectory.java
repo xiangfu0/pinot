@@ -85,8 +85,7 @@ class FilePerIndexDirectory extends ColumnIndexDirectory {
 
   @Override
   public boolean hasIndexFor(String column, IndexType<?, ?, ?> type) {
-    File indexFile = getFileFor(column, type);
-    return indexFile.exists();
+    return getFilesFor(column, type).stream().anyMatch(File::exists);
   }
 
   @Override
