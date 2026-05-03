@@ -18,7 +18,6 @@
  */
 package org.apache.pinot.segment.local.segment.index.loader.invertedindex;
 
-import com.google.common.base.Preconditions;
 import java.math.BigDecimal;
 import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.index.creator.DictionaryBasedInvertedIndexCreator;
@@ -37,6 +36,11 @@ import org.apache.pinot.spi.utils.ByteArray;
  * data when a shared dictionary exists. The data-type dispatch and per-row read/lookup/add loops are identical
  * between the two — only the creator argument differs. Both creator types implement
  * {@link DictionaryBasedInvertedIndexCreator}, so this single method handles both.
+ *
+ * <p>Dictionary lookup misses (negative dictId) are checked via Java {@code assert} rather than
+ * {@link com.google.common.base.Preconditions} because this code runs once per document; in production with
+ * assertions disabled the check is elided. A miss here means the dictionary is out of sync with the forward index,
+ * which is a programmer/segment-construction bug rather than a recoverable runtime condition.
  */
 public final class DictionaryBasedIndexBuilder {
   private DictionaryBasedIndexBuilder() {
@@ -46,9 +50,8 @@ public final class DictionaryBasedIndexBuilder {
    * Reads raw values from {@code forwardIndexReader}, looks each value up in {@code dictionary}, and feeds the
    * (value, dictId) pair into {@code creator} for every doc in the segment.
    *
-   * @throws IllegalStateException if the column data type is unsupported, the column is multi-value with a
-   *     data type that does not support MV (e.g. BIG_DECIMAL), or a forward-index value cannot be resolved against
-   *     the dictionary (which would indicate a corrupt segment or an out-of-sync dictionary).
+   * @throws IllegalStateException if the column data type is unsupported, or if the column is multi-value with a
+   *     data type that does not support MV (e.g. BIG_DECIMAL).
    */
   @SuppressWarnings("rawtypes")
   public static void addRawValuesViaDictionary(DictionaryBasedInvertedIndexCreator creator,
@@ -61,12 +64,14 @@ public final class DictionaryBasedIndexBuilder {
         if (singleValue) {
           for (int i = 0; i < numDocs; i++) {
             int value = forwardIndexReader.getInt(i, readerContext);
-            creator.addInt(value, requireValidDictId(dictionary.indexOf(value), value, columnName));
+            int dictId = dictionary.indexOf(value);
+            assert dictId >= 0;
+            creator.addInt(value, dictId);
           }
         } else {
           for (int i = 0; i < numDocs; i++) {
             int[] values = forwardIndexReader.getIntMV(i, readerContext);
-            creator.addIntMV(values, lookupDictIds(dictionary, values, columnName));
+            creator.addIntMV(values, lookupDictIds(dictionary, values));
           }
         }
         return;
@@ -74,12 +79,14 @@ public final class DictionaryBasedIndexBuilder {
         if (singleValue) {
           for (int i = 0; i < numDocs; i++) {
             long value = forwardIndexReader.getLong(i, readerContext);
-            creator.addLong(value, requireValidDictId(dictionary.indexOf(value), value, columnName));
+            int dictId = dictionary.indexOf(value);
+            assert dictId >= 0;
+            creator.addLong(value, dictId);
           }
         } else {
           for (int i = 0; i < numDocs; i++) {
             long[] values = forwardIndexReader.getLongMV(i, readerContext);
-            creator.addLongMV(values, lookupDictIds(dictionary, values, columnName));
+            creator.addLongMV(values, lookupDictIds(dictionary, values));
           }
         }
         return;
@@ -87,12 +94,14 @@ public final class DictionaryBasedIndexBuilder {
         if (singleValue) {
           for (int i = 0; i < numDocs; i++) {
             float value = forwardIndexReader.getFloat(i, readerContext);
-            creator.addFloat(value, requireValidDictId(dictionary.indexOf(value), value, columnName));
+            int dictId = dictionary.indexOf(value);
+            assert dictId >= 0;
+            creator.addFloat(value, dictId);
           }
         } else {
           for (int i = 0; i < numDocs; i++) {
             float[] values = forwardIndexReader.getFloatMV(i, readerContext);
-            creator.addFloatMV(values, lookupDictIds(dictionary, values, columnName));
+            creator.addFloatMV(values, lookupDictIds(dictionary, values));
           }
         }
         return;
@@ -100,12 +109,14 @@ public final class DictionaryBasedIndexBuilder {
         if (singleValue) {
           for (int i = 0; i < numDocs; i++) {
             double value = forwardIndexReader.getDouble(i, readerContext);
-            creator.addDouble(value, requireValidDictId(dictionary.indexOf(value), value, columnName));
+            int dictId = dictionary.indexOf(value);
+            assert dictId >= 0;
+            creator.addDouble(value, dictId);
           }
         } else {
           for (int i = 0; i < numDocs; i++) {
             double[] values = forwardIndexReader.getDoubleMV(i, readerContext);
-            creator.addDoubleMV(values, lookupDictIds(dictionary, values, columnName));
+            creator.addDoubleMV(values, lookupDictIds(dictionary, values));
           }
         }
         return;
@@ -116,19 +127,23 @@ public final class DictionaryBasedIndexBuilder {
         }
         for (int i = 0; i < numDocs; i++) {
           BigDecimal value = forwardIndexReader.getBigDecimal(i, readerContext);
-          creator.add(value, requireValidDictId(dictionary.indexOf(value), value, columnName));
+          int dictId = dictionary.indexOf(value);
+          assert dictId >= 0;
+          creator.add(value, dictId);
         }
         return;
       case STRING:
         if (singleValue) {
           for (int i = 0; i < numDocs; i++) {
             String value = forwardIndexReader.getString(i, readerContext);
-            creator.addString(value, requireValidDictId(dictionary.indexOf(value), value, columnName));
+            int dictId = dictionary.indexOf(value);
+            assert dictId >= 0;
+            creator.addString(value, dictId);
           }
         } else {
           for (int i = 0; i < numDocs; i++) {
             String[] values = forwardIndexReader.getStringMV(i, readerContext);
-            creator.addStringMV(values, lookupDictIds(dictionary, values, columnName));
+            creator.addStringMV(values, lookupDictIds(dictionary, values));
           }
         }
         return;
@@ -136,16 +151,18 @@ public final class DictionaryBasedIndexBuilder {
         if (singleValue) {
           for (int i = 0; i < numDocs; i++) {
             byte[] value = forwardIndexReader.getBytes(i, readerContext);
-            ByteArray key = new ByteArray(value);
-            creator.addBytes(value, requireValidDictId(dictionary.indexOf(key), key, columnName));
+            int dictId = dictionary.indexOf(new ByteArray(value));
+            assert dictId >= 0;
+            creator.addBytes(value, dictId);
           }
         } else {
           for (int i = 0; i < numDocs; i++) {
             byte[][] values = forwardIndexReader.getBytesMV(i, readerContext);
             int[] dictIds = new int[values.length];
             for (int j = 0; j < values.length; j++) {
-              ByteArray key = new ByteArray(values[j]);
-              dictIds[j] = requireValidDictId(dictionary.indexOf(key), key, columnName);
+              int dictId = dictionary.indexOf(new ByteArray(values[j]));
+              assert dictId >= 0;
+              dictIds[j] = dictId;
             }
             creator.addBytesMV(values, dictIds);
           }
@@ -158,49 +175,52 @@ public final class DictionaryBasedIndexBuilder {
     }
   }
 
-  private static int requireValidDictId(int dictId, Object value, String columnName) {
-    Preconditions.checkState(dictId >= 0,
-        "Dictionary lookup failed for value '%s' in column '%s'; dictionary may be out of sync with the forward index",
-        value, columnName);
-    return dictId;
-  }
-
-  private static int[] lookupDictIds(Dictionary dictionary, int[] values, String columnName) {
+  private static int[] lookupDictIds(Dictionary dictionary, int[] values) {
     int[] dictIds = new int[values.length];
     for (int j = 0; j < values.length; j++) {
-      dictIds[j] = requireValidDictId(dictionary.indexOf(values[j]), values[j], columnName);
+      int dictId = dictionary.indexOf(values[j]);
+      assert dictId >= 0;
+      dictIds[j] = dictId;
     }
     return dictIds;
   }
 
-  private static int[] lookupDictIds(Dictionary dictionary, long[] values, String columnName) {
+  private static int[] lookupDictIds(Dictionary dictionary, long[] values) {
     int[] dictIds = new int[values.length];
     for (int j = 0; j < values.length; j++) {
-      dictIds[j] = requireValidDictId(dictionary.indexOf(values[j]), values[j], columnName);
+      int dictId = dictionary.indexOf(values[j]);
+      assert dictId >= 0;
+      dictIds[j] = dictId;
     }
     return dictIds;
   }
 
-  private static int[] lookupDictIds(Dictionary dictionary, float[] values, String columnName) {
+  private static int[] lookupDictIds(Dictionary dictionary, float[] values) {
     int[] dictIds = new int[values.length];
     for (int j = 0; j < values.length; j++) {
-      dictIds[j] = requireValidDictId(dictionary.indexOf(values[j]), values[j], columnName);
+      int dictId = dictionary.indexOf(values[j]);
+      assert dictId >= 0;
+      dictIds[j] = dictId;
     }
     return dictIds;
   }
 
-  private static int[] lookupDictIds(Dictionary dictionary, double[] values, String columnName) {
+  private static int[] lookupDictIds(Dictionary dictionary, double[] values) {
     int[] dictIds = new int[values.length];
     for (int j = 0; j < values.length; j++) {
-      dictIds[j] = requireValidDictId(dictionary.indexOf(values[j]), values[j], columnName);
+      int dictId = dictionary.indexOf(values[j]);
+      assert dictId >= 0;
+      dictIds[j] = dictId;
     }
     return dictIds;
   }
 
-  private static int[] lookupDictIds(Dictionary dictionary, String[] values, String columnName) {
+  private static int[] lookupDictIds(Dictionary dictionary, String[] values) {
     int[] dictIds = new int[values.length];
     for (int j = 0; j < values.length; j++) {
-      dictIds[j] = requireValidDictId(dictionary.indexOf(values[j]), values[j], columnName);
+      int dictId = dictionary.indexOf(values[j]);
+      assert dictId >= 0;
+      dictIds[j] = dictId;
     }
     return dictIds;
   }

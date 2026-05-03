@@ -202,14 +202,12 @@ public class InvertedIndexType
      */
     public InvertedIndexReader createSkippingForward(SegmentDirectory.Reader segmentReader, ColumnMetadata metadata)
         throws IOException {
-      if (!metadata.hasDictionary()) {
-        // Likely a legacy embedded-dictionary inverted index for which preprocessing did not run (e.g. segment
-        // loaded with `tableConfig == null` / `schema == null`, or with `skipSegmentPreprocess=true`). Returning
-        // null lets the caller fall back to a scan-based filter rather than crashing per-query; the segment can
-        // still be re-preprocessed to rebuild a dict-id-based inverted index.
-        return null;
-      }
       PinotDataBuffer dataBuffer = segmentReader.getIndexFor(metadata.getColumnName(), StandardIndexes.inverted());
+      Preconditions.checkState(metadata.hasDictionary(),
+          "Inverted index for column %s exists but no dictionary is present; the segment may contain a legacy "
+              + "embedded-dictionary inverted index. Re-run segment preprocessing with a non-null table config "
+              + "and schema to migrate the index to the standard dict-id-based format.",
+          metadata.getColumnName());
       return new BitmapInvertedIndexReader(dataBuffer, metadata.getCardinality());
     }
   }
