@@ -104,7 +104,11 @@ public final class InsertErrorCode {
   public static final String PARTITION_VALUE_REJECTED = "PARTITION_VALUE_REJECTED";
   /** Segment generation failed during the row-insert path. */
   public static final String SEGMENT_BUILD_FAILED = "SEGMENT_BUILD_FAILED";
-  /** Segment upload failed; rollback policy was applied (best-effort delete or registered-as-orphan). */
+  /**
+   * Segment upload failed and destructive rollback was enabled, so already-registered segments
+   * were deleted. The pending segment may have left an orphan tar in deep store. The
+   * registered-as-orphan path uses the distinct {@link #SEGMENT_UPLOAD_FAILED_PARTIAL} code.
+   */
   public static final String SEGMENT_UPLOAD_FAILED = "SEGMENT_UPLOAD_FAILED";
   /**
    * Multi-partition upload partially succeeded; rollback was disabled by config so already-uploaded

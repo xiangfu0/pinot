@@ -460,7 +460,9 @@ public class InsertStatementStore {
    * Reads the raw statementId value currently stored in the reservation node, without dereferencing
    * to a manifest. Returns the value verbatim — including {@code __TOMBSTONE_*} and
    * {@code __GC_PENDING_*} prefixes — so callers can distinguish "still points at me" from "rebound
-   * to someone else", "tombstoned", or "node missing".
+   * to someone else" or "tombstoned". Returns {@code null} ONLY when the reservation node truly
+   * does not exist; transient ZK failures throw {@link RuntimeException} so the caller can
+   * fail-closed instead of mis-classifying a flake as a rebind-loss.
    *
    * <p>Used by {@code submitInsertInternal} to close the rebind-vs-create race: between a successful
    * {@link #rebindRequestIdIfEquals} and a successful {@link #createStatement}, a concurrent retry
@@ -468,8 +470,9 @@ public class InsertStatementStore {
    * stale, and rebind to itself. Re-reading the reservation after createStatement detects that
    * theft and lets the caller self-rollback.
    *
-   * @return the raw statementId value, or {@code null} if the reservation does not exist or cannot
-   *   be read
+   * @return the raw statementId value, or {@code null} if the reservation does not exist
+   * @throws RuntimeException if the read fails for transient reasons (ZK down, session expired);
+   *   the caller must NOT treat this as a missing reservation
    */
   @Nullable
   public String peekReservedStatementId(String tableNameWithType, String requestId) {
@@ -484,9 +487,10 @@ public class InsertStatementStore {
       }
       return existing.getSimpleField(STATEMENT_ID_FIELD);
     } catch (Exception e) {
-      LOGGER.debug("Failed to peek requestId reservation for table={} requestId={}",
+      LOGGER.warn("Transient ZK failure during peekReservedStatementId for table={} requestId={}",
           tableNameWithType, requestId, e);
-      return null;
+      throw new RuntimeException(
+          "ZK failure during peekReservedStatementId for requestId=" + requestId, e);
     }
   }
 

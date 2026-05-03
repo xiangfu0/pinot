@@ -30,6 +30,7 @@ import org.apache.pinot.common.metrics.ControllerMetrics;
 import org.apache.pinot.controller.helix.core.PinotHelixResourceManager;
 import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.data.readers.GenericRow;
+import org.apache.pinot.spi.ingest.InsertErrorCode;
 import org.apache.pinot.spi.ingest.InsertExecutor;
 import org.apache.pinot.spi.ingest.InsertRequest;
 import org.apache.pinot.spi.ingest.InsertResult;
@@ -683,5 +684,51 @@ public class InsertStatementCoordinatorTest {
     verify(_statementStore, never()).deleteStatement(anyString(), anyString());
     // Executor must NOT have been called — no duplicate execution
     verify(_mockExecutor, never()).execute(any());
+  }
+
+  /**
+   * Regression test for the rebind-vs-create residual race. After a successful rebind but before
+   * createStatement, a concurrent retry can observe our reservation, see no manifest, treat our
+   * statementId as stale, and rebind to itself. The post-create reservation re-read must detect
+   * that theft and self-rollback (delete the orphan manifest + return REBIND_RACE_LOST).
+   */
+  @Test
+  public void testRebindVsCreateRaceLoserSelfRollsBack() {
+    when(_helixResourceManager.hasOfflineTable("testTable")).thenReturn(true);
+    when(_helixResourceManager.hasRealtimeTable("testTable")).thenReturn(false);
+    when(_helixResourceManager.hasTable("testTable_OFFLINE")).thenReturn(true);
+
+    // Reservation observed as stale, manifest GC'd
+    when(_statementStore.reserveRequestId(eq("testTable_OFFLINE"), eq("req-stale"), anyString()))
+        .thenReturn("stmt-gc");
+    when(_statementStore.getStatement("testTable_OFFLINE", "stmt-gc")).thenReturn(null);
+    when(_statementStore.createStatement(any())).thenReturn(true);
+    // We win the rebind...
+    when(_statementStore.rebindRequestIdIfEquals(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(true);
+    // ...but a concurrent retry stole the reservation between our rebind and our createStatement.
+    // The post-create peek surfaces that theft.
+    when(_statementStore.peekReservedStatementId("testTable_OFFLINE", "req-stale"))
+        .thenReturn("stmt-thief");
+
+    InsertRequest request = new InsertRequest.Builder()
+        .setStatementId("stmt-mine")
+        .setRequestId("req-stale")
+        .setPayloadHash("payload-hash")
+        .setTableName("testTable")
+        .setInsertType(InsertType.ROW)
+        .setRows(Collections.singletonList(new GenericRow()))
+        .build();
+
+    InsertResult result = _coordinator.submitInsert(request);
+
+    // Self-rollback: REJECTED with REBIND_RACE_LOST, our orphan manifest deleted.
+    assertEquals(result.getState(), InsertStatementState.REJECTED);
+    assertEquals(result.getErrorCode(), InsertErrorCode.REBIND_RACE_LOST);
+    verify(_statementStore).deleteStatement("testTable_OFFLINE", "stmt-mine");
+    // Executor must NOT have been called — we self-rolled back before delegation.
+    verify(_mockExecutor, never()).execute(any());
+    // Reservation owned by the thief must NOT have been released by us.
+    verify(_statementStore, never()).releaseRequestIdIfEquals(anyString(), anyString(), anyString());
   }
 }

@@ -579,9 +579,28 @@ public class InsertStatementCoordinator {
     // current reservation. Self-rollback by deleting our manifest and returning REBIND_RACE_LOST.
     // Skipping this check on the ownReservation path is safe: there, the reservation was created
     // atomically by reserveRequestId (ZK create-only) so no concurrent caller can have rebound it.
+    //
+    // <p>Best-effort detection: peek-then-act is not a closed CAS. The cleanup sweep cannot promote
+    // a fresh (non-tombstone) reservation to GC_PENDING, so the only failure mode is a true rebind
+    // race. peekReservedStatementId throws on transient ZK failures (rather than returning null)
+    // so we do not mis-classify a flake as a rebind loss and incorrectly delete a valid manifest.
     if (needsRebind) {
-      String currentReservedStatementId =
-          _statementStore.peekReservedStatementId(tableNameWithType, request.getRequestId());
+      String currentReservedStatementId;
+      try {
+        currentReservedStatementId =
+            _statementStore.peekReservedStatementId(tableNameWithType, request.getRequestId());
+      } catch (RuntimeException ex) {
+        // Transient ZK failure during the post-create reservation re-read. We cannot prove the
+        // reservation was rebound, so we MUST NOT delete the manifest (deleting on a flake would
+        // destroy a valid statement). Leave the manifest in place; the cleanup sweep will reconcile
+        // if it really is orphaned. Surface a state-persist error so the caller knows the manifest
+        // is durable but post-create verification did not complete.
+        LOGGER.warn("Failed to verify reservation ownership after createStatement for requestId={} "
+                + "statementId={}; manifest left in place. Cleanup sweep will reconcile if orphaned.",
+            request.getRequestId(), request.getStatementId(), ex);
+        return errorResult(request.getStatementId(), InsertErrorCode.STATE_PERSIST_ERROR,
+            "Manifest persisted but post-create reservation re-read failed: " + ex.getMessage());
+      }
       if (!request.getStatementId().equals(currentReservedStatementId)) {
         LOGGER.warn("Rebind-vs-create race lost for requestId={}: reservation now points at {}, "
                 + "rolling back orphan manifest at statementId={}",
@@ -753,9 +772,23 @@ public class InsertStatementCoordinator {
           _controllerMetrics.addMeteredGlobalValue(ControllerMeter.INSERT_STATEMENTS_ABORTED, 1);
           bumpActiveStatementCount(-1);  // ACCEPTED → ABORTED
           activeCounterDecremented = true;
-          // Content-checked release: a concurrent retry that rebound the reservation to a different
-          // statementId must not have its reservation deleted by our cleanup.
-          releaseRequestIdOnFailure(tableNameWithType, request.getRequestId(), request.getStatementId());
+          // Reservation hygiene: only release when NO partial data was registered. If the executor's
+          // ABORTED result lists non-empty segmentNames (e.g., SEGMENT_UPLOAD_FAILED_PARTIAL from
+          // ControllerRowInsertExecutor when destructive rollback is disabled), the partial segments
+          // remain in IdealState and a retry under the same requestId would build duplicate segments
+          // alongside them. Keep the reservation so the retry hits handleIdempotency() and surfaces
+          // the prior manifest rather than producing duplicates. Content-checked release otherwise:
+          // a concurrent retry that rebound the reservation to a different statementId must not have
+          // its reservation deleted by our cleanup.
+          List<String> partialSegments = executorResult.getSegmentNames();
+          if (partialSegments == null || partialSegments.isEmpty()) {
+            releaseRequestIdOnFailure(tableNameWithType, request.getRequestId(), request.getStatementId());
+          } else {
+            LOGGER.warn("Keeping requestId reservation for statementId={} (errorCode={}); "
+                    + "{} partial segment(s) remain registered. A retry of the same requestId will "
+                    + "surface the prior manifest via idempotency rather than build duplicates.",
+                request.getStatementId(), executorResult.getErrorCode(), partialSegments.size());
+          }
         } else if (resultState == InsertStatementState.VISIBLE) {
           _controllerMetrics.addMeteredGlobalValue(ControllerMeter.INSERT_STATEMENTS_VISIBLE, 1);
           bumpActiveStatementCount(-1);  // ACCEPTED → VISIBLE
