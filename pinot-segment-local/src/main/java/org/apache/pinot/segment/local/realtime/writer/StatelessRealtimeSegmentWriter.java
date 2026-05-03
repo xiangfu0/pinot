@@ -43,6 +43,7 @@ import org.apache.pinot.segment.local.realtime.impl.RealtimeSegmentStatsHistory;
 import org.apache.pinot.segment.local.segment.creator.TransformPipeline;
 import org.apache.pinot.segment.local.segment.index.loader.IndexLoadingConfig;
 import org.apache.pinot.segment.local.utils.IngestionUtils;
+import org.apache.pinot.segment.local.utils.TableConfigUtils;
 import org.apache.pinot.segment.spi.partition.PartitionFunctionFactory;
 import org.apache.pinot.spi.config.table.ColumnPartitionConfig;
 import org.apache.pinot.spi.config.table.SegmentPartitionConfig;
@@ -180,9 +181,13 @@ public class StatelessRealtimeSegmentWriter implements Closeable {
     File statsHistoryFile = new File(tableDataDir, SEGMENT_STATS_FILE_NAME);
     RealtimeSegmentStatsHistory statsHistory = RealtimeSegmentStatsHistory.deserializeFrom(statsHistoryFile);
 
-    // Initialize mutable segment with configurations
+    // Initialize mutable segment with configurations. Default path: build from indexLoadingConfig (unchanged
+    // behavior). Only switch to a TableConfig-driven Builder when a FieldConfig.consumingOverride is configured,
+    // so a column can have a richer in-memory index shape (e.g. dictionary + inverted) than what is persisted.
     IngestionConfig ingestionConfig = _tableConfig.getIngestionConfig();
-    RealtimeSegmentConfig.Builder realtimeSegmentConfigBuilder = new RealtimeSegmentConfig.Builder(indexLoadingConfig)
+    RealtimeSegmentConfig.Builder realtimeSegmentConfigBuilder =
+        TableConfigUtils.buildConsumingSegmentConfigBuilder(_tableConfig, _schema, indexLoadingConfig, _logger);
+    realtimeSegmentConfigBuilder
         .setTableNameWithType(_tableNameWithType)
         .setSegmentName(_segmentName)
         .setStreamName(_streamConfig.getTopicName())

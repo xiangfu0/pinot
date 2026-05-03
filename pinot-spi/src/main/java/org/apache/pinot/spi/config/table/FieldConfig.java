@@ -76,6 +76,7 @@ public class FieldConfig extends BaseJsonConfig {
   private final List<IndexType> _indexTypes;
   private final JsonNode _indexes;
   private final JsonNode _tierOverwrites;
+  private final JsonNode _consumingOverride;
   private final CompressionCodec _compressionCodec;
   private final Map<String, String> _properties;
   private final TimestampConfig _timestampConfig;
@@ -83,19 +84,28 @@ public class FieldConfig extends BaseJsonConfig {
   @Deprecated
   public FieldConfig(String name, EncodingType encodingType, @Nullable IndexType indexType,
       @Nullable CompressionCodec compressionCodec, @Nullable Map<String, String> properties) {
-    this(name, encodingType, indexType, null, compressionCodec, null, null, properties, null);
+    this(name, encodingType, indexType, null, compressionCodec, null, null, properties, null, null);
   }
 
   public FieldConfig(String name, EncodingType encodingType, @Nullable List<IndexType> indexTypes,
       @Nullable CompressionCodec compressionCodec, @Nullable Map<String, String> properties) {
-    this(name, encodingType, null, indexTypes, compressionCodec, null, null, properties, null);
+    this(name, encodingType, null, indexTypes, compressionCodec, null, null, properties, null, null);
   }
 
   @Deprecated
   public FieldConfig(String name, EncodingType encodingType, @Nullable IndexType indexType,
       @Nullable List<IndexType> indexTypes, @Nullable CompressionCodec compressionCodec,
       @Nullable TimestampConfig timestampConfig, @Nullable Map<String, String> properties) {
-    this(name, encodingType, indexType, indexTypes, compressionCodec, timestampConfig, null, properties, null);
+    this(name, encodingType, indexType, indexTypes, compressionCodec, timestampConfig, null, properties, null, null);
+  }
+
+  @Deprecated
+  public FieldConfig(String name, EncodingType encodingType, @Nullable IndexType indexType,
+      @Nullable List<IndexType> indexTypes, @Nullable CompressionCodec compressionCodec,
+      @Nullable TimestampConfig timestampConfig, @Nullable JsonNode indexes,
+      @Nullable Map<String, String> properties, @Nullable JsonNode tierOverwrites) {
+    this(name, encodingType, indexType, indexTypes, compressionCodec, timestampConfig, indexes, properties,
+        tierOverwrites, null);
   }
 
   @JsonCreator
@@ -107,7 +117,8 @@ public class FieldConfig extends BaseJsonConfig {
       @JsonProperty(value = "timestampConfig") @Nullable TimestampConfig timestampConfig,
       @JsonProperty(value = "indexes") @Nullable JsonNode indexes,
       @JsonProperty(value = "properties") @Nullable Map<String, String> properties,
-      @JsonProperty(value = "tierOverwrites") @Nullable JsonNode tierOverwrites) {
+      @JsonProperty(value = "tierOverwrites") @Nullable JsonNode tierOverwrites,
+      @JsonProperty(value = "consumingOverride") @Nullable JsonNode consumingOverride) {
     Preconditions.checkArgument(name != null, "'name' must be configured");
     _name = name;
     _encodingType = encodingType == null ? EncodingType.DICTIONARY : encodingType;
@@ -118,6 +129,9 @@ public class FieldConfig extends BaseJsonConfig {
     _properties = properties;
     _indexes = indexes == null ? NullNode.getInstance() : indexes;
     _tierOverwrites = tierOverwrites == null ? NullNode.getInstance() : tierOverwrites;
+    // _consumingOverride keeps null as null (rather than NullNode.getInstance()) so callers can use the simpler
+    // null-check idiom; the accessor's @Nullable contract is documented on the getter.
+    _consumingOverride = consumingOverride;
   }
 
   // If null, we will create dictionary encoded forward index by default
@@ -197,6 +211,24 @@ public class FieldConfig extends BaseJsonConfig {
     return _tierOverwrites;
   }
 
+  /// Returns optional per-column overrides applied only to the realtime mutable consuming segment. When set, the
+  /// supported fields in this [FieldConfig] are replaced by the corresponding fields in the override at
+  /// consuming-segment build time. The committed/immutable segment and all loaded immutable segments continue to
+  /// use the un-overridden table config — that is the persisted shape on disk. Typical use is to add a dictionary
+  /// or inverted index for fast filtering on the consuming segment while keeping the rest of the table in raw
+  /// encoding.
+  ///
+  /// Supported override keys: `encodingType`, `indexTypes`, `indexes`, `compressionCodec`. Other top-level
+  /// [FieldConfig] fields are intentionally not overridable. Unknown keys are rejected at table-config validation
+  /// time.
+  ///
+  /// The returned [JsonNode] aliases internal state; callers must not mutate it (clone via `deepCopy()` first).
+  /// Returns `null` when no override is configured.
+  @Nullable
+  public JsonNode getConsumingOverride() {
+    return _consumingOverride;
+  }
+
   @Nullable
   public CompressionCodec getCompressionCodec() {
     return _compressionCodec;
@@ -221,6 +253,7 @@ public class FieldConfig extends BaseJsonConfig {
     private Map<String, String> _properties;
     private TimestampConfig _timestampConfig;
     private JsonNode _tierOverwrites;
+    private JsonNode _consumingOverride;
 
     public Builder(String name) {
       _name = name;
@@ -235,6 +268,7 @@ public class FieldConfig extends BaseJsonConfig {
       _properties = other._properties;
       _timestampConfig = other._timestampConfig;
       _tierOverwrites = other._tierOverwrites;
+      _consumingOverride = other._consumingOverride;
     }
 
     public Builder withIndexes(JsonNode indexes) {
@@ -277,9 +311,14 @@ public class FieldConfig extends BaseJsonConfig {
       return this;
     }
 
+    public Builder withConsumingOverride(JsonNode consumingOverride) {
+      _consumingOverride = consumingOverride;
+      return this;
+    }
+
     public FieldConfig build() {
       return new FieldConfig(_name, _encodingType, null, _indexTypes, _compressionCodec, _timestampConfig, _indexes,
-          _properties, _tierOverwrites);
+          _properties, _tierOverwrites, _consumingOverride);
     }
   }
 }

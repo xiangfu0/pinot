@@ -69,6 +69,7 @@ import org.apache.pinot.segment.local.segment.index.loader.IndexLoadingConfig;
 import org.apache.pinot.segment.local.upsert.PartitionUpsertMetadataManager;
 import org.apache.pinot.segment.local.upsert.UpsertContext;
 import org.apache.pinot.segment.local.utils.IngestionUtils;
+import org.apache.pinot.segment.local.utils.TableConfigUtils;
 import org.apache.pinot.segment.spi.MutableSegment;
 import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.creator.SegmentVersion;
@@ -1821,9 +1822,17 @@ public class RealtimeSegmentDataManager extends SegmentDataManager {
     _isOffHeap = indexLoadingConfig.isRealtimeOffHeapAllocation();
     _defaultNullHandlingEnabled = indexingConfig.isNullHandlingEnabled();
 
-    // Start new realtime segment
+    // Start new realtime segment.
+    // Default path: build from indexLoadingConfig so tier overwrites and any instance-level mutations on
+    // IndexLoadingConfig flow through unchanged. When a FieldConfig.consumingOverride is configured, switch to a
+    // Builder constructed from the consuming-override-applied TableConfig so the mutable consuming segment can have
+    // a different (typically richer) index shape than what is persisted on disk — e.g. the table is RAW for
+    // storage efficiency but the consuming segment uses dictionary + inverted index for fast filtering. The
+    // committed/immutable segment ignores the override and uses the persisted table-config shape.
     String consumerDir = realtimeTableDataManager.getConsumerDir();
-    RealtimeSegmentConfig.Builder realtimeSegmentConfigBuilder = new RealtimeSegmentConfig.Builder(indexLoadingConfig)
+    RealtimeSegmentConfig.Builder realtimeSegmentConfigBuilder =
+        TableConfigUtils.buildConsumingSegmentConfigBuilder(_tableConfig, _schema, indexLoadingConfig, _segmentLogger);
+    realtimeSegmentConfigBuilder
         .setTableNameWithType(_tableNameWithType)
         .setSegmentName(_segmentNameStr)
         .setStreamName(streamTopic)

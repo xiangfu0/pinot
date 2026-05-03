@@ -19,6 +19,7 @@
 package org.apache.pinot.segment.local.utils;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
@@ -48,7 +49,9 @@ import org.apache.pinot.common.tier.TierFactory;
 import org.apache.pinot.common.utils.config.TagNameUtils;
 import org.apache.pinot.segment.local.aggregator.ValueAggregator;
 import org.apache.pinot.segment.local.aggregator.ValueAggregatorFactory;
+import org.apache.pinot.segment.local.realtime.impl.RealtimeSegmentConfig;
 import org.apache.pinot.segment.local.recordtransformer.SchemaConformingTransformer;
+import org.apache.pinot.segment.local.segment.index.loader.IndexLoadingConfig;
 import org.apache.pinot.segment.spi.AggregationFunctionType;
 import org.apache.pinot.segment.spi.index.DictionaryIndexConfig;
 import org.apache.pinot.segment.spi.index.FieldIndexConfigs;
@@ -185,6 +188,7 @@ public final class TableConfigUtils {
     }
     validateTierConfigList(tableConfig.getTierConfigsList());
     validateIndexingConfigAndFieldConfigList(tableConfig, schema);
+    validateConsumingOverrides(tableConfig, schema);
     validateInstancePartitionsTypeMapConfig(tableConfig);
     validatePartitionedReplicaGroupInstance(tableConfig);
     validateInstanceAssignmentConfigs(tableConfig);
@@ -2109,6 +2113,317 @@ public final class TableConfigUtils {
     for (Map.Entry<String, JsonNode> cfgEntry : newCfg.properties()) {
       ((ObjectNode) oldCfg).set(cfgEntry.getKey(), cfgEntry.getValue());
     }
+  }
+
+  // Top-level keys in {@code tableIndexConfig} that look like per-column collections (string-array or string-keyed
+  // object) but must NOT be touched by the consuming-override scrub. Anything else of those shapes is treated as
+  // a per-column collection and the overridden column name is stripped from it. Inverting the policy this way
+  // (deny-list rather than allow-list) keeps the scrub correct as new per-column index config keys are added to
+  // {@link IndexingConfig} — there is no hand-curated list to drift out of sync.
+  //
+  // - sortedColumn is structurally tied to the segment layout; a separate validate-time check rejects overrides
+  //   on sorted columns.
+  // - starTreeIndexConfigs is a list of objects (not column names); leave it alone.
+  // - tierOverwrites is the tier-overlay JSON, handled by a separate transform.
+  private static final Set<String> CONSUMING_OVERRIDE_SCRUB_EXCLUDED_KEYS = Set.of(
+      "sortedColumn",
+      "starTreeIndexConfigs",
+      "tierOverwrites");
+
+  /// Returns a [TableConfig] with each [FieldConfig#getConsumingOverride()] merged into its parent
+  /// [FieldConfig]. The result is intended for building the realtime *mutable consuming* segment only.
+  /// The committed/immutable segment and all loaded immutable segments use the un-overridden table config — that is
+  /// the persisted shape on disk. A typical use is keeping the table in raw encoding for storage efficiency while
+  /// giving the consuming segment a dictionary + inverted index for fast filtering during the consuming window.
+  ///
+  /// Supported override keys: `encodingType`, `indexTypes`, `indexes`, `compressionCodec`.
+  /// Other [FieldConfig] fields (notably `properties` and `timestampConfig`) are intentionally not
+  /// overridable — see [#ALLOWED_CONSUMING_OVERRIDE_KEYS] for the rationale.
+  ///
+  /// Merge semantics: every supported field present in `consumingOverride` replaces the parent field wholesale.
+  /// For `indexes` the entire JSON subtree is replaced rather than merged key-by-key.
+  ///
+  /// For each overridden column, the column is also scrubbed from legacy per-column lists in `tableIndexConfig`
+  /// (e.g. `invertedIndexColumns`, `rangeIndexColumns`, ...) so that those lists do not contradict the merged
+  /// [FieldConfig].
+  ///
+  /// If no [FieldConfig] declares a consuming override, the original [TableConfig] is returned unchanged.
+  ///
+  /// @param tableConfig original table config; not mutated
+  /// @return a new table config with overrides merged, or the original config when no overrides are configured
+  public static TableConfig applyConsumingOverrides(TableConfig tableConfig) {
+    if (!hasConsumingOverride(tableConfig)) {
+      return tableConfig;
+    }
+    // Enforce the same invariants that {@link #validateConsumingOverrides} enforces, so a hand-edited or
+    // older-controller-written TableConfig can't reach the merge with an unsupported override and silently produce
+    // a wrong-shape consuming segment. We re-check here (rather than relying solely on validate-time) because the
+    // merge runs on every server at consuming-segment build time and may see stale configs.
+    enforceConsumingOverrideInvariants(tableConfig);
+    try {
+      // Deep-copy the JSON tree before mutating it. {@code toJsonNode} may alias subtrees on JsonNode-typed fields
+      // of FieldConfig (notably {@code _indexes}, {@code _tierOverwrites}, {@code _consumingOverride}); mutating
+      // those in place would silently corrupt the cached TableConfig that other threads are concurrently reading.
+      JsonNode tblCfgJson = tableConfig.toJsonNode().deepCopy();
+      JsonNode fieldCfgListJson = tblCfgJson.get(TableConfig.FIELD_CONFIG_LIST_KEY);
+      // hasConsumingOverride already proved at least one FieldConfig has a non-empty override, so the JSON view
+      // must surface the field config list as an array. If not, the TableConfig (de)serialization layer is
+      // inconsistent — fail loudly rather than silently shipping the un-overridden shape.
+      Preconditions.checkState(fieldCfgListJson != null && fieldCfgListJson.isArray(),
+          "fieldConfigList missing from JSON view of table %s despite hasConsumingOverride==true",
+          tableConfig.getTableName());
+      JsonNode tblIdxCfgJson = tblCfgJson.get(TableConfig.INDEXING_CONFIG_KEY);
+      Set<String> overriddenColumns = new HashSet<>();
+      Iterator<JsonNode> fieldCfgItr = fieldCfgListJson.elements();
+      while (fieldCfgItr.hasNext()) {
+        JsonNode fieldCfgJson = fieldCfgItr.next();
+        JsonNode overrideJson = fieldCfgJson.get(TableConfig.CONSUMING_OVERRIDE_KEY);
+        if (overrideJson == null || !overrideJson.isObject() || overrideJson.isEmpty()) {
+          continue;
+        }
+        JsonNode nameNode = fieldCfgJson.get("name");
+        // FieldConfig's @JsonCreator already guarantees name is non-null, but we re-parsed via toJsonNode so guard
+        // defensively. A missing name is a bug — fail loudly rather than silently dropping the override.
+        Preconditions.checkState(nameNode != null && nameNode.isTextual(),
+            "FieldConfig with consumingOverride is missing a textual 'name' field in table: %s",
+            tableConfig.getTableName());
+        overriddenColumns.add(nameNode.asText());
+        overwriteConfig(fieldCfgJson, overrideJson);
+        // Remove the override marker so downstream consumers see only the merged shape.
+        ((ObjectNode) fieldCfgJson).remove(TableConfig.CONSUMING_OVERRIDE_KEY);
+      }
+      Preconditions.checkState(!overriddenColumns.isEmpty(),
+          "no overridden columns produced from JSON view of table %s despite hasConsumingOverride==true",
+          tableConfig.getTableName());
+      if (tblIdxCfgJson != null && tblIdxCfgJson.isObject()) {
+        scrubOverriddenColumnsFromTableIndexConfig((ObjectNode) tblIdxCfgJson, overriddenColumns);
+      }
+      return JsonUtils.jsonNodeToObject(tblCfgJson, TableConfig.class);
+    } catch (IOException e) {
+      // Surface override parse/deserialization failures (e.g. unknown keys, type mismatches) loudly so the bad
+      // config is rejected at validate time rather than silently falling back to the un-overridden shape — that
+      // would build the consuming segment with the wrong layout and the user would get no signal.
+      throw new IllegalStateException(
+          "Failed to apply consuming overrides for table: " + tableConfig.getTableName(), e);
+    }
+  }
+
+  /// For each top-level entry in `tableIndexConfig` that holds an array of column-name strings (legacy
+  /// per-column lists like `invertedIndexColumns`, `noDictionaryColumns`, etc.), strip any name in
+  /// `overriddenColumns`. Entries whose key is in [#CONSUMING_OVERRIDE_SCRUB_EXCLUDED_KEYS], that are not arrays,
+  /// or that contain non-string elements, are left alone.
+  ///
+  /// Object-shaped values (e.g. `segmentPartitionConfig.columnPartitionMap`, feature configs) are intentionally
+  /// NOT scrubbed: the heuristic "drop any object key matching an overridden column name" would silently drop
+  /// unrelated feature-config keys whose names happen to collide with a column name. Validation already rejects
+  /// overrides on partition columns up front.
+  private static void scrubOverriddenColumnsFromTableIndexConfig(ObjectNode tblIdxCfgObj,
+      Set<String> overriddenColumns) {
+    Iterator<Map.Entry<String, JsonNode>> entries = tblIdxCfgObj.properties().iterator();
+    while (entries.hasNext()) {
+      Map.Entry<String, JsonNode> entry = entries.next();
+      String key = entry.getKey();
+      if (CONSUMING_OVERRIDE_SCRUB_EXCLUDED_KEYS.contains(key)) {
+        continue;
+      }
+      JsonNode value = entry.getValue();
+      if (value == null || !value.isArray() || value.isEmpty()) {
+        continue;
+      }
+      ArrayNode arr = (ArrayNode) value;
+      for (JsonNode element : arr) {
+        if (!element.isTextual()) {
+          // Non-string-array entry — not a per-column list; leave alone.
+          arr = null;
+          break;
+        }
+      }
+      if (arr == null) {
+        continue;
+      }
+      List<JsonNode> kept = new ArrayList<>(arr.size());
+      for (JsonNode element : arr) {
+        if (!overriddenColumns.contains(element.asText())) {
+          kept.add(element);
+        }
+      }
+      if (kept.size() != arr.size()) {
+        ArrayNode replacement = JsonUtils.newArrayNode();
+        for (JsonNode element : kept) {
+          replacement.add(element);
+        }
+        tblIdxCfgObj.set(key, replacement);
+      }
+    }
+  }
+
+  /// Builds the [RealtimeSegmentConfig.Builder] used to construct a mutable consuming segment, applying any
+  /// [FieldConfig#getConsumingOverride()] present on the table config. When no override is configured, the
+  /// un-modified [IndexLoadingConfig]-driven builder is returned so existing code paths (tier overwrites,
+  /// instance-level mutations on `IndexLoadingConfig`) flow through unchanged. If the override merge throws (a
+  /// misconfiguration that slipped past validate), the call falls back to the `IndexLoadingConfig`-driven builder
+  /// and logs the error so consumption keeps making forward progress on the persisted shape.
+  ///
+  /// @param tableConfig source table config; not mutated
+  /// @param schema      schema in scope
+  /// @param indexLoadingConfig fallback / no-override path
+  /// @param logger      logger to emit error on fallback
+  /// @return a Builder ready for the caller to chain `.set...` calls and `.build()`
+  public static RealtimeSegmentConfig.Builder buildConsumingSegmentConfigBuilder(TableConfig tableConfig,
+      Schema schema, IndexLoadingConfig indexLoadingConfig, Logger logger) {
+    if (hasConsumingOverride(tableConfig)) {
+      try {
+        TableConfig consumingTableConfig = applyConsumingOverrides(tableConfig);
+        // Route the override-applied TableConfig back through IndexLoadingConfig so we preserve everything that
+        // IndexLoadingConfig layers on top of a raw TableConfig — instance-level config, tier overlay, schema-based
+        // timestamp-index materialization, etc. — instead of dropping them via the bare Builder(TableConfig, Schema)
+        // constructor. The IndexLoadingConfig constructor invokes TimestampIndexUtils.applyTimestampIndex which
+        // mutates its schema argument under a lock keyed to the TableConfig instance; pass a defensive schema copy
+        // so the original (possibly cluster-shared) schema is never mutated under a per-call TableConfig lock.
+        Schema schemaCopy;
+        try {
+          schemaCopy = JsonUtils.jsonNodeToObject(schema.toJsonObject(), Schema.class);
+        } catch (IOException ioe) {
+          throw new IllegalStateException("Failed to clone schema for consumingOverride path on table: "
+              + tableConfig.getTableName(), ioe);
+        }
+        IndexLoadingConfig consumingIlc = new IndexLoadingConfig(indexLoadingConfig.getInstanceDataManagerConfig(),
+            consumingTableConfig, schemaCopy);
+        String segmentTier = indexLoadingConfig.getSegmentTier();
+        if (segmentTier != null) {
+          consumingIlc.setSegmentTier(segmentTier);
+        }
+        return new RealtimeSegmentConfig.Builder(consumingIlc);
+      } catch (RuntimeException e) {
+        logger.error("Failed to apply consumingOverride for table: {}; falling back to persisted shape",
+            tableConfig.getTableName(), e);
+      }
+    }
+    return new RealtimeSegmentConfig.Builder(indexLoadingConfig);
+  }
+
+  public static boolean hasConsumingOverride(TableConfig tableConfig) {
+    List<FieldConfig> fieldConfigList = tableConfig.getFieldConfigList();
+    if (fieldConfigList == null) {
+      return false;
+    }
+    for (FieldConfig fieldConfig : fieldConfigList) {
+      JsonNode overrideJson = fieldConfig.getConsumingOverride();
+      if (overrideJson != null && overrideJson.isObject() && !overrideJson.isEmpty()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Allowlist of JSON keys that {@link FieldConfig#getConsumingOverride()} may carry. Anything outside this set is
+  // either a typo or a not-yet-supported override. We reject at validate time so misconfigurations surface up front
+  // rather than getting silently dropped by Jackson via {@code @JsonIgnoreProperties(ignoreUnknown = true)} on
+  // {@link org.apache.pinot.spi.config.BaseJsonConfig}.
+  //
+  // Intentionally narrow:
+  //  - Excludes the deprecated singular {@code indexType}: only {@code indexTypes} (plural) is supported, otherwise
+  //    a user could set both and the merge result would be ambiguous since the FieldConfig deserializer prefers
+  //    plural and silently drops singular.
+  //  - Excludes {@code properties} and {@code timestampConfig}: these influence cross-subsystem state
+  //    (TransformPipeline, aggregation pipeline, timestamp index materialization) that does NOT consult the
+  //    consuming-override view, so overriding them on the consuming side would cause silent inconsistency between
+  //    the segment's index shape and the surrounding ingestion plumbing. Revisit if/when those subsystems are
+  //    taught to consult the override.
+  private static final Set<String> ALLOWED_CONSUMING_OVERRIDE_KEYS = Set.of(
+      "encodingType", "indexTypes", "indexes", "compressionCodec");
+
+  /// Validates [FieldConfig#getConsumingOverride()] entries on the given table config. The override only affects
+  /// the realtime mutable consuming segment, so the rules are limited:
+  ///
+  /// - Only realtime tables make sense as targets — the override is a no-op on offline tables and is rejected to
+  ///   avoid silently misleading configurations.
+  /// - Each override JSON object must only contain keys from [#ALLOWED_CONSUMING_OVERRIDE_KEYS]; typo'd keys
+  ///   would otherwise be silently dropped by Jackson's `@JsonIgnoreProperties(ignoreUnknown = true)` on
+  ///   [org.apache.pinot.spi.config.BaseJsonConfig].
+  ///
+  /// The merged override-applied table config is also re-validated so any conflicting indexes specified inside
+  /// the override (e.g. requesting INVERTED while encoding=RAW) surface at validate time.
+  private static void validateConsumingOverrides(TableConfig tableConfig, Schema schema) {
+    if (!hasConsumingOverride(tableConfig)) {
+      return;
+    }
+    Set<String> overriddenColumns = enforceConsumingOverrideInvariants(tableConfig);
+
+    // sortedColumn is structural for the realtime consuming segment too — Builder(IndexLoadingConfig) auto-adds an
+    // inverted index to dictionary-enabled sorted columns. Allowing the override to change the sorted column's
+    // encoding/index shape would create a contradiction with that auto-handling. Reject up front.
+    List<String> sortedColumns = tableConfig.getIndexingConfig().getSortedColumn();
+    if (sortedColumns != null) {
+      for (String sortedColumn : sortedColumns) {
+        Preconditions.checkState(!overriddenColumns.contains(sortedColumn),
+            "FieldConfig.consumingOverride is not allowed on sorted column: %s", sortedColumn);
+      }
+    }
+
+    // segmentPartitionConfig is keyed by column name; the consuming-side scrub would strip an overridden partition
+    // column, breaking partition routing on the consuming segment. Reject up front rather than over-scrub.
+    SegmentPartitionConfig segmentPartitionConfig = tableConfig.getIndexingConfig().getSegmentPartitionConfig();
+    if (segmentPartitionConfig != null && segmentPartitionConfig.getColumnPartitionMap() != null) {
+      for (String partitionColumn : segmentPartitionConfig.getColumnPartitionMap().keySet()) {
+        Preconditions.checkState(!overriddenColumns.contains(partitionColumn),
+            "FieldConfig.consumingOverride is not allowed on partition column: %s", partitionColumn);
+      }
+    }
+
+    // Re-run index/fieldconfig validation against the merged consuming-side shape so conflicts inside the override
+    // (e.g. requesting INVERTED on a column whose merged encoding is RAW with no dictionary) surface here. Wrap any
+    // validation error with a clear pointer back to the consumingOverride that caused it so the user sees their
+    // override (not the merged config they didn't author) in the diagnostic.
+    TableConfig merged = applyConsumingOverrides(tableConfig);
+    if (merged != tableConfig) {
+      // Defensively clone the schema before re-validating: validateIndexingConfigAndFieldConfigList may construct
+      // an IndexLoadingConfig internally, whose constructor calls TimestampIndexUtils.applyTimestampIndex which
+      // mutates the schema. Match the same defensive-copy that buildConsumingSegmentConfigBuilder applies.
+      Schema schemaCopy;
+      try {
+        schemaCopy = JsonUtils.jsonNodeToObject(schema.toJsonObject(), Schema.class);
+      } catch (IOException ioe) {
+        throw new IllegalStateException(
+            "Failed to clone schema while validating consumingOverride for table: " + tableConfig.getTableName(), ioe);
+      }
+      try {
+        validateIndexingConfigAndFieldConfigList(merged, schemaCopy);
+      } catch (RuntimeException e) {
+        throw new IllegalStateException(
+            "FieldConfig.consumingOverride for one of " + overriddenColumns
+                + " produces an invalid merged shape: " + e.getMessage(), e);
+      }
+    }
+  }
+
+  /// Shared invariant check used by both the validate path and the apply path so the rules can't drift. Verifies
+  /// the table is REALTIME and that every [FieldConfig#getConsumingOverride()] only carries keys in
+  /// [#ALLOWED_CONSUMING_OVERRIDE_KEYS]. Returns the set of column names that have a non-empty override.
+  private static Set<String> enforceConsumingOverrideInvariants(TableConfig tableConfig) {
+    Preconditions.checkArgument(tableConfig.getTableType() == TableType.REALTIME,
+        "FieldConfig.consumingOverride is only supported on REALTIME tables; table %s is %s",
+        tableConfig.getTableName(), tableConfig.getTableType());
+    Set<String> overriddenColumns = new HashSet<>();
+    List<FieldConfig> fieldConfigs = tableConfig.getFieldConfigList();
+    if (fieldConfigs == null) {
+      return overriddenColumns;
+    }
+    for (FieldConfig fieldConfig : fieldConfigs) {
+      JsonNode overrideJson = fieldConfig.getConsumingOverride();
+      if (overrideJson == null || !overrideJson.isObject() || overrideJson.isEmpty()) {
+        continue;
+      }
+      overriddenColumns.add(fieldConfig.getName());
+      Iterator<String> keys = overrideJson.fieldNames();
+      while (keys.hasNext()) {
+        String key = keys.next();
+        Preconditions.checkArgument(ALLOWED_CONSUMING_OVERRIDE_KEYS.contains(key),
+            "Unknown FieldConfig.consumingOverride key: '%s' on column %s; allowed keys: %s",
+            key, fieldConfig.getName(), ALLOWED_CONSUMING_OVERRIDE_KEYS);
+      }
+    }
+    return overriddenColumns;
   }
 
   /**

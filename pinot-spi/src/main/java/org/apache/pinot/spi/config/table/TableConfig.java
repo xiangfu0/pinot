@@ -64,6 +64,7 @@ public class TableConfig extends BaseJsonConfig {
   public static final String TIER_CONFIGS_LIST_KEY = "tierConfigs";
   public static final String TUNER_CONFIG_LIST_KEY = "tunerConfigs";
   public static final String TIER_OVERWRITES_KEY = "tierOverwrites";
+  public static final String CONSUMING_OVERRIDE_KEY = "consumingOverride";
   public static final String TABLE_SAMPLERS_KEY = "tableSamplers";
   public static final String DESCRIPTION_KEY = "description";
   public static final String TAGS_KEY = "tags";
