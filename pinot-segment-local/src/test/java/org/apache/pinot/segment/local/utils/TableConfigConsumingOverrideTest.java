@@ -103,18 +103,19 @@ public class TableConfigConsumingOverrideTest {
 
   @Test
   public void applyConsumingOverridesUpgradesEncodingAndIndexes() {
-    // Persisted: RAW, no indexes. Consuming: DICTIONARY + INVERTED for fast filtering.
+    /// Persisted: RAW, no indexes. Consuming: DICTIONARY + INVERTED for fast filtering.
     ObjectNode override = JsonUtils.newObjectNode();
     override.put("encodingType", FieldConfig.EncodingType.DICTIONARY.name());
-    override.set("indexTypes", JsonUtils.newArrayNode().add(FieldConfig.IndexType.INVERTED.name()));
+    override.set("indexes",
+        JsonUtils.newObjectNode().set("inverted", JsonUtils.newObjectNode().put("enabled", true)));
     FieldConfig overridden = buildRawColumnWithRichConsumingOverride("colA", override);
 
     TableConfig tableConfig = new TableConfigBuilder(TableType.REALTIME).setTableName(TABLE_NAME)
         .setTimeColumnName(TIME_COLUMN)
         .setStreamConfigs(streamConfigs())
         .setFieldConfigList(List.of(overridden))
-        // Persisted shape says noDictionary on colA — the consuming-side merge must scrub this so the consuming
-        // segment can actually have a dictionary.
+        /// Persisted shape says noDictionary on colA — the consuming-side merge must scrub this so the consuming
+        /// segment can actually have a dictionary.
         .setNoDictionaryColumns(List.of("colA"))
         .build();
 
@@ -125,19 +126,22 @@ public class TableConfigConsumingOverrideTest {
     assertEquals(consumingCol.getName(), "colA");
     assertEquals(consumingCol.getEncodingType(), FieldConfig.EncodingType.DICTIONARY,
         "Consuming-side encoding should be lifted to DICTIONARY by the override");
-    assertEquals(consumingCol.getIndexTypes(), List.of(FieldConfig.IndexType.INVERTED),
-        "Consuming-side indexes should reflect the override");
+    JsonNode mergedIndexes = consumingCol.getIndexes();
+    assertTrue(mergedIndexes.has("inverted"),
+        "Consuming-side indexes should contain the inverted entry from the override");
+    assertTrue(mergedIndexes.path("inverted").path("enabled").asBoolean(false),
+        "Consuming-side inverted index should be enabled");
     JsonNode overrideMarker = consumingCol.getConsumingOverride();
     assertTrue(overrideMarker == null || overrideMarker.isNull() || overrideMarker.isEmpty(),
         "consumingOverride marker should be cleared after merge, got: " + overrideMarker);
 
-    // colA must be scrubbed from noDictionaryColumns in the consuming view so the dictionary actually applies.
+    /// colA must be scrubbed from noDictionaryColumns in the consuming view so the dictionary actually applies.
     IndexingConfig indexingConfig = consumingView.getIndexingConfig();
     List<String> noDictionaryColumns = indexingConfig.getNoDictionaryColumns();
     assertFalse(noDictionaryColumns != null && noDictionaryColumns.contains("colA"),
         "colA should be scrubbed from noDictionaryColumns on the consuming view");
 
-    // Original tableConfig must not have been mutated — persisted/immutable side stays RAW.
+    /// Original tableConfig must not have been mutated — persisted/immutable side stays RAW.
     assertTrue(tableConfig.getIndexingConfig().getNoDictionaryColumns().contains("colA"),
         "applyConsumingOverrides must not mutate the input table config");
   }
@@ -230,7 +234,8 @@ public class TableConfigConsumingOverrideTest {
   public void validateAcceptsValidConsumingOverride() {
     ObjectNode override = JsonUtils.newObjectNode();
     override.put("encodingType", FieldConfig.EncodingType.DICTIONARY.name());
-    override.set("indexTypes", JsonUtils.newArrayNode().add(FieldConfig.IndexType.INVERTED.name()));
+    override.set("indexes",
+        JsonUtils.newObjectNode().set("inverted", JsonUtils.newObjectNode().put("enabled", true)));
     FieldConfig overridden = buildRawColumnWithRichConsumingOverride("colA", override);
 
     TableConfig tableConfig = new TableConfigBuilder(TableType.REALTIME).setTableName(TABLE_NAME)
@@ -338,12 +343,12 @@ public class TableConfigConsumingOverrideTest {
   }
 
   @Test
-  public void validateRejectsIndexesKeyOutsideAllowlist() {
-    /// `indexes` is intentionally NOT in the allowlist — only `encodingType` + `indexTypes` are allowed. Confirm
-    /// the user gets an explicit error instead of a silently-honored override.
+  public void validateRejectsIndexTypesKeyOutsideAllowlist() {
+    /// `indexTypes` is the legacy flat-list API; the consumingOverride allowlist is the modern typed `indexes`
+    /// JSON tree. Confirm the user gets an explicit error rather than a silently-honored override.
     ObjectNode override = JsonUtils.newObjectNode();
     override.put("encodingType", FieldConfig.EncodingType.DICTIONARY.name());
-    override.set("indexes", JsonUtils.newObjectNode().set("inverted", JsonUtils.newObjectNode().put("enabled", true)));
+    override.set("indexTypes", JsonUtils.newArrayNode().add(FieldConfig.IndexType.INVERTED.name()));
     FieldConfig overridden = buildRawColumnWithRichConsumingOverride("colA", override);
 
     TableConfig tableConfig = new TableConfigBuilder(TableType.REALTIME).setTableName(TABLE_NAME)
@@ -354,11 +359,11 @@ public class TableConfigConsumingOverrideTest {
 
     try {
       TableConfigUtils.validate(tableConfig, buildSchema());
-      fail("Expected validation failure for unsupported override key 'indexes'");
+      fail("Expected validation failure for unsupported override key 'indexTypes'");
     } catch (IllegalArgumentException e) {
       assertTrue(e.getMessage().contains("Unknown FieldConfig.consumingOverride key"),
           "Expected unknown-key message, got: " + e.getMessage());
-      assertTrue(e.getMessage().contains("indexes"),
+      assertTrue(e.getMessage().contains("indexTypes"),
           "Expected message to surface the bad key, got: " + e.getMessage());
     }
   }
@@ -421,7 +426,8 @@ public class TableConfigConsumingOverrideTest {
   public void buildConsumingSegmentConfigBuilderAppliesOverrideWhenPresent() {
     ObjectNode override = JsonUtils.newObjectNode();
     override.put("encodingType", FieldConfig.EncodingType.DICTIONARY.name());
-    override.set("indexTypes", JsonUtils.newArrayNode().add(FieldConfig.IndexType.INVERTED.name()));
+    override.set("indexes",
+        JsonUtils.newObjectNode().set("inverted", JsonUtils.newObjectNode().put("enabled", true)));
     FieldConfig overridden = buildRawColumnWithRichConsumingOverride("colA", override);
 
     TableConfig tableConfig = new TableConfigBuilder(TableType.REALTIME).setTableName(TABLE_NAME)
@@ -443,12 +449,13 @@ public class TableConfigConsumingOverrideTest {
 
   @Test
   public void applyConsumingOverridesDoesNotMutateInput() {
-    // The input TableConfig is shared across server threads (cached on the data manager). A successful merge must
-    // not mutate any of its sub-objects — particularly the JsonNode-typed fields on FieldConfig (consumingOverride,
-    // indexes, tierOverwrites) which are at risk of aliasing through tableConfig.toJsonNode().
+    /// The input TableConfig is shared across server threads (cached on the data manager). A successful merge must
+    /// not mutate any of its sub-objects — particularly the JsonNode-typed fields on FieldConfig (consumingOverride,
+    /// indexes, tierOverwrites) which are at risk of aliasing through tableConfig.toJsonNode().
     ObjectNode override = JsonUtils.newObjectNode();
     override.put("encodingType", FieldConfig.EncodingType.DICTIONARY.name());
-    override.set("indexTypes", JsonUtils.newArrayNode().add(FieldConfig.IndexType.INVERTED.name()));
+    override.set("indexes",
+        JsonUtils.newObjectNode().set("inverted", JsonUtils.newObjectNode().put("enabled", true)));
     FieldConfig overridden = buildRawColumnWithRichConsumingOverride("colA", override);
 
     TableConfig tableConfig = new TableConfigBuilder(TableType.REALTIME).setTableName(TABLE_NAME)
@@ -519,7 +526,7 @@ public class TableConfigConsumingOverrideTest {
 
   @Test
   public void validateRejectsCompressionCodecKeyOutsideAllowlist() {
-    /// `compressionCodec` is intentionally NOT in the allowlist — only `encodingType` + `indexTypes` are allowed.
+    /// `compressionCodec` is intentionally NOT in the allowlist — only `encodingType` + `indexes` are allowed.
     ObjectNode override = JsonUtils.newObjectNode();
     override.put("encodingType", FieldConfig.EncodingType.RAW.name());
     override.put("compressionCodec", FieldConfig.CompressionCodec.LZ4.name());
@@ -596,11 +603,12 @@ public class TableConfigConsumingOverrideTest {
   @Test
   public void tableConfigJsonRoundTripPreservesConsumingOverride()
       throws Exception {
-    // Mirrors the production code path in applyConsumingOverrides which uses tableConfig.toJsonNode() — guarantees
-    // the override survives the same serialization/deserialization that the merge utility relies on.
+    /// Mirrors the production code path in applyConsumingOverrides which uses tableConfig.toJsonNode() — guarantees
+    /// the override survives the same serialization/deserialization that the merge utility relies on.
     ObjectNode override = JsonUtils.newObjectNode();
     override.put("encodingType", FieldConfig.EncodingType.DICTIONARY.name());
-    override.set("indexTypes", JsonUtils.newArrayNode().add(FieldConfig.IndexType.INVERTED.name()));
+    override.set("indexes",
+        JsonUtils.newObjectNode().set("inverted", JsonUtils.newObjectNode().put("enabled", true)));
     FieldConfig overridden = buildRawColumnWithRichConsumingOverride("colA", override);
 
     TableConfig tableConfig = new TableConfigBuilder(TableType.REALTIME).setTableName(TABLE_NAME)
@@ -616,7 +624,8 @@ public class TableConfigConsumingOverrideTest {
     assertTrue(overrideAfter.isObject() && !overrideAfter.isEmpty(),
         "consumingOverride must survive a TableConfig JSON round-trip; got: " + overrideAfter);
     assertEquals(overrideAfter.get("encodingType").asText(), "DICTIONARY");
-    assertEquals(overrideAfter.get("indexTypes").get(0).asText(), "INVERTED");
+    assertTrue(overrideAfter.path("indexes").path("inverted").path("enabled").asBoolean(false),
+        "inverted index entry must survive a TableConfig JSON round-trip");
   }
 
   @Test
@@ -624,10 +633,10 @@ public class TableConfigConsumingOverrideTest {
       throws Exception {
     ObjectNode override = JsonUtils.newObjectNode();
     override.put("encodingType", FieldConfig.EncodingType.DICTIONARY.name());
-    override.set("indexTypes", JsonUtils.newArrayNode().add(FieldConfig.IndexType.INVERTED.name()));
+    override.set("indexes",
+        JsonUtils.newObjectNode().set("inverted", JsonUtils.newObjectNode().put("enabled", true)));
     FieldConfig fieldConfig = new FieldConfig.Builder("colA")
         .withEncodingType(FieldConfig.EncodingType.RAW)
-        .withIndexTypes(List.of())
         .withConsumingOverride(override)
         .build();
 
@@ -635,8 +644,7 @@ public class TableConfigConsumingOverrideTest {
     FieldConfig roundTripped = JsonUtils.stringToObject(json, FieldConfig.class);
     JsonNode consumingOverride = roundTripped.getConsumingOverride();
     assertEquals(consumingOverride.get("encodingType").asText(), "DICTIONARY");
-    assertTrue(consumingOverride.get("indexTypes").isArray());
-    assertEquals(consumingOverride.get("indexTypes").size(), 1);
-    assertEquals(consumingOverride.get("indexTypes").get(0).asText(), "INVERTED");
+    assertTrue(consumingOverride.path("indexes").path("inverted").path("enabled").asBoolean(false),
+        "inverted index entry must survive FieldConfig serde round-trip");
   }
 }

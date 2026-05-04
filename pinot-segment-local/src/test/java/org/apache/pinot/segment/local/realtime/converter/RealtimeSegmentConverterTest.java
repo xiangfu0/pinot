@@ -1602,7 +1602,8 @@ public class RealtimeSegmentConverterTest implements PinotBuffersAfterMethodChec
 
     ObjectNode override = JsonUtils.newObjectNode();
     override.put("encodingType", FieldConfig.EncodingType.DICTIONARY.name());
-    override.set("indexTypes", JsonUtils.newArrayNode().add(FieldConfig.IndexType.INVERTED.name()));
+    override.set("indexes",
+        JsonUtils.newObjectNode().set("inverted", JsonUtils.newObjectNode().put("enabled", true)));
     FieldConfig fieldConfigWithOverride = new FieldConfig.Builder(STRING_COLUMN1)
         .withEncodingType(FieldConfig.EncodingType.RAW)
         .withConsumingOverride(override)
@@ -1653,6 +1654,14 @@ public class RealtimeSegmentConverterTest implements PinotBuffersAfterMethodChec
         row.putValue(DATE_TIME_COLUMN, 1697814309L + i);
         mutableSegmentImpl.index(row, null);
       }
+
+      /// Sanity-check the consuming side: the override MUST have given STRING_COLUMN1 a dictionary AND an inverted
+      /// index in memory. If this fails, the integration test will fail too — keep this assertion as a fast
+      /// reproducer.
+      assertNotNull(mutableSegmentImpl.getDataSource(STRING_COLUMN1).getDictionary(),
+          STRING_COLUMN1 + " must have a dictionary on the consuming segment due to consumingOverride");
+      assertNotNull(mutableSegmentImpl.getDataSource(STRING_COLUMN1).getInvertedIndex(),
+          STRING_COLUMN1 + " must have an inverted index on the consuming segment due to consumingOverride");
 
       File outputDir = new File(tmpDir, "outputDir");
       SegmentZKPropsConfig segmentZKPropsConfig = new SegmentZKPropsConfig();

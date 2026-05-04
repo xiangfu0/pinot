@@ -218,7 +218,7 @@ public class FieldConfig extends BaseJsonConfig {
   /// or inverted index for fast filtering on the consuming segment while keeping the rest of the table in raw
   /// encoding.
   ///
-  /// Supported override keys: `encodingType` and `indexTypes`. Other top-level [FieldConfig] fields are
+  /// Supported override keys: `encodingType` and `indexes`. Other top-level [FieldConfig] fields are
   /// intentionally not overridable. Unknown keys are rejected at table-config validation time.
   ///
   /// The returned [JsonNode] aliases internal state; callers must not mutate it (clone via `deepCopy()` first).

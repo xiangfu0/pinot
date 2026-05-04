@@ -149,10 +149,11 @@ public class ConsumingOverrideRealtimeTest extends CustomDataQueryClusterIntegra
 
   @Override
   protected List<FieldConfig> getFieldConfigs() {
-    /// FieldConfig drives the override: persisted RAW, consuming DICTIONARY + INVERTED.
+    /// FieldConfig drives the override: persisted RAW, consuming DICTIONARY + INVERTED via the typed `indexes` tree.
     ObjectNode override = JsonUtils.newObjectNode();
     override.put("encodingType", FieldConfig.EncodingType.DICTIONARY.name());
-    override.set("indexTypes", JsonUtils.newArrayNode().add(FieldConfig.IndexType.INVERTED.name()));
+    override.set("indexes",
+        JsonUtils.newObjectNode().set("inverted", JsonUtils.newObjectNode().put("enabled", true)));
     FieldConfig overridden = new FieldConfig.Builder(STRING_COLUMN)
         .withEncodingType(FieldConfig.EncodingType.RAW)
         .withConsumingOverride(override)
