@@ -24,6 +24,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import javax.annotation.Nullable;
 import org.apache.pinot.spi.config.BaseJsonConfig;
+import org.apache.pinot.spi.config.DeprecatedConfig;
 
 
 public class InstanceReplicaGroupPartitionConfig extends BaseJsonConfig {
@@ -104,6 +105,8 @@ public class InstanceReplicaGroupPartitionConfig extends BaseJsonConfig {
   }
 
   @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+  @Deprecated
+  @DeprecatedConfig(replacement = "Remove this field; it will be removed in a future release.", since = "1.1.0")
   public boolean isMinimizeDataMovement() {
     return _minimizeDataMovement;
   }

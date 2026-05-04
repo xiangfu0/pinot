@@ -30,6 +30,7 @@ import io.swagger.annotations.Authorization;
 import io.swagger.annotations.SecurityDefinition;
 import io.swagger.annotations.SwaggerDefinition;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +58,7 @@ import org.apache.pinot.common.metrics.ControllerMeter;
 import org.apache.pinot.common.metrics.ControllerMetrics;
 import org.apache.pinot.common.utils.DatabaseUtils;
 import org.apache.pinot.common.utils.LogicalTableConfigUtils;
+import org.apache.pinot.common.utils.config.TableConfigSerDeUtils;
 import org.apache.pinot.controller.ControllerConf;
 import org.apache.pinot.controller.api.access.AccessControl;
 import org.apache.pinot.controller.api.access.AccessControlFactory;
@@ -224,10 +226,14 @@ public class TableConfigsRestletResource {
           Response.Status.BAD_REQUEST);
     }
 
+    List<String> deprecationWarnings;
     try {
-      validateNoDeprecatedCreateConfigs(tableConfigs, JsonUtils.stringToJsonNode(tableConfigsStr), databaseName);
+      deprecationWarnings = validateNoDeprecatedConfigs(tableConfigs, JsonUtils.stringToJsonNode(tableConfigsStr),
+          databaseName);
       validateConfig(tableConfigs, databaseName, typesToSkip);
       tableConfigs.setTableName(rawTableName);
+    } catch (ControllerApplicationException e) {
+      throw e;
     } catch (Exception e) {
       throw new ControllerApplicationException(LOGGER, String.format("Invalid TableConfigs. %s", e.getMessage()),
           Response.Status.BAD_REQUEST, e);
@@ -280,7 +286,7 @@ public class TableConfigsRestletResource {
       }
 
       return new ConfigSuccessResponse("TableConfigs " + rawTableName + " successfully added",
-          tableConfigsAndUnrecognizedProps.getRight());
+          tableConfigsAndUnrecognizedProps.getRight(), deprecationWarnings);
     } catch (Exception e) {
       _controllerMetrics.addMeteredGlobalValue(ControllerMeter.CONTROLLER_TABLE_ADD_ERROR, 1L);
       if (e instanceof InvalidTableConfigException) {
@@ -386,15 +392,20 @@ public class TableConfigsRestletResource {
     tableName = DatabaseUtils.translateTableName(tableName, databaseName);
     Pair<TableConfigs, Map<String, Object>> tableConfigsAndUnrecognizedProps;
     TableConfigs tableConfigs;
+    List<String> deprecationWarnings;
     try {
       tableConfigsAndUnrecognizedProps =
           JsonUtils.stringToObjectAndUnrecognizedProperties(tableConfigsStr, TableConfigs.class);
       tableConfigs = tableConfigsAndUnrecognizedProps.getLeft();
+      deprecationWarnings = validateNoDeprecatedConfigs(tableConfigs, JsonUtils.stringToJsonNode(tableConfigsStr),
+          databaseName);
       validateConfig(tableConfigs, databaseName, typesToSkip);
       Preconditions.checkState(
           DatabaseUtils.translateTableName(tableConfigs.getTableName(), databaseName).equals(tableName),
           "'tableName' in TableConfigs: %s must match provided tableName: %s", tableConfigs.getTableName(), tableName);
       tableConfigs.setTableName(tableName);
+    } catch (ControllerApplicationException e) {
+      throw e;
     } catch (Exception e) {
       throw new ControllerApplicationException(LOGGER, String.format("Invalid TableConfigs: %s. Reason: %s", tableName,
           e.getMessage()), Response.Status.BAD_REQUEST, e);
@@ -451,7 +462,7 @@ public class TableConfigsRestletResource {
     }
 
     return new ConfigSuccessResponse("TableConfigs updated for " + tableName,
-        tableConfigsAndUnrecognizedProps.getRight());
+        tableConfigsAndUnrecognizedProps.getRight(), deprecationWarnings);
   }
 
   /**
@@ -482,14 +493,18 @@ public class TableConfigsRestletResource {
     String databaseName = DatabaseUtils.extractDatabaseFromHttpHeaders(httpHeaders);
     TableConfigs tableConfigs = tableConfigsAndUnrecognizedProps.getLeft();
     String rawTableName;
+    List<String> deprecationWarnings;
     try {
-      validateNoDeprecatedCreateConfigs(tableConfigs, tableConfigsJson, databaseName);
+      deprecationWarnings = validateNoDeprecatedConfigs(tableConfigs, tableConfigsJson, databaseName);
       validateConfig(tableConfigs, databaseName, typesToSkip);
       rawTableName = DatabaseUtils.translateTableName(tableConfigs.getTableName(), databaseName);
       tableConfigs.setTableName(rawTableName);
+    } catch (ControllerApplicationException e) {
+      // Preserve the upstream status (e.g. 500 from validateConfig); don't downgrade to 400.
+      throw e;
     } catch (Exception e) {
       throw new ControllerApplicationException(LOGGER,
-          String.format("Invalid TableConfigs json string: %s. Reason: %s", tableConfigsStr, e.getMessage()),
+          String.format("Invalid TableConfigs: %s. Reason: %s", tableConfigs.getTableName(), e.getMessage()),
           Response.Status.BAD_REQUEST, e);
     }
 
@@ -503,6 +518,9 @@ public class TableConfigsRestletResource {
 
     ObjectNode response = JsonUtils.objectToJsonNode(tableConfigs).deepCopy();
     response.set("unrecognizedProperties", JsonUtils.objectToJsonNode(tableConfigsAndUnrecognizedProps.getRight()));
+    if (!deprecationWarnings.isEmpty()) {
+      response.set("deprecationWarnings", JsonUtils.objectToJsonNode(deprecationWarnings));
+    }
     return response.toString();
   }
 
@@ -586,27 +604,53 @@ public class TableConfigsRestletResource {
     }
   }
 
-  private void validateNoDeprecatedCreateConfigs(TableConfigs tableConfigs, JsonNode tableConfigsJson,
+  /**
+   * Validates the offline and realtime sub-configs for deprecated properties. For each sub-type, if a stored
+   * table config already exists for {@code rawTableName} the validation runs in update mode (diffing against the
+   * stored config), otherwise it runs in create mode. Aggregated warnings from all sub-types are returned so the
+   * caller can include them in the response.
+   */
+  private List<String> validateNoDeprecatedConfigs(TableConfigs tableConfigs, JsonNode tableConfigsJson,
       String database) {
     if (tableConfigs.getTableName() == null) {
-      return;
+      return List.of();
     }
     String rawTableName = DatabaseUtils.translateTableName(tableConfigs.getTableName(), database);
-    JsonNode offlineTableConfigJson = tableConfigsJson.get(TableType.OFFLINE.name().toLowerCase());
-    if (offlineTableConfigJson == null) {
-      offlineTableConfigJson = tableConfigsJson.get(TableType.OFFLINE.name());
+    List<String> warnings = new ArrayList<>();
+    JsonNode offlineTableConfigJson = subConfigJson(tableConfigsJson, TableType.OFFLINE);
+    if (offlineTableConfigJson != null) {
+      JsonNode existingJson = readStoredTableConfigJson(TableNameBuilder.OFFLINE.tableNameWithType(rawTableName));
+      String prefix = TableType.OFFLINE.name().toLowerCase();
+      if (existingJson == null) {
+        warnings.addAll(DeprecatedTableConfigValidationUtils.validateOnCreate(offlineTableConfigJson, prefix));
+      } else {
+        warnings.addAll(DeprecatedTableConfigValidationUtils.validateOnUpdate(offlineTableConfigJson, existingJson,
+            prefix));
+      }
     }
-    if (offlineTableConfigJson != null && !_pinotHelixResourceManager.hasOfflineTable(rawTableName)) {
-      DeprecatedTableConfigValidationUtils.validateNoDeprecatedConfigs(offlineTableConfigJson,
-          TableType.OFFLINE.name().toLowerCase());
+    JsonNode realtimeTableConfigJson = subConfigJson(tableConfigsJson, TableType.REALTIME);
+    if (realtimeTableConfigJson != null) {
+      JsonNode existingJson = readStoredTableConfigJson(TableNameBuilder.REALTIME.tableNameWithType(rawTableName));
+      String prefix = TableType.REALTIME.name().toLowerCase();
+      if (existingJson == null) {
+        warnings.addAll(DeprecatedTableConfigValidationUtils.validateOnCreate(realtimeTableConfigJson, prefix));
+      } else {
+        warnings.addAll(DeprecatedTableConfigValidationUtils.validateOnUpdate(realtimeTableConfigJson, existingJson,
+            prefix));
+      }
     }
-    JsonNode realtimeTableConfigJson = tableConfigsJson.get(TableType.REALTIME.name().toLowerCase());
-    if (realtimeTableConfigJson == null) {
-      realtimeTableConfigJson = tableConfigsJson.get(TableType.REALTIME.name());
-    }
-    if (realtimeTableConfigJson != null && !_pinotHelixResourceManager.hasRealtimeTable(rawTableName)) {
-      DeprecatedTableConfigValidationUtils.validateNoDeprecatedConfigs(realtimeTableConfigJson,
-          TableType.REALTIME.name().toLowerCase());
-    }
+    return warnings;
+  }
+
+  @Nullable
+  private JsonNode readStoredTableConfigJson(String tableNameWithType) {
+    return TableConfigSerDeUtils.toRawJsonNode(
+        ZKMetadataProvider.getTableConfigZNRecord(_pinotHelixResourceManager.getPropertyStore(), tableNameWithType));
+  }
+
+  @Nullable
+  private static JsonNode subConfigJson(JsonNode tableConfigsJson, TableType type) {
+    JsonNode node = tableConfigsJson.get(type.name().toLowerCase());
+    return node != null ? node : tableConfigsJson.get(type.name());
   }
 }

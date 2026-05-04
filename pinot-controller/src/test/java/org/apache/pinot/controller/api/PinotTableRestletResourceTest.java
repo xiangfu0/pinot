@@ -355,8 +355,9 @@ public class PinotTableRestletResourceTest extends ControllerTest {
   }
 
   @Test
-  public void testCreateRejectsDeprecatedConfigButUpdateAllowsIt()
+  public void testRejectsDeprecatedConfigOnCreateAndOnUpdateWhenNewlyIntroduced()
       throws Exception {
+    // Create with a deprecated property is rejected.
     TableConfig offlineTableConfig = _offlineBuilder.setTableName(OFFLINE_TABLE_NAME).build();
     ObjectNode createTableJson = (ObjectNode) JsonUtils.stringToJsonNode(offlineTableConfig.toJsonString());
     createTableJson.with("segmentsConfig").put("segmentPushType", "APPEND");
@@ -365,6 +366,7 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     assertHasStatus(createException, 400);
     assertTrue(createException.getMessage().contains("segmentsConfig.segmentPushType"));
 
+    // Update that introduces a deprecated property that was not previously set is also rejected.
     String rawTableName = "deprecated_update_table";
     DEFAULT_INSTANCE.addDummySchema(rawTableName);
     TableConfig existingTableConfig = getOfflineTableBuilder(rawTableName).build();
@@ -372,10 +374,35 @@ public class PinotTableRestletResourceTest extends ControllerTest {
 
     ObjectNode updateTableJson = (ObjectNode) JsonUtils.stringToJsonNode(existingTableConfig.toJsonString());
     updateTableJson.with("segmentsConfig").put("segmentPushType", "APPEND");
-    JsonNode updateResponse = JsonUtils.stringToJsonNode(updateTable(existingTableConfig.getTableName(),
-        updateTableJson.toString()));
-    assertEquals(updateResponse.get("status").asText(), "Table config updated for " + existingTableConfig
-        .getTableName());
+    IOException updateException = expectThrows(IOException.class,
+        () -> updateTable(existingTableConfig.getTableName(), updateTableJson.toString()));
+    assertHasStatus(updateException, 400);
+    assertTrue(updateException.getMessage().contains("segmentsConfig.segmentPushType"));
+  }
+
+  @Test
+  public void testUpdateAllowsUnchangedLegacyDeprecatedConfig()
+      throws Exception {
+    // Simulate a table whose stored config already contains a deprecated property (e.g. created on an older
+    // version). On update, re-submitting the same legacy value must NOT trigger validation; only newly introduced
+    // or value-changed deprecated paths are flagged.
+    String rawTableName = "deprecated_legacy_table";
+    DEFAULT_INSTANCE.addDummySchema(rawTableName);
+    TableConfig existingTableConfig = getOfflineTableBuilder(rawTableName).build();
+    createTable(existingTableConfig.toJsonString());
+
+    // Inject a deprecated value directly into ZK to mimic a pre-existing legacy config.
+    String tableNameWithType = TableNameBuilder.OFFLINE.tableNameWithType(rawTableName);
+    TableConfig stored = DEFAULT_INSTANCE.getHelixResourceManager().getTableConfig(tableNameWithType);
+    stored.getValidationConfig().setSegmentPushType("APPEND");
+    DEFAULT_INSTANCE.getHelixResourceManager().setExistingTableConfig(stored);
+
+    // Re-submit the same legacy value. The diff against the stored config means this is treated as unchanged and
+    // should pass.
+    ObjectNode updateTableJson = (ObjectNode) JsonUtils.stringToJsonNode(stored.toJsonString());
+    JsonNode response = JsonUtils.stringToJsonNode(
+        updateTable(existingTableConfig.getTableName(), updateTableJson.toString()));
+    assertEquals(response.get("status").asText(), "Table config updated for " + existingTableConfig.getTableName());
   }
 
   @Test
@@ -1166,7 +1193,7 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     constraints.add("constraints1");
     InstanceConstraintConfig instanceConstraintConfig = new InstanceConstraintConfig(constraints);
     InstanceReplicaGroupPartitionConfig instanceReplicaGroupPartitionConfig =
-        new InstanceReplicaGroupPartitionConfig(true, 1, numReplicaGroups, numInstancesPerReplicaGroup, 1, 1, true,
+        new InstanceReplicaGroupPartitionConfig(true, 1, numReplicaGroups, numInstancesPerReplicaGroup, 1, 1, false,
             null);
     return new InstanceAssignmentConfig(instanceTagPoolConfig, instanceConstraintConfig,
         instanceReplicaGroupPartitionConfig,

@@ -20,6 +20,9 @@ package org.apache.pinot.common.utils.config;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.base.Preconditions;
 import java.io.IOException;
 import java.util.HashMap;
@@ -292,5 +295,39 @@ public class TableConfigSerDeUtils {
     ZNRecord znRecord = new ZNRecord(tableConfig.getTableName());
     znRecord.setSimpleFields(simpleFields);
     return znRecord;
+  }
+
+  /**
+   * Reconstructs the table-config JSON tree from a stored {@link ZNRecord}, preserving every key originally written
+   * to ZK. Unlike {@code TableConfig.toJsonNode()}, this method does not round-trip through the Java bean and
+   * therefore does not strip fields that the bean's getters mark with {@code @JsonIgnore} or
+   * {@code @JsonInclude(NON_DEFAULT)}. It is intended for code paths (e.g. update-time deprecation diffing) that
+   * need to compare an incoming request against the exact bytes that were stored.
+   *
+   * @param znRecord the raw ZNRecord read from the property store
+   * @return a JsonNode equivalent to what the user originally PUT/POST-ed for the table, or {@code null} if the
+   * input is {@code null}
+   */
+  public static JsonNode toRawJsonNode(ZNRecord znRecord) {
+    if (znRecord == null) {
+      return null;
+    }
+    ObjectNode root = JsonNodeFactory.instance.objectNode();
+    Map<String, String> simpleFields = znRecord.getSimpleFields();
+    for (Map.Entry<String, String> entry : simpleFields.entrySet()) {
+      String key = entry.getKey();
+      String value = entry.getValue();
+      // Try to parse as a JSON node first (most fields hold JSON-encoded sub-objects). Fall back to a string node
+      // for primitive simple fields (e.g. tableType, isDimTable).
+      try {
+        root.set(key, JsonUtils.stringToJsonNode(value));
+      } catch (IOException e) {
+        root.put(key, value);
+      }
+    }
+    if (!root.has(TableConfig.TABLE_NAME_KEY)) {
+      root.put(TableConfig.TABLE_NAME_KEY, znRecord.getId());
+    }
+    return root;
   }
 }

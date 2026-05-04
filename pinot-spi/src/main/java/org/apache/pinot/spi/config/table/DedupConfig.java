@@ -24,6 +24,7 @@ import com.google.common.base.Preconditions;
 import java.util.Map;
 import javax.annotation.Nullable;
 import org.apache.pinot.spi.config.BaseJsonConfig;
+import org.apache.pinot.spi.config.DeprecatedConfig;
 import org.apache.pinot.spi.utils.Enablement;
 
 
@@ -167,6 +168,7 @@ public class DedupConfig extends BaseJsonConfig {
 
   @Deprecated
   @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+  @DeprecatedConfig(replacement = "Use 'dedupConfig.preload' instead.", since = "1.4.0")
   public boolean isEnablePreload() {
     return _enablePreload;
   }
@@ -181,6 +183,9 @@ public class DedupConfig extends BaseJsonConfig {
 
   @Deprecated
   @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+  @DeprecatedConfig(
+      replacement = "Use 'ingestionConfig.streamIngestionConfig.parallelSegmentConsumptionPolicy' instead.",
+      since = "1.4.0")
   public boolean isAllowDedupConsumptionDuringCommit() {
     return _allowDedupConsumptionDuringCommit;
   }

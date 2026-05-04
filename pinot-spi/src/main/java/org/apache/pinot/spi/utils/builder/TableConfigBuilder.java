@@ -82,8 +82,6 @@ public class TableConfigBuilder {
 
   @Deprecated
   private String _segmentPushType;
-  @Deprecated
-  private String _segmentAssignmentStrategy;
   private String _peerSegmentDownloadScheme;
   @Deprecated
   private ReplicaGroupStrategyConfig _replicaGroupStrategyConfig;
@@ -551,7 +549,6 @@ public class TableConfigBuilder {
     validationConfig.setDeletedSegmentsRetentionPeriod(_deletedSegmentsRetentionPeriod);
     validationConfig.setReplacedSegmentsRetentionPeriod(_replacedSegmentsRetentionPeriod);
     validationConfig.setLineageEntryCleanupRetentionPeriod(_lineageEntryCleanupRetentionPeriod);
-    validationConfig.setSegmentAssignmentStrategy(_segmentAssignmentStrategy);
     validationConfig.setReplicaGroupStrategyConfig(_replicaGroupStrategyConfig);
     validationConfig.setCompletionConfig(_completionConfig);
     validationConfig.setReplication(_numReplicas);

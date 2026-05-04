@@ -93,6 +93,7 @@ import org.apache.pinot.common.restlet.resources.ValidDocIdsType;
 import org.apache.pinot.common.utils.DatabaseUtils;
 import org.apache.pinot.common.utils.LogicalTableConfigUtils;
 import org.apache.pinot.common.utils.SimpleHttpResponse;
+import org.apache.pinot.common.utils.config.TableConfigSerDeUtils;
 import org.apache.pinot.common.utils.helix.HelixHelper;
 import org.apache.pinot.common.utils.http.HttpClient;
 import org.apache.pinot.controller.ControllerConf;
@@ -231,6 +232,7 @@ public class PinotTableRestletResource {
     TableConfig tableConfig;
     String tableNameWithType;
     Schema schema;
+    List<String> deprecationWarnings;
     try {
       tableConfigAndUnrecognizedProperties =
           JsonUtils.stringToObjectAndUnrecognizedProperties(tableConfigStr, TableConfig.class);
@@ -252,7 +254,8 @@ public class PinotTableRestletResource {
       schema = _pinotHelixResourceManager.getTableSchema(tableNameWithType);
       Preconditions.checkState(schema != null, "Failed to find schema for table: %s", tableNameWithType);
 
-      DeprecatedTableConfigValidationUtils.validateNoDeprecatedConfigs(JsonUtils.stringToJsonNode(tableConfigStr));
+      deprecationWarnings = DeprecatedTableConfigValidationUtils.validateOnCreate(
+          JsonUtils.stringToJsonNode(tableConfigStr), null);
       TableConfigTunerUtils.applyTunerConfigs(_pinotHelixResourceManager, tableConfig, schema, Collections.emptyMap());
 
       TableConfigValidationUtils.validateTableConfig(
@@ -272,7 +275,7 @@ public class PinotTableRestletResource {
       // the validation manager)
       LOGGER.info("Successfully added table: {} with config: {}", tableNameWithType, tableConfig);
       return new ConfigSuccessResponse("Table " + tableNameWithType + " successfully added",
-          tableConfigAndUnrecognizedProperties.getRight());
+          tableConfigAndUnrecognizedProperties.getRight(), deprecationWarnings);
     } catch (Exception e) {
       _controllerMetrics.addMeteredGlobalValue(ControllerMeter.CONTROLLER_TABLE_ADD_ERROR, 1L);
       if (e instanceof InvalidTableConfigException) {
@@ -785,6 +788,7 @@ public class PinotTableRestletResource {
     TableConfig tableConfig;
     String tableNameWithType;
     Schema schema;
+    List<String> deprecationWarnings = List.of();
     try {
       tableConfigAndUnrecognizedProperties =
           JsonUtils.stringToObjectAndUnrecognizedProperties(tableConfigString, TableConfig.class);
@@ -803,6 +807,15 @@ public class PinotTableRestletResource {
       Preconditions.checkState(schema != null, "Failed to find schema for table: %s", tableNameWithType);
       TableConfigValidationUtils.validateTableConfig(
           tableConfig, schema, typesToSkip, _pinotHelixResourceManager, _controllerConf, _pinotTaskManager);
+
+      // Diff incoming config against the byte-faithful stored ZNRecord (not the deserialized TableConfig — that
+      // round-trip strips @JsonIgnore-d / @JsonInclude(NON_DEFAULT) deprecated keys and would treat unchanged
+      // legacy values as newly-introduced).
+      JsonNode oldTableConfigJson = TableConfigSerDeUtils.toRawJsonNode(
+          ZKMetadataProvider.getTableConfigZNRecord(_pinotHelixResourceManager.getPropertyStore(),
+              tableNameWithType));
+      deprecationWarnings = DeprecatedTableConfigValidationUtils.validateOnUpdate(
+          JsonUtils.stringToJsonNode(tableConfigString), oldTableConfigJson, null);
     } catch (Exception e) {
       String msg = String.format("Invalid table config: %s with error: %s", tableName, e.getMessage());
       throw new ControllerApplicationException(LOGGER, msg, Response.Status.BAD_REQUEST, e);
@@ -828,7 +841,7 @@ public class PinotTableRestletResource {
     }
     LOGGER.info("Successfully updated table: {} with new config: {}", tableNameWithType, tableConfig);
     return new ConfigSuccessResponse("Table config updated for " + tableName,
-        tableConfigAndUnrecognizedProperties.getRight());
+        tableConfigAndUnrecognizedProperties.getRight(), deprecationWarnings);
   }
 
   @POST
@@ -859,9 +872,16 @@ public class PinotTableRestletResource {
     // validate permission
     ResourceUtils.checkPermissionAndAccess(tableNameWithType, request, httpHeaders,
         AccessType.READ, Actions.Table.VALIDATE_TABLE_CONFIGS, _accessControlFactory, LOGGER);
+    List<String> deprecationWarnings;
     try {
-      if (!_pinotHelixResourceManager.hasTable(tableNameWithType)) {
-        DeprecatedTableConfigValidationUtils.validateNoDeprecatedConfigs(tableConfigJson);
+      JsonNode oldTableConfigJson = TableConfigSerDeUtils.toRawJsonNode(
+          ZKMetadataProvider.getTableConfigZNRecord(_pinotHelixResourceManager.getPropertyStore(),
+              tableNameWithType));
+      if (oldTableConfigJson == null) {
+        deprecationWarnings = DeprecatedTableConfigValidationUtils.validateOnCreate(tableConfigJson, null);
+      } else {
+        deprecationWarnings = DeprecatedTableConfigValidationUtils.validateOnUpdate(tableConfigJson,
+            oldTableConfigJson, null);
       }
     } catch (Exception e) {
       String msg = String.format("Invalid table config: %s. %s", tableNameWithType, e.getMessage());
@@ -871,6 +891,9 @@ public class PinotTableRestletResource {
     ObjectNode validationResponse = validateConfig(tableConfig, typesToSkip);
     validationResponse.set("unrecognizedProperties",
         JsonUtils.objectToJsonNode(tableConfigAndUnrecognizedProperties.getRight()));
+    if (!deprecationWarnings.isEmpty()) {
+      validationResponse.set("deprecationWarnings", JsonUtils.objectToJsonNode(deprecationWarnings));
+    }
     return validationResponse;
   }
 

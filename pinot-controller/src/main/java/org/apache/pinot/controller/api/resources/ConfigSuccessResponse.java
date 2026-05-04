@@ -18,17 +18,31 @@
  */
 package org.apache.pinot.controller.api.resources;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import java.util.List;
 import java.util.Map;
 
 public final class ConfigSuccessResponse extends SuccessResponse {
   private final Map<String, Object> _unrecognizedProperties;
+  @JsonInclude(JsonInclude.Include.NON_EMPTY)
+  private final List<String> _deprecationWarnings;
 
   public ConfigSuccessResponse(String status, Map<String, Object> unrecognizedProperties) {
+    this(status, unrecognizedProperties, List.of());
+  }
+
+  public ConfigSuccessResponse(String status, Map<String, Object> unrecognizedProperties,
+      List<String> deprecationWarnings) {
     super(status);
     _unrecognizedProperties = unrecognizedProperties;
+    _deprecationWarnings = deprecationWarnings == null ? List.of() : deprecationWarnings;
   }
 
   public Map<String, Object> getUnrecognizedProperties() {
     return _unrecognizedProperties;
+  }
+
+  public List<String> getDeprecationWarnings() {
+    return _deprecationWarnings;
   }
 }
