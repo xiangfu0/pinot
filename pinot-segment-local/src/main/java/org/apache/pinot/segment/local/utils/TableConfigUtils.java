@@ -2115,11 +2115,16 @@ public final class TableConfigUtils {
     }
   }
 
-  // Top-level keys in {@code tableIndexConfig} that look like per-column collections (string-array or string-keyed
-  // object) but must NOT be touched by the consuming-override scrub. Anything else of those shapes is treated as
-  // a per-column collection and the overridden column name is stripped from it. Inverting the policy this way
+  // Top-level keys in {@code tableIndexConfig} that look like per-column collections (string-array of column
+  // names) but must NOT be touched by the consuming-override scrub. Anything else of string-array shape is treated
+  // as a per-column list and the overridden column name is stripped from it. Inverting the policy this way
   // (deny-list rather than allow-list) keeps the scrub correct as new per-column index config keys are added to
-  // {@link IndexingConfig} — there is no hand-curated list to drift out of sync.
+  // {@link IndexingConfig} — there is no hand-curated list to drift out of sync. Today every string-array in
+  // {@link IndexingConfig} IS a per-column list (`invertedIndexColumns`, `noDictionaryColumns`,
+  // `bloomFilterColumns`, `rangeIndexColumns`, `jsonIndexColumns`, `onHeapDictionaryColumns`,
+  // `varLengthDictionaryColumns`), so this is correct. **Important:** any future non-per-column string-array field
+  // added to {@link IndexingConfig} MUST be added to this exclusion set, otherwise the scrub will silently strip
+  // entries from it whenever an overridden column name happens to match.
   //
   // - sortedColumn is structurally tied to the segment layout; a separate validate-time check rejects overrides
   //   on sorted columns.
@@ -2303,10 +2308,15 @@ public final class TableConfigUtils {
         }
         IndexLoadingConfig consumingIlc = new IndexLoadingConfig(indexLoadingConfig.getInstanceDataManagerConfig(),
             consumingTableConfig, schemaCopy);
+        /// Preserve well-defined public mutations from the original IndexLoadingConfig that are commonly set by
+        /// callers between construction and segment-build. Less-common setters (column properties, etc.) are NOT
+        /// carried over — see Javadoc contract.
         String segmentTier = indexLoadingConfig.getSegmentTier();
         if (segmentTier != null) {
           consumingIlc.setSegmentTier(segmentTier);
         }
+        consumingIlc.setSegmentVersion(indexLoadingConfig.getSegmentVersion());
+        consumingIlc.setReadMode(indexLoadingConfig.getReadMode());
         return new RealtimeSegmentConfig.Builder(consumingIlc);
       } catch (RuntimeException e) {
         logger.error("Failed to apply consumingOverride for table: {}; falling back to persisted shape",

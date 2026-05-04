@@ -181,9 +181,10 @@ public class StatelessRealtimeSegmentWriter implements Closeable {
     File statsHistoryFile = new File(tableDataDir, SEGMENT_STATS_FILE_NAME);
     RealtimeSegmentStatsHistory statsHistory = RealtimeSegmentStatsHistory.deserializeFrom(statsHistoryFile);
 
-    // Initialize mutable segment with configurations. Default path: build from indexLoadingConfig (unchanged
-    // behavior). Only switch to a TableConfig-driven Builder when a FieldConfig.consumingOverride is configured,
-    // so a column can have a richer in-memory index shape (e.g. dictionary + inverted) than what is persisted.
+    // Initialize mutable segment with configurations via the dispatch helper. Helper falls back to the
+    // indexLoadingConfig-driven Builder when no FieldConfig.consumingOverride is present (default), and switches
+    // to a TableConfig-driven Builder when one is — so a column can have a richer in-memory index shape (e.g.
+    // dictionary + inverted) than what is persisted.
     IngestionConfig ingestionConfig = _tableConfig.getIngestionConfig();
     /// StatelessRealtimeSegmentWriter is a one-shot tool (segment re-ingestion) and has no per-instance metrics
     /// pipeline; pass null for the fallback callback. The error log is sufficient for this offline use.

@@ -41,8 +41,8 @@ import org.testng.annotations.Test;
 
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNotSame;
-import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertSame;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
@@ -485,8 +485,9 @@ public class TableConfigConsumingOverrideTest {
   @Test
   public void fieldConfigJsonWithoutConsumingOverrideStillDeserializes()
       throws Exception {
-    // Backward-compat: any FieldConfig JSON written by an older controller (no consumingOverride field) must
-    // deserialize cleanly; getConsumingOverride() returns null.
+    /// Backward-compat: any FieldConfig JSON written by an older controller (no consumingOverride field) must
+    /// deserialize cleanly; getConsumingOverride() returns a NullNode (matching sibling getIndexes()
+    /// / getTierOverwrites() contract).
     String legacyJson = "{"
         + "\"name\":\"colA\","
         + "\"encodingType\":\"RAW\","
@@ -495,8 +496,9 @@ public class TableConfigConsumingOverrideTest {
     FieldConfig fc = JsonUtils.stringToObject(legacyJson, FieldConfig.class);
     assertEquals(fc.getName(), "colA");
     assertEquals(fc.getEncodingType(), FieldConfig.EncodingType.RAW);
-    assertNull(fc.getConsumingOverride(),
-        "Legacy FieldConfig without consumingOverride must yield null from getConsumingOverride");
+    JsonNode override = fc.getConsumingOverride();
+    assertNotNull(override, "getConsumingOverride() must never return null");
+    assertTrue(override.isNull(), "Absent override must be a NullNode, got: " + override);
   }
 
   @Test
@@ -567,17 +569,17 @@ public class TableConfigConsumingOverrideTest {
     IndexLoadingConfig ilc = new IndexLoadingConfig(tableConfig, buildSchema());
     /// Track that the onFallback callback fired — this is the hook RealtimeSegmentDataManager uses to bump the
     /// CONSUMING_OVERRIDE_FALLBACK metric, so the test asserts the contract the production caller relies on.
-    int[] fallbackInvocations = {0};
+    java.util.concurrent.atomic.AtomicInteger fallbackInvocations = new java.util.concurrent.atomic.AtomicInteger();
     /// Should NOT throw — the helper catches and logs.
     RealtimeSegmentConfig.Builder builder = TableConfigUtils.buildConsumingSegmentConfigBuilder(
         tableConfig, buildSchema(), ilc, LoggerFactory.getLogger(TableConfigConsumingOverrideTest.class),
-        () -> fallbackInvocations[0]++);
+        fallbackInvocations::incrementAndGet);
     RealtimeSegmentConfig built = builder.build();
     FieldIndexConfigs colA = built.getIndexConfigByCol().get("colA");
     /// Persisted shape on colA is RAW (no dictionary); the fallback must reflect that, NOT the override.
     assertFalse(colA.getConfig(StandardIndexes.dictionary()).isEnabled(),
         "Fallback path must use the persisted RAW shape, not the override-attempted dictionary shape");
-    assertEquals(fallbackInvocations[0], 1,
+    assertEquals(fallbackInvocations.get(), 1,
         "onFallback callback must be invoked exactly once when the override merge fails");
   }
 

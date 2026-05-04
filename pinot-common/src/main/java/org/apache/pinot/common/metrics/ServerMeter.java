@@ -102,11 +102,11 @@ public enum ServerMeter implements AbstractMetrics.Meter {
   SEGMENT_DOWNLOAD_FROM_REMOTE_FAILURES("segments", false),
   SEGMENT_DOWNLOAD_FROM_PEERS_FAILURES("segments", false),
   SEGMENT_BUILD_FAILURE("segments", false),
-  /// Counts realtime tables where {@code FieldConfig.consumingOverride} merge failed at consuming-segment build
-  /// time and the server fell back to the persisted shape. A non-zero value means at least one consuming segment
-  /// is running with the wrong (un-overridden) in-memory shape — operators should inspect server logs and fix the
-  /// override config. Per-table (matches the per-table emission via addMeteredTableValue).
-  CONSUMING_OVERRIDE_FALLBACK("segments", false),
+  /// Counts consuming-segment-build events where {@code FieldConfig.consumingOverride} merge failed and the
+  /// server fell back to the persisted shape. A non-zero value means at least one consuming segment is running
+  /// with the wrong (un-overridden) in-memory shape — operators should inspect server logs and fix the override
+  /// config. Emitted per-table via {@code addMeteredTableValue}.
+  CONSUMING_OVERRIDE_FALLBACK("events", false),
   SEGMENT_UPLOAD_FAILURE("segments", false),
   SEGMENT_UPLOAD_SUCCESS("segments", false),
   // Emitted only by Server to Deep-store segment uploader.

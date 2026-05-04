@@ -129,9 +129,7 @@ public class FieldConfig extends BaseJsonConfig {
     _properties = properties;
     _indexes = indexes == null ? NullNode.getInstance() : indexes;
     _tierOverwrites = tierOverwrites == null ? NullNode.getInstance() : tierOverwrites;
-    // _consumingOverride keeps null as null (rather than NullNode.getInstance()) so callers can use the simpler
-    // null-check idiom; the accessor's @Nullable contract is documented on the getter.
-    _consumingOverride = consumingOverride;
+    _consumingOverride = consumingOverride == null ? NullNode.getInstance() : consumingOverride;
   }
 
   // If null, we will create dictionary encoded forward index by default
@@ -221,9 +219,9 @@ public class FieldConfig extends BaseJsonConfig {
   /// Supported override keys: `encodingType` and `indexes`. Other top-level [FieldConfig] fields are
   /// intentionally not overridable. Unknown keys are rejected at table-config validation time.
   ///
-  /// The returned [JsonNode] aliases internal state; callers must not mutate it (clone via `deepCopy()` first).
-  /// Returns `null` when no override is configured.
-  @Nullable
+  /// Never returns `null`; absent override is represented as a `NullNode` (matching the contract of sibling
+  /// `JsonNode` accessors `getIndexes()` and `getTierOverwrites()`). To detect an actually-configured override
+  /// use {@code overrideJson.isObject() && !overrideJson.isEmpty()}.
   public JsonNode getConsumingOverride() {
     return _consumingOverride;
   }
