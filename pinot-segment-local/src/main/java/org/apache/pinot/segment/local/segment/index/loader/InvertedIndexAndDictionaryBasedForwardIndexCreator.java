@@ -40,7 +40,6 @@ import org.apache.pinot.segment.spi.index.reader.Dictionary;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
 import org.apache.pinot.segment.spi.store.SegmentDirectory;
 import org.apache.pinot.segment.spi.utils.SegmentMetadataUtils;
-import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 import org.slf4j.Logger;
@@ -93,22 +92,12 @@ public class InvertedIndexAndDictionaryBasedForwardIndexCreator implements AutoC
   private final int _maxNumberOfMultiValues;
   private final FieldSpec.DataType _storedType;
   private final int _totalNumberOfEntries;
-  /**
-   * {@code true} if a standalone dictionary file exists for the column. Independent of how the forward index is
-   * encoded — both the standard "dict-encoded forward index" and the new "shared-dictionary + raw forward index"
-   * configurations have {@code _dictionaryPresent == true}.
-   */
+  /// `true` if a standalone dictionary file exists for the column. Independent of how the forward index is
+  /// encoded — both the standard "dict-encoded forward index" and the "shared-dictionary + raw forward index"
+  /// configurations have `_dictionaryPresent == true`.
   private final boolean _dictionaryPresent;
-  /**
-   * {@code true} if the forward index itself stores dict IDs
-   * ({@link FieldConfig.EncodingType#DICTIONARY}),
-   * {@code false} if it stores raw values ({@link FieldConfig.EncodingType#RAW}).
-   *
-   * <p>Pre-shared-dict, this field used to be a single {@code _dictionaryEnabled} that conflated both meanings.
-   * After the shared-dictionary feature, the two boolean dimensions are independent: a column can have a dictionary
-   * AND a raw forward index simultaneously. Subclasses or callers that previously expected a single combined flag
-   * must update to the two-flag model.
-   */
+  /// `true` if the forward index itself stores dict IDs (DICTIONARY encoding),
+  /// `false` if it stores raw values (RAW encoding).
   private final boolean _dictionaryBasedForwardIndex;
   private final boolean _useMMapBuffer;
 

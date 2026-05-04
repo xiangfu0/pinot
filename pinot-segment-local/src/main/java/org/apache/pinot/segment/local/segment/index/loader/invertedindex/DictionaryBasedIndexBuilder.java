@@ -27,32 +27,28 @@ import org.apache.pinot.segment.spi.index.reader.ForwardIndexReaderContext;
 import org.apache.pinot.spi.utils.ByteArray;
 
 
-/**
- * Shared helper for index handlers that need to populate a {@link DictionaryBasedInvertedIndexCreator}-shaped index
- * (inverted index, range index) by reading raw values from a forward index and translating them to dict IDs via a
- * {@link Dictionary}.
- *
- * <p>{@link InvertedIndexHandler} and {@link RangeIndexHandler} both build dict-id-based indexes from raw forward
- * data when a shared dictionary exists. The data-type dispatch and per-row read/lookup/add loops are identical
- * between the two — only the creator argument differs. Both creator types implement
- * {@link DictionaryBasedInvertedIndexCreator}, so this single method handles both.
- *
- * <p>Dictionary lookup misses (negative dictId) are checked via Java {@code assert} rather than
- * {@link com.google.common.base.Preconditions} because this code runs once per document; in production with
- * assertions disabled the check is elided. A miss here means the dictionary is out of sync with the forward index,
- * which is a programmer/segment-construction bug rather than a recoverable runtime condition.
- */
+/// Shared helper for index handlers that need to populate a [DictionaryBasedInvertedIndexCreator]-shaped index
+/// (inverted index, range index) by reading raw values from a forward index and translating them to dict IDs via a
+/// [Dictionary].
+///
+/// [InvertedIndexHandler] and [RangeIndexHandler] both build dict-id-based indexes from raw forward data when a
+/// shared dictionary exists. The data-type dispatch and per-row read/lookup/add loops are identical between the
+/// two — only the creator argument differs. Both creator types implement [DictionaryBasedInvertedIndexCreator], so
+/// this single method handles both.
+///
+/// Dictionary lookup misses (negative dictId) are checked via Java `assert` because this code runs once per
+/// document; in production with assertions disabled the check is elided. A miss indicates the dictionary is out
+/// of sync with the forward index, which is a programmer/segment-construction bug rather than a recoverable
+/// runtime condition.
 public final class DictionaryBasedIndexBuilder {
   private DictionaryBasedIndexBuilder() {
   }
 
-  /**
-   * Reads raw values from {@code forwardIndexReader}, looks each value up in {@code dictionary}, and feeds the
-   * (value, dictId) pair into {@code creator} for every doc in the segment.
-   *
-   * @throws IllegalStateException if the column data type is unsupported, or if the column is multi-value with a
-   *     data type that does not support MV (e.g. BIG_DECIMAL).
-   */
+  /// Reads raw values from `forwardIndexReader`, looks each value up in `dictionary`, and feeds the
+  /// (value, dictId) pair into `creator` for every doc in the segment.
+  ///
+  /// @throws IllegalStateException if the column data type is unsupported, or if the column is multi-value with
+  ///     a data type that does not support MV (e.g. BIG_DECIMAL).
   @SuppressWarnings("rawtypes")
   public static void addRawValuesViaDictionary(DictionaryBasedInvertedIndexCreator creator,
       ForwardIndexReader forwardIndexReader, ForwardIndexReaderContext readerContext, Dictionary dictionary,

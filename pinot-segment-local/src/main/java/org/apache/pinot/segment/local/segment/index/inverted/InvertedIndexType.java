@@ -150,17 +150,14 @@ public class InvertedIndexType
 
   @Override
   public boolean requiresDictionary(FieldSpec fieldSpec, IndexConfig indexConfig) {
-    // Inverted index posting lists are keyed by dictionary IDs. Note: a separate raw-value bitmap inverted index
-    // currently exists for SV no-dictionary columns (RawValueBitmapInvertedIndexCreator); under the upcoming
-    // shared-dictionary contract (apache/pinot#17269) that path is removed and any enabled inverted index requires
-    // a dictionary, so we declare the dependency unconditionally here.
+    // Inverted index posting lists are keyed by dictionary IDs.
     return true;
   }
 
   @Override
   public boolean shouldInvalidateOnDictionaryChange(FieldSpec fieldSpec, IndexConfig indexConfig) {
     // Inverted index references dictionary IDs; enabling/disabling the dictionary changes whether the index can
-    // exist at all and (for shared-dict columns) the format on disk.
+    // exist at all.
     return true;
   }
 
@@ -204,10 +201,7 @@ public class InvertedIndexType
         throws IOException {
       PinotDataBuffer dataBuffer = segmentReader.getIndexFor(metadata.getColumnName(), StandardIndexes.inverted());
       Preconditions.checkState(metadata.hasDictionary(),
-          "Inverted index for column %s exists but no dictionary is present; the segment may contain a legacy "
-              + "embedded-dictionary inverted index. Re-run segment preprocessing with a non-null table config "
-              + "and schema to migrate the index to the standard dict-id-based format.",
-          metadata.getColumnName());
+          "Inverted index for column %s requires a dictionary", metadata.getColumnName());
       return new BitmapInvertedIndexReader(dataBuffer, metadata.getCardinality());
     }
   }

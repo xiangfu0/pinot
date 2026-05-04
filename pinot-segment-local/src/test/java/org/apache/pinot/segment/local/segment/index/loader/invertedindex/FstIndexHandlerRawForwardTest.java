@@ -48,18 +48,12 @@ import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 
 
-/**
- * Verifies FST and IFST index handlers can build their indexes during a reload pass on a column whose reloaded
- * table config opts into the new "explicit dictionary on a {@code RAW}-encoded forward index" shape. The handlers
- * walk the dictionary directly (one entry per dictId), so they are agnostic to the segment's actual forward-index
- * encoding and only require {@code columnMetadata.hasDictionary()} to be true — which is exactly the contract
- * enforced by the new {@code TableConfigUtils.validateExplicitDictionaryForRawForwardIndex} validation rule. This
- * means the existing helper {@link DictionaryBasedIndexBuilder} (used by inverted/range to translate raw forward
- * values to dict ids per-doc) does not need to be invoked from FST/IFST: those creators consume dictionary
- * entries directly and the handler code stays unchanged.
- *
- * <p>This is the FST-side counterpart to {@code InvertedIndexHandlerTest}.
- */
+/// Verifies FST and IFST index handlers can build their indexes during a reload pass on a column whose reloaded
+/// table config opts into the "explicit dictionary on a `RAW`-encoded forward index" shape. The handlers walk the
+/// dictionary directly (one entry per dictId), so they are agnostic to the segment's actual forward-index encoding
+/// and only require `columnMetadata.hasDictionary()` to be true. This means the [DictionaryBasedIndexBuilder]
+/// helper (used by inverted/range to translate raw forward values to dict ids per-doc) does not need to be
+/// invoked from FST/IFST: those creators consume dictionary entries directly and the handler code stays unchanged.
 public class FstIndexHandlerRawForwardTest {
 
   private static final String COLUMN = "col";
@@ -111,12 +105,9 @@ public class FstIndexHandlerRawForwardTest {
     }
   }
 
-  /**
-   * Build a segment that has a dictionary on the column. Uses default {@code DICTIONARY} forward-index encoding
-   * because the segment-build-time path for "RAW forward + explicit shared dictionary" is owned by a follow-up
-   * change; this test covers the reload-time handler behavior, which only depends on the dictionary being
-   * present.
-   */
+  /// Build a segment that has a dictionary on the column. Uses default `DICTIONARY` forward-index encoding because
+  /// the segment-build-time path for "RAW forward + explicit shared dictionary" is owned by a follow-up change;
+  /// this test covers the reload-time handler behavior, which only depends on the dictionary being present.
   private static File buildBaseSegmentWithDictionary(File parentDir)
       throws Exception {
     Schema schema = new Schema.SchemaBuilder().setSchemaName(TABLE)
