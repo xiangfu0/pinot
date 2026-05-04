@@ -338,19 +338,13 @@ public class TableConfigConsumingOverrideTest {
   }
 
   @Test
-  public void applyConsumingOverridesReplacesIndexesSubtreeWholesale() {
-    // Documented contract: for {@code indexes}, the entire JSON subtree is replaced rather than merged key-by-key.
-    ObjectNode parentIndexes = JsonUtils.newObjectNode();
-    parentIndexes.set("inverted", JsonUtils.newObjectNode().put("enabled", true));
-    parentIndexes.set("range", JsonUtils.newObjectNode().put("enabled", true));
-    FieldConfig parent = new FieldConfig("colA", FieldConfig.EncodingType.RAW, null, List.of(),
-        null, null, parentIndexes, null, null);
-
+  public void validateRejectsIndexesKeyOutsideAllowlist() {
+    /// `indexes` is intentionally NOT in the allowlist — only `encodingType` + `indexTypes` are allowed. Confirm
+    /// the user gets an explicit error instead of a silently-honored override.
     ObjectNode override = JsonUtils.newObjectNode();
-    ObjectNode overrideIndexes = JsonUtils.newObjectNode();
-    overrideIndexes.set("dictionary", JsonUtils.newObjectNode().put("enabled", true));
-    override.set("indexes", overrideIndexes);
-    FieldConfig overridden = new FieldConfig.Builder(parent).withConsumingOverride(override).build();
+    override.put("encodingType", FieldConfig.EncodingType.DICTIONARY.name());
+    override.set("indexes", JsonUtils.newObjectNode().set("inverted", JsonUtils.newObjectNode().put("enabled", true)));
+    FieldConfig overridden = buildRawColumnWithRichConsumingOverride("colA", override);
 
     TableConfig tableConfig = new TableConfigBuilder(TableType.REALTIME).setTableName(TABLE_NAME)
         .setTimeColumnName(TIME_COLUMN)
@@ -358,13 +352,15 @@ public class TableConfigConsumingOverrideTest {
         .setFieldConfigList(List.of(overridden))
         .build();
 
-    TableConfig consumingView = TableConfigUtils.applyConsumingOverrides(tableConfig);
-    JsonNode mergedIndexes = consumingView.getFieldConfigList().get(0).getIndexes();
-    assertTrue(mergedIndexes.has("dictionary"), "override's 'dictionary' entry must be present after merge");
-    assertFalse(mergedIndexes.has("inverted"),
-        "parent's 'inverted' entry must be discarded — indexes subtree is replaced wholesale, not merged");
-    assertFalse(mergedIndexes.has("range"),
-        "parent's 'range' entry must be discarded — indexes subtree is replaced wholesale, not merged");
+    try {
+      TableConfigUtils.validate(tableConfig, buildSchema());
+      fail("Expected validation failure for unsupported override key 'indexes'");
+    } catch (IllegalArgumentException e) {
+      assertTrue(e.getMessage().contains("Unknown FieldConfig.consumingOverride key"),
+          "Expected unknown-key message, got: " + e.getMessage());
+      assertTrue(e.getMessage().contains("indexes"),
+          "Expected message to surface the bad key, got: " + e.getMessage());
+    }
   }
 
   @Test
@@ -522,16 +518,12 @@ public class TableConfigConsumingOverrideTest {
   }
 
   @Test
-  public void applyConsumingOverridesAppliesCompressionCodec() {
-    /// `compressionCodec` is in the allowlist; verify the merge wires it through and the input is not mutated.
+  public void validateRejectsCompressionCodecKeyOutsideAllowlist() {
+    /// `compressionCodec` is intentionally NOT in the allowlist — only `encodingType` + `indexTypes` are allowed.
     ObjectNode override = JsonUtils.newObjectNode();
     override.put("encodingType", FieldConfig.EncodingType.RAW.name());
     override.put("compressionCodec", FieldConfig.CompressionCodec.LZ4.name());
-    FieldConfig overridden = new FieldConfig.Builder("colA")
-        .withEncodingType(FieldConfig.EncodingType.RAW)
-        .withCompressionCodec(FieldConfig.CompressionCodec.SNAPPY)
-        .withConsumingOverride(override)
-        .build();
+    FieldConfig overridden = buildRawColumnWithRichConsumingOverride("colA", override);
 
     TableConfig tableConfig = new TableConfigBuilder(TableType.REALTIME).setTableName(TABLE_NAME)
         .setTimeColumnName(TIME_COLUMN)
@@ -539,12 +531,15 @@ public class TableConfigConsumingOverrideTest {
         .setFieldConfigList(List.of(overridden))
         .build();
 
-    TableConfig consumingView = TableConfigUtils.applyConsumingOverrides(tableConfig);
-    assertEquals(consumingView.getFieldConfigList().get(0).getCompressionCodec(),
-        FieldConfig.CompressionCodec.LZ4, "consumingOverride must replace the persisted compressionCodec");
-    assertEquals(tableConfig.getFieldConfigList().get(0).getCompressionCodec(),
-        FieldConfig.CompressionCodec.SNAPPY,
-        "input TableConfig's persisted compressionCodec must be unchanged");
+    try {
+      TableConfigUtils.validate(tableConfig, buildSchema());
+      fail("Expected validation failure for unsupported override key 'compressionCodec'");
+    } catch (IllegalArgumentException e) {
+      assertTrue(e.getMessage().contains("Unknown FieldConfig.consumingOverride key"),
+          "Expected unknown-key message, got: " + e.getMessage());
+      assertTrue(e.getMessage().contains("compressionCodec"),
+          "Expected message to surface the bad key, got: " + e.getMessage());
+    }
   }
 
   @Test

@@ -2136,12 +2136,10 @@ public final class TableConfigUtils {
   /// the persisted shape on disk. A typical use is keeping the table in raw encoding for storage efficiency while
   /// giving the consuming segment a dictionary + inverted index for fast filtering during the consuming window.
   ///
-  /// Supported override keys: `encodingType`, `indexTypes`, `indexes`, `compressionCodec`.
-  /// Other [FieldConfig] fields (notably `properties` and `timestampConfig`) are intentionally not
+  /// Supported override keys: `encodingType`, `indexTypes`. Other [FieldConfig] fields are intentionally not
   /// overridable — see [#ALLOWED_CONSUMING_OVERRIDE_KEYS] for the rationale.
   ///
   /// Merge semantics: every supported field present in `consumingOverride` replaces the parent field wholesale.
-  /// For `indexes` the entire JSON subtree is replaced rather than merged key-by-key.
   ///
   /// For each overridden column, the column is also scrubbed from legacy per-column lists in `tableIndexConfig`
   /// (e.g. `invertedIndexColumns`, `rangeIndexColumns`, ...) so that those lists do not contradict the merged
@@ -2321,17 +2319,19 @@ public final class TableConfigUtils {
   // rather than getting silently dropped by Jackson via {@code @JsonIgnoreProperties(ignoreUnknown = true)} on
   // {@link org.apache.pinot.spi.config.BaseJsonConfig}.
   //
-  // Intentionally narrow:
+  // Scope is intentionally narrow to encoding + indexing only:
   //  - Excludes the deprecated singular {@code indexType}: only {@code indexTypes} (plural) is supported, otherwise
   //    a user could set both and the merge result would be ambiguous since the FieldConfig deserializer prefers
   //    plural and silently drops singular.
+  //  - Excludes {@code indexes}: the per-index typed JSON config is broader than what the consuming segment can
+  //    safely diverge on; stick to the simpler `encodingType` + `indexTypes` lever.
+  //  - Excludes {@code compressionCodec}: only meaningful for raw-encoded columns on disk; the consuming segment's
+  //    in-memory layout doesn't honor the on-disk codec the same way.
   //  - Excludes {@code properties} and {@code timestampConfig}: these influence cross-subsystem state
   //    (TransformPipeline, aggregation pipeline, timestamp index materialization) that does NOT consult the
   //    consuming-override view, so overriding them on the consuming side would cause silent inconsistency between
-  //    the segment's index shape and the surrounding ingestion plumbing. Revisit if/when those subsystems are
-  //    taught to consult the override.
-  private static final Set<String> ALLOWED_CONSUMING_OVERRIDE_KEYS = Set.of(
-      "encodingType", "indexTypes", "indexes", "compressionCodec");
+  //    the segment's index shape and the surrounding ingestion plumbing.
+  private static final Set<String> ALLOWED_CONSUMING_OVERRIDE_KEYS = Set.of("encodingType", "indexTypes");
 
   /// Validates [FieldConfig#getConsumingOverride()] entries on the given table config. The override only affects
   /// the realtime mutable consuming segment, so the rules are limited:
