@@ -18,6 +18,7 @@
  */
 package org.apache.pinot.spi.config.table;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import com.google.common.base.Preconditions;
 import java.util.List;
@@ -353,6 +354,7 @@ public class UpsertConfig extends BaseJsonConfig {
   }
 
   @Deprecated
+  @JsonInclude(JsonInclude.Include.NON_DEFAULT)
   public boolean isEnableSnapshot() {
     return _enableSnapshot;
   }
@@ -366,6 +368,7 @@ public class UpsertConfig extends BaseJsonConfig {
   }
 
   @Deprecated
+  @JsonInclude(JsonInclude.Include.NON_DEFAULT)
   public boolean isEnablePreload() {
     return _enablePreload;
   }
@@ -379,6 +382,7 @@ public class UpsertConfig extends BaseJsonConfig {
   }
 
   @Deprecated
+  @JsonInclude(JsonInclude.Include.NON_DEFAULT)
   public boolean isAllowPartialUpsertConsumptionDuringCommit() {
     return _allowPartialUpsertConsumptionDuringCommit;
   }

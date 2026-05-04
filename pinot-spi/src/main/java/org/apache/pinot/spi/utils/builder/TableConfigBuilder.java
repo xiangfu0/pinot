@@ -50,12 +50,13 @@ import org.apache.pinot.spi.config.table.UpsertConfig;
 import org.apache.pinot.spi.config.table.assignment.InstanceAssignmentConfig;
 import org.apache.pinot.spi.config.table.assignment.InstancePartitionsType;
 import org.apache.pinot.spi.config.table.assignment.SegmentAssignmentConfig;
+import org.apache.pinot.spi.config.table.ingestion.BatchIngestionConfig;
 import org.apache.pinot.spi.config.table.ingestion.IngestionConfig;
+import org.apache.pinot.spi.config.table.ingestion.StreamIngestionConfig;
 import org.apache.pinot.spi.config.table.sampler.TableSamplerConfig;
 
 
 public class TableConfigBuilder {
-  private static final String DEFAULT_SEGMENT_PUSH_TYPE = "APPEND";
   private static final String REFRESH_SEGMENT_PUSH_TYPE = "REFRESH";
   private static final String DEFAULT_DELETED_SEGMENTS_RETENTION_PERIOD = "7d";
   private static final String DEFAULT_NUM_REPLICAS = "1";
@@ -79,9 +80,10 @@ public class TableConfigBuilder {
   @Deprecated
   private String _segmentPushFrequency;
 
-  // TODO: Remove 'DEFAULT_SEGMENT_PUSH_TYPE' in the future major release.
   @Deprecated
-  private String _segmentPushType = DEFAULT_SEGMENT_PUSH_TYPE;
+  private String _segmentPushType;
+  @Deprecated
+  private String _segmentAssignmentStrategy;
   private String _peerSegmentDownloadScheme;
   @Deprecated
   private ReplicaGroupStrategyConfig _replicaGroupStrategyConfig;
@@ -122,7 +124,7 @@ public class TableConfigBuilder {
 
   /// @deprecated This flag is ignored. Keep it for backward compatibility during upgrade (especially for JSON ser/de).
   @Deprecated
-  private boolean _createInvertedIndexDuringSegmentGeneration;
+  private Boolean _createInvertedIndexDuringSegmentGeneration;
 
   private TableCustomConfig _customConfig;
   private QuotaConfig _quotaConfig;
@@ -224,7 +226,7 @@ public class TableConfigBuilder {
     if (REFRESH_SEGMENT_PUSH_TYPE.equalsIgnoreCase(segmentPushType)) {
       _segmentPushType = REFRESH_SEGMENT_PUSH_TYPE;
     } else {
-      _segmentPushType = DEFAULT_SEGMENT_PUSH_TYPE;
+      _segmentPushType = "APPEND";
     }
     return this;
   }
@@ -508,6 +510,38 @@ public class TableConfigBuilder {
   }
 
   public TableConfig build() {
+    IngestionConfig ingestionConfig = _ingestionConfig;
+    BatchIngestionConfig batchIngestionConfig =
+        ingestionConfig != null ? ingestionConfig.getBatchIngestionConfig() : null;
+    if (batchIngestionConfig == null) {
+      if (_segmentPushType != null || _segmentPushFrequency != null) {
+        batchIngestionConfig = new BatchIngestionConfig(null, _segmentPushType, _segmentPushFrequency);
+      }
+    } else {
+      if (batchIngestionConfig.getSegmentIngestionType() == null) {
+        batchIngestionConfig.setSegmentIngestionType(_segmentPushType);
+      }
+      if (batchIngestionConfig.getSegmentIngestionFrequency() == null) {
+        batchIngestionConfig.setSegmentIngestionFrequency(_segmentPushFrequency);
+      }
+    }
+
+    StreamIngestionConfig streamIngestionConfig =
+        ingestionConfig != null ? ingestionConfig.getStreamIngestionConfig() : null;
+    if (streamIngestionConfig == null && _streamConfigs != null && !_streamConfigs.isEmpty()) {
+      streamIngestionConfig = new StreamIngestionConfig(Collections.singletonList(_streamConfigs));
+    }
+
+    if (ingestionConfig == null) {
+      if (batchIngestionConfig != null || streamIngestionConfig != null) {
+        ingestionConfig = new IngestionConfig();
+      }
+    }
+    if (ingestionConfig != null) {
+      ingestionConfig.setBatchIngestionConfig(batchIngestionConfig);
+      ingestionConfig.setStreamIngestionConfig(streamIngestionConfig);
+    }
+
     // Validation config
     SegmentsValidationAndRetentionConfig validationConfig = new SegmentsValidationAndRetentionConfig();
     validationConfig.setTimeColumnName(_timeColumnName);
@@ -517,8 +551,7 @@ public class TableConfigBuilder {
     validationConfig.setDeletedSegmentsRetentionPeriod(_deletedSegmentsRetentionPeriod);
     validationConfig.setReplacedSegmentsRetentionPeriod(_replacedSegmentsRetentionPeriod);
     validationConfig.setLineageEntryCleanupRetentionPeriod(_lineageEntryCleanupRetentionPeriod);
-    validationConfig.setSegmentPushFrequency(_segmentPushFrequency);
-    validationConfig.setSegmentPushType(_segmentPushType);
+    validationConfig.setSegmentAssignmentStrategy(_segmentAssignmentStrategy);
     validationConfig.setReplicaGroupStrategyConfig(_replicaGroupStrategyConfig);
     validationConfig.setCompletionConfig(_completionConfig);
     validationConfig.setReplication(_numReplicas);
@@ -536,12 +569,13 @@ public class TableConfigBuilder {
       indexingConfig.setSortedColumn(Collections.singletonList(_sortedColumn));
     }
     indexingConfig.setInvertedIndexColumns(_invertedIndexColumns);
-    indexingConfig.setCreateInvertedIndexDuringSegmentGeneration(_createInvertedIndexDuringSegmentGeneration);
+    if (_createInvertedIndexDuringSegmentGeneration != null) {
+      indexingConfig.setCreateInvertedIndexDuringSegmentGeneration(_createInvertedIndexDuringSegmentGeneration);
+    }
     indexingConfig.setNoDictionaryColumns(_noDictionaryColumns);
     indexingConfig.setOnHeapDictionaryColumns(_onHeapDictionaryColumns);
     indexingConfig.setBloomFilterColumns(_bloomFilterColumns);
     indexingConfig.setRangeIndexColumns(_rangeIndexColumns);
-    indexingConfig.setStreamConfigs(_streamConfigs);
     indexingConfig.setSegmentPartitionConfig(_segmentPartitionConfig);
     indexingConfig.setNullHandlingEnabled(_nullHandlingEnabled);
     indexingConfig.setColumnMajorSegmentBuilderEnabled(_columnMajorSegmentBuilderEnabled);
@@ -567,7 +601,7 @@ public class TableConfigBuilder {
     TableConfig tableConfig =
         new TableConfig(_tableName, _tableType.toString(), validationConfig, tenantConfig, indexingConfig,
             _customConfig, _quotaConfig, _taskConfig, _routingConfig, _queryConfig, _instanceAssignmentConfigMap,
-            _fieldConfigList, _upsertConfig, _dedupConfig, _dimensionTableConfig, _ingestionConfig, _tierConfigList,
+            _fieldConfigList, _upsertConfig, _dedupConfig, _dimensionTableConfig, ingestionConfig, _tierConfigList,
             _isDimTable, _tunerConfigList, _instancePartitionsMap, _segmentAssignmentConfigMap, _tableSamplers);
     tableConfig.setDescription(_description);
     tableConfig.setTags(_tags);

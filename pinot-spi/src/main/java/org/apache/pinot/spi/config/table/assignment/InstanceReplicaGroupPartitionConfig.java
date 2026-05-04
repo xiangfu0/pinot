@@ -19,6 +19,7 @@
 package org.apache.pinot.spi.config.table.assignment;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import javax.annotation.Nullable;
@@ -102,6 +103,7 @@ public class InstanceReplicaGroupPartitionConfig extends BaseJsonConfig {
     return _numInstancesPerPartition;
   }
 
+  @JsonInclude(JsonInclude.Include.NON_DEFAULT)
   public boolean isMinimizeDataMovement() {
     return _minimizeDataMovement;
   }

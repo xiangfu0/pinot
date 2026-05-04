@@ -19,6 +19,7 @@
 package org.apache.pinot.spi.config.table;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.util.concurrent.TimeUnit;
 import org.apache.pinot.spi.config.BaseJsonConfig;
 import org.apache.pinot.spi.config.table.assignment.InstanceAssignmentConfig;
@@ -254,6 +255,7 @@ public class SegmentsValidationAndRetentionConfig extends BaseJsonConfig {
    * @deprecated Use {@link InstanceAssignmentConfig} instead
    */
   @Deprecated
+  @JsonInclude(JsonInclude.Include.NON_DEFAULT)
   public boolean isMinimizeDataMovement() {
     return _minimizeDataMovement;
   }

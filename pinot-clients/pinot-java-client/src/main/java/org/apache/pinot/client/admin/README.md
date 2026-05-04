@@ -147,6 +147,68 @@ String status = tableClient.getTableStatus("myTable");
 String rebalanceResult = tableClient.rebalanceTable("myTable", true, "default", 1);
 ```
 
+### Creating Tables With Modern Config Fields
+
+Table creation endpoints reject deprecated table-config properties when they are explicitly present in the request
+payload. Existing tables can still be updated with legacy fields for backward compatibility, but new create requests
+must use the current config layout.
+
+Common migrations:
+
+- `segmentsConfig.segmentPushType` -> `ingestionConfig.batchIngestionConfig.segmentIngestionType`
+- `segmentsConfig.segmentPushFrequency` -> `ingestionConfig.batchIngestionConfig.segmentIngestionFrequency`
+- `tableIndexConfig.streamConfigs` -> `ingestionConfig.streamIngestionConfig.streamConfigMaps`
+- `fieldConfigList[].indexType` -> `fieldConfigList[].indexTypes`
+
+Sample REALTIME table config for create:
+
+```json
+{
+  "tableName": "events",
+  "tableType": "REALTIME",
+  "segmentsConfig": {
+    "timeColumnName": "ts",
+    "replication": "1"
+  },
+  "tenants": {
+    "broker": "DefaultTenant",
+    "server": "DefaultTenant"
+  },
+  "tableIndexConfig": {
+    "loadMode": "MMAP"
+  },
+  "fieldConfigList": [
+    {
+      "name": "userId",
+      "encodingType": "DICTIONARY",
+      "indexTypes": [
+        "INVERTED"
+      ]
+    }
+  ],
+  "ingestionConfig": {
+    "batchIngestionConfig": {
+      "segmentIngestionType": "APPEND",
+      "segmentIngestionFrequency": "DAILY"
+    },
+    "streamIngestionConfig": {
+      "streamConfigMaps": [
+        {
+          "streamType": "kafka",
+          "stream.kafka.topic.name": "events",
+          "stream.kafka.consumer.type": "lowlevel",
+          "stream.kafka.decoder.class.name": "org.apache.pinot.plugin.inputformat.json.JSONMessageDecoder"
+        }
+      ]
+    }
+  },
+  "metadata": {}
+}
+```
+
+If a create request still sends deprecated fields, the controller returns `400 BAD_REQUEST` with the offending JSON path
+and the replacement field to use.
+
 ### Schema Operations
 
 ```java

@@ -392,6 +392,28 @@ public class TableConfigsRestletResourceTest extends ControllerTest {
   }
 
   @Test
+  public void testCreateConfigRejectsDeprecatedTableProperties()
+      throws Exception {
+    PinotAdminClient adminClient = getOrCreateAdminClient();
+    String tableName = "testDeprecatedCreate";
+    TableConfigs tableConfigs =
+        new TableConfigs(tableName, createDummySchema(tableName), createOfflineTableConfig(tableName),
+            createRealtimeTableConfig(tableName));
+    ObjectNode tableConfigsJson = (ObjectNode) JsonUtils.stringToJsonNode(tableConfigs.toPrettyJsonString());
+    ((ObjectNode) tableConfigsJson.get(TableType.REALTIME.name().toLowerCase()).get(TableConfig.INDEXING_CONFIG_KEY))
+        .set("streamConfigs", JsonUtils.objectToJsonNode(FakeStreamConfigUtils.getDefaultLowLevelStreamConfigs()
+            .getStreamConfigsMap()));
+
+    try {
+      adminClient.getTableClient().createTableConfigs(tableConfigsJson.toPrettyString(), null, null);
+      fail("Creation of TableConfigs with deprecated table configs should have failed");
+    } catch (Exception e) {
+      Assert.assertTrue(e.getMessage().contains("realtime.tableIndexConfig.streamConfigs"),
+          "Expected deprecated streamConfigs rejection but got: " + e.getMessage());
+    }
+  }
+
+  @Test
   public void testListConfigs()
       throws Exception {
     PinotAdminClient adminClient = getOrCreateAdminClient();

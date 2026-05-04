@@ -355,6 +355,30 @@ public class PinotTableRestletResourceTest extends ControllerTest {
   }
 
   @Test
+  public void testCreateRejectsDeprecatedConfigButUpdateAllowsIt()
+      throws Exception {
+    TableConfig offlineTableConfig = _offlineBuilder.setTableName(OFFLINE_TABLE_NAME).build();
+    ObjectNode createTableJson = (ObjectNode) JsonUtils.stringToJsonNode(offlineTableConfig.toJsonString());
+    createTableJson.with("segmentsConfig").put("segmentPushType", "APPEND");
+
+    IOException createException = expectThrows(IOException.class, () -> createTable(createTableJson.toString()));
+    assertHasStatus(createException, 400);
+    assertTrue(createException.getMessage().contains("segmentsConfig.segmentPushType"));
+
+    String rawTableName = "deprecated_update_table";
+    DEFAULT_INSTANCE.addDummySchema(rawTableName);
+    TableConfig existingTableConfig = getOfflineTableBuilder(rawTableName).build();
+    createTable(existingTableConfig.toJsonString());
+
+    ObjectNode updateTableJson = (ObjectNode) JsonUtils.stringToJsonNode(existingTableConfig.toJsonString());
+    updateTableJson.with("segmentsConfig").put("segmentPushType", "APPEND");
+    JsonNode updateResponse = JsonUtils.stringToJsonNode(updateTable(existingTableConfig.getTableName(),
+        updateTableJson.toString()));
+    assertEquals(updateResponse.get("status").asText(), "Table config updated for " + existingTableConfig
+        .getTableName());
+  }
+
+  @Test
   public void testTableCronSchedule()
       throws IOException {
     String rawTableName = "test_table_cron_schedule";

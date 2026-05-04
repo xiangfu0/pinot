@@ -19,6 +19,7 @@
 package org.apache.pinot.spi.config.table;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.NullNode;
@@ -181,6 +182,7 @@ public class FieldConfig extends BaseJsonConfig {
 
   @Nullable
   @Deprecated
+  @JsonIgnore
   public IndexType getIndexType() {
     return !_indexTypes.isEmpty() ? _indexTypes.get(0) : null;
   }

@@ -18,6 +18,7 @@
  */
 package org.apache.pinot.controller.api.resources;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.base.Preconditions;
@@ -79,6 +80,7 @@ import org.apache.pinot.segment.local.utils.TableConfigUtils;
 import org.apache.pinot.spi.config.TableConfigs;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableConfigValidatorRegistry;
+import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.data.LogicalTableConfig;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.utils.JsonUtils;
@@ -222,8 +224,14 @@ public class TableConfigsRestletResource {
           Response.Status.BAD_REQUEST);
     }
 
-    validateConfig(tableConfigs, databaseName, typesToSkip);
-    tableConfigs.setTableName(rawTableName);
+    try {
+      validateNoDeprecatedCreateConfigs(tableConfigs, JsonUtils.stringToJsonNode(tableConfigsStr), databaseName);
+      validateConfig(tableConfigs, databaseName, typesToSkip);
+      tableConfigs.setTableName(rawTableName);
+    } catch (Exception e) {
+      throw new ControllerApplicationException(LOGGER, String.format("Invalid TableConfigs. %s", e.getMessage()),
+          Response.Status.BAD_REQUEST, e);
+    }
 
     TableConfig offlineTableConfig = tableConfigs.getOffline();
     TableConfig realtimeTableConfig = tableConfigs.getRealtime();
@@ -461,9 +469,11 @@ public class TableConfigsRestletResource {
       @QueryParam("validationTypesToSkip") @Nullable String typesToSkip, @Context HttpHeaders httpHeaders,
       @Context Request request) {
     Pair<TableConfigs, Map<String, Object>> tableConfigsAndUnrecognizedProps;
+    JsonNode tableConfigsJson;
     try {
       tableConfigsAndUnrecognizedProps =
           JsonUtils.stringToObjectAndUnrecognizedProperties(tableConfigsStr, TableConfigs.class);
+      tableConfigsJson = JsonUtils.stringToJsonNode(tableConfigsStr);
     } catch (IOException e) {
       throw new ControllerApplicationException(LOGGER,
           String.format("Invalid TableConfigs json string: %s. Reason: %s", tableConfigsStr, e.getMessage()),
@@ -471,9 +481,17 @@ public class TableConfigsRestletResource {
     }
     String databaseName = DatabaseUtils.extractDatabaseFromHttpHeaders(httpHeaders);
     TableConfigs tableConfigs = tableConfigsAndUnrecognizedProps.getLeft();
-    validateConfig(tableConfigs, databaseName, typesToSkip);
-    String rawTableName = DatabaseUtils.translateTableName(tableConfigs.getTableName(), databaseName);
-    tableConfigs.setTableName(rawTableName);
+    String rawTableName;
+    try {
+      validateNoDeprecatedCreateConfigs(tableConfigs, tableConfigsJson, databaseName);
+      validateConfig(tableConfigs, databaseName, typesToSkip);
+      rawTableName = DatabaseUtils.translateTableName(tableConfigs.getTableName(), databaseName);
+      tableConfigs.setTableName(rawTableName);
+    } catch (Exception e) {
+      throw new ControllerApplicationException(LOGGER,
+          String.format("Invalid TableConfigs json string: %s. Reason: %s", tableConfigsStr, e.getMessage()),
+          Response.Status.BAD_REQUEST, e);
+    }
 
     // validate permission
     String endpointUrl = request.getRequestURL().toString();
@@ -565,6 +583,30 @@ public class TableConfigsRestletResource {
     } catch (Exception e) {
       throw new ControllerApplicationException(LOGGER,
           String.format("Invalid TableConfigs: %s. %s", rawTableName, e.getMessage()), Response.Status.BAD_REQUEST, e);
+    }
+  }
+
+  private void validateNoDeprecatedCreateConfigs(TableConfigs tableConfigs, JsonNode tableConfigsJson,
+      String database) {
+    if (tableConfigs.getTableName() == null) {
+      return;
+    }
+    String rawTableName = DatabaseUtils.translateTableName(tableConfigs.getTableName(), database);
+    JsonNode offlineTableConfigJson = tableConfigsJson.get(TableType.OFFLINE.name().toLowerCase());
+    if (offlineTableConfigJson == null) {
+      offlineTableConfigJson = tableConfigsJson.get(TableType.OFFLINE.name());
+    }
+    if (offlineTableConfigJson != null && !_pinotHelixResourceManager.hasOfflineTable(rawTableName)) {
+      DeprecatedTableConfigValidationUtils.validateNoDeprecatedConfigs(offlineTableConfigJson,
+          TableType.OFFLINE.name().toLowerCase());
+    }
+    JsonNode realtimeTableConfigJson = tableConfigsJson.get(TableType.REALTIME.name().toLowerCase());
+    if (realtimeTableConfigJson == null) {
+      realtimeTableConfigJson = tableConfigsJson.get(TableType.REALTIME.name());
+    }
+    if (realtimeTableConfigJson != null && !_pinotHelixResourceManager.hasRealtimeTable(rawTableName)) {
+      DeprecatedTableConfigValidationUtils.validateNoDeprecatedConfigs(realtimeTableConfigJson,
+          TableType.REALTIME.name().toLowerCase());
     }
   }
 }

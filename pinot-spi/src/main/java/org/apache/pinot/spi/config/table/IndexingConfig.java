@@ -19,6 +19,7 @@
 package org.apache.pinot.spi.config.table;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.HashSet;
 import java.util.List;
@@ -162,6 +163,7 @@ public class IndexingConfig extends BaseJsonConfig {
   }
 
   @Deprecated
+  @JsonInclude(JsonInclude.Include.NON_DEFAULT)
   public boolean isCreateInvertedIndexDuringSegmentGeneration() {
     return _createInvertedIndexDuringSegmentGeneration;
   }

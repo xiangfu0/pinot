@@ -18,6 +18,7 @@
  */
 package org.apache.pinot.spi.config.table;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import com.google.common.base.Preconditions;
 import java.util.Map;
@@ -165,6 +166,7 @@ public class DedupConfig extends BaseJsonConfig {
   }
 
   @Deprecated
+  @JsonInclude(JsonInclude.Include.NON_DEFAULT)
   public boolean isEnablePreload() {
     return _enablePreload;
   }
@@ -178,6 +180,7 @@ public class DedupConfig extends BaseJsonConfig {
   }
 
   @Deprecated
+  @JsonInclude(JsonInclude.Include.NON_DEFAULT)
   public boolean isAllowDedupConsumptionDuringCommit() {
     return _allowDedupConsumptionDuringCommit;
   }

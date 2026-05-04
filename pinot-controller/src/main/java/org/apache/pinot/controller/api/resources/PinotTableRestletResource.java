@@ -252,6 +252,7 @@ public class PinotTableRestletResource {
       schema = _pinotHelixResourceManager.getTableSchema(tableNameWithType);
       Preconditions.checkState(schema != null, "Failed to find schema for table: %s", tableNameWithType);
 
+      DeprecatedTableConfigValidationUtils.validateNoDeprecatedConfigs(JsonUtils.stringToJsonNode(tableConfigStr));
       TableConfigTunerUtils.applyTunerConfigs(_pinotHelixResourceManager, tableConfig, schema, Collections.emptyMap());
 
       TableConfigValidationUtils.validateTableConfig(
@@ -346,6 +347,11 @@ public class PinotTableRestletResource {
 
       ObjectNode realtimeTableConfigNode = (ObjectNode) tableConfigNode.get(TableType.REALTIME.name());
       tweakRealtimeTableConfig(realtimeTableConfigNode, copyTablePayload);
+      try {
+        DeprecatedTableConfigValidationUtils.validateNoDeprecatedConfigs(realtimeTableConfigNode);
+      } catch (IllegalStateException e) {
+        throw new ControllerApplicationException(LOGGER, e.getMessage(), Response.Status.BAD_REQUEST, e);
+      }
       TableConfig realtimeTableConfig = JsonUtils.jsonNodeToObject(realtimeTableConfigNode, TableConfig.class);
       if (realtimeTableConfig.getUpsertConfig() != null) {
         throw new IllegalStateException("upsert table copy not supported");
@@ -837,9 +843,11 @@ public class PinotTableRestletResource {
       @QueryParam("validationTypesToSkip") @Nullable String typesToSkip, @Context HttpHeaders httpHeaders,
       @Context Request request) {
     Pair<TableConfig, Map<String, Object>> tableConfigAndUnrecognizedProperties;
+    JsonNode tableConfigJson;
     try {
       tableConfigAndUnrecognizedProperties =
           JsonUtils.stringToObjectAndUnrecognizedProperties(tableConfigStr, TableConfig.class);
+      tableConfigJson = JsonUtils.stringToJsonNode(tableConfigStr);
     } catch (IOException e) {
       String msg = String.format("Invalid table config json string: %s. Reason: %s", tableConfigStr, e.getMessage());
       throw new ControllerApplicationException(LOGGER, msg, Response.Status.BAD_REQUEST, e);
@@ -851,6 +859,14 @@ public class PinotTableRestletResource {
     // validate permission
     ResourceUtils.checkPermissionAndAccess(tableNameWithType, request, httpHeaders,
         AccessType.READ, Actions.Table.VALIDATE_TABLE_CONFIGS, _accessControlFactory, LOGGER);
+    try {
+      if (!_pinotHelixResourceManager.hasTable(tableNameWithType)) {
+        DeprecatedTableConfigValidationUtils.validateNoDeprecatedConfigs(tableConfigJson);
+      }
+    } catch (Exception e) {
+      String msg = String.format("Invalid table config: %s. %s", tableNameWithType, e.getMessage());
+      throw new ControllerApplicationException(LOGGER, msg, Response.Status.BAD_REQUEST, e);
+    }
 
     ObjectNode validationResponse = validateConfig(tableConfig, typesToSkip);
     validationResponse.set("unrecognizedProperties",
