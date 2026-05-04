@@ -31,10 +31,13 @@ import org.apache.pinot.segment.local.data.manager.SegmentDataManager;
 import org.apache.pinot.segment.local.data.manager.TableDataManager;
 import org.apache.pinot.segment.local.indexsegment.immutable.ImmutableSegmentImpl;
 import org.apache.pinot.segment.local.indexsegment.mutable.MutableSegmentImpl;
+import org.apache.pinot.segment.local.segment.store.SegmentLocalFSDirectory;
 import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.IndexSegment;
 import org.apache.pinot.segment.spi.SegmentMetadata;
 import org.apache.pinot.segment.spi.datasource.DataSource;
+import org.apache.pinot.segment.spi.index.StandardIndexes;
+import org.apache.pinot.segment.spi.store.SegmentDirectory;
 import org.apache.pinot.server.starter.helix.BaseServerStarter;
 import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
@@ -43,6 +46,7 @@ import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.utils.CommonConstants;
 import org.apache.pinot.spi.utils.JsonUtils;
+import org.apache.pinot.spi.utils.ReadMode;
 import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
 import org.apache.pinot.spi.utils.builder.TableNameBuilder;
 import org.apache.pinot.util.TestUtils;
@@ -51,7 +55,6 @@ import org.testng.annotations.Test;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
-import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 
 
@@ -69,11 +72,11 @@ import static org.testng.Assert.assertTrue;
 /// - Pre-commit: walks each server's [TableDataManager], asserts every consuming segment is a
 ///   [MutableSegmentImpl], and verifies via the in-memory [DataSource] that `STRING_COLUMN` has both a dictionary
 ///   and an inverted index — i.e. the override took effect.
-/// - Post-commit: walks each server again, asserts every segment is now an [ImmutableSegmentImpl], inspects both
-///   the in-memory [DataSource] (`getDictionary()`, `getInvertedIndex()`) AND the on-disk [ColumnMetadata]
-///   (`hasDictionary()`) to prove the persisted shape is RAW with no inverted index. Also verifies that an
-///   unrelated dimension column (`STRING_COLUMN_NO_OVERRIDE`) keeps its default DICTIONARY shape on both
-///   the consuming and immutable segments — guards against the override scrub being too aggressive.
+/// - Post-commit: walks each server again, finds every [ImmutableSegmentImpl], asserts the on-disk
+///   [ColumnMetadata] (`hasDictionary()`) AND the on-disk [SegmentDirectory] reader (`hasIndexFor`) confirm the
+///   persisted shape is RAW with no dictionary and no inverted index. Also verifies that an unrelated dimension
+///   column (`STRING_COLUMN_NO_OVERRIDE`) keeps its default DICTIONARY shape on both the consuming and immutable
+///   segments — guards against the override scrub being too aggressive.
 /// - Query parity: the same SQL queries return identical row counts before and after commit, so the override does
 ///   not affect query semantics — only the in-memory index that serves them.
 @Test(suiteName = "CustomClusterIntegrationTest")
@@ -253,8 +256,10 @@ public class ConsumingOverrideRealtimeTest extends CustomDataQueryClusterIntegra
       }
     }
     assertTrue(consumingSegmentsInspected > 0, "Expected at least one consuming segment to be inspected");
-    assertEquals(totalDocsAcrossConsumingSegments / getNumReplicas(), NUM_DOCS,
-        "Total docs across consuming segments (per replica) must equal NUM_DOCS");
+    /// Total docs summed across every replica must be exactly NUM_DOCS * numReplicas — guards against silent drift
+    /// where one replica double-consumes and another drops a row (integer-division check would mask that).
+    assertEquals(totalDocsAcrossConsumingSegments, NUM_DOCS * getNumReplicas(),
+        "Total docs across all consuming-segment replicas must equal NUM_DOCS * numReplicas");
 
     /// 4. Force-commit consuming segments to seal them as immutable, and wait for ExternalView to reflect ONLINE.
     forceCommitAndWait(realtimeTableName);
@@ -284,22 +289,8 @@ public class ConsumingOverrideRealtimeTest extends CustomDataQueryClusterIntegra
             continue;
           }
 
-          /// In-memory DataSource view of the immutable segment.
-          DataSource overriddenDs = segment.getDataSource(STRING_COLUMN);
-          assertNotNull(overriddenDs, "DataSource missing for " + STRING_COLUMN + " on immutable segment");
-          assertNull(overriddenDs.getDictionary(),
-              STRING_COLUMN + " must NOT have a dictionary on the immutable segment — the consumingOverride "
-                  + "must not leak to disk. Segment: " + sdm.getSegmentName());
-          assertNull(overriddenDs.getInvertedIndex(),
-              STRING_COLUMN + " must NOT have an inverted index on the immutable segment — the consumingOverride "
-                  + "must not leak to disk. Segment: " + sdm.getSegmentName());
-
-          DataSource controlDs = segment.getDataSource(STRING_COLUMN_NO_OVERRIDE);
-          assertNotNull(controlDs.getDictionary(),
-              STRING_COLUMN_NO_OVERRIDE + " must keep its default dictionary on the immutable segment");
-
-          /// On-disk ColumnMetadata view: this is the authoritative persisted shape regardless of any in-memory
-          /// loader logic that might re-construct missing indexes on load.
+          /// On-disk ColumnMetadata view: this is the authoritative persisted shape — independent of any in-memory
+          /// loader/lifecycle state that might mask a real regression where the override leaks to disk.
           SegmentMetadata segmentMetadata = segment.getSegmentMetadata();
           ColumnMetadata overriddenMeta = segmentMetadata.getColumnMetadataFor(STRING_COLUMN);
           assertNotNull(overriddenMeta, "ColumnMetadata missing for " + STRING_COLUMN);
@@ -310,6 +301,20 @@ public class ConsumingOverrideRealtimeTest extends CustomDataQueryClusterIntegra
           assertTrue(controlMeta.hasDictionary(),
               STRING_COLUMN_NO_OVERRIDE + " on-disk ColumnMetadata must report hasDictionary=true. Segment: "
                   + sdm.getSegmentName());
+
+          /// Cross-check via the on-disk SegmentDirectory reader so the assertion proves the inverted index file is
+          /// physically absent rather than merely lazy-loaded.
+          ImmutableSegmentImpl immutableSegment = (ImmutableSegmentImpl) segment;
+          File indexDir = immutableSegment.getSegmentMetadata().getIndexDir();
+          try (SegmentDirectory segmentDirectory = new SegmentLocalFSDirectory(indexDir, ReadMode.mmap);
+              SegmentDirectory.Reader reader = segmentDirectory.createReader()) {
+            assertFalse(reader.hasIndexFor(STRING_COLUMN, StandardIndexes.inverted()),
+                STRING_COLUMN + " must not carry an inverted index on the immutable segment. Segment: "
+                    + sdm.getSegmentName());
+            assertFalse(reader.hasIndexFor(STRING_COLUMN, StandardIndexes.dictionary()),
+                STRING_COLUMN + " must not carry a dictionary on the immutable segment. Segment: "
+                    + sdm.getSegmentName());
+          }
 
           immutableSegmentsInspected++;
         }

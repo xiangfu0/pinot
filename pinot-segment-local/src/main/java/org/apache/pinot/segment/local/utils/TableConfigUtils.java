@@ -42,6 +42,8 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.common.evaluator.FunctionEvaluatorFactory;
+import org.apache.pinot.common.metrics.ServerMeter;
+import org.apache.pinot.common.metrics.ServerMetrics;
 import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.common.request.context.FunctionContext;
 import org.apache.pinot.common.request.context.RequestContextUtils;
@@ -2260,12 +2262,20 @@ public final class TableConfigUtils {
   /// [FieldConfig#getConsumingOverride()] present on the table config. When no override is configured, the
   /// un-modified [IndexLoadingConfig]-driven builder is returned so existing code paths (tier overwrites,
   /// instance-level mutations on `IndexLoadingConfig`) flow through unchanged. If the override merge throws (a
-  /// misconfiguration that slipped past validate), the call falls back to the `IndexLoadingConfig`-driven builder
-  /// and logs the error so consumption keeps making forward progress on the persisted shape.
+  /// misconfiguration that slipped past validate), the call falls back to the `IndexLoadingConfig`-driven builder,
+  /// logs the error, and bumps the [ServerMeter#CONSUMING_OVERRIDE_FALLBACK] meter so the silent-degradation case
+  /// is observable through metrics.
+  ///
+  /// **IndexLoadingConfig contract on the override path:** the helper rebuilds a fresh [IndexLoadingConfig] from
+  /// `(indexLoadingConfig.getInstanceDataManagerConfig(), mergedTableConfig, schemaCopy)` and re-applies the
+  /// `segmentTier`. Any other in-place mutation the caller made on the supplied `indexLoadingConfig` (segment
+  /// version, star-tree configs, etc.) is **not** carried over on the override path. Callers that need such
+  /// mutations preserved must either set them on the returned Builder after this call, or extend this helper.
   ///
   /// @param tableConfig source table config; not mutated
-  /// @param schema      schema in scope
-  /// @param indexLoadingConfig fallback / no-override path
+  /// @param schema      schema in scope; deep-copied before being passed to the override-path IndexLoadingConfig
+  /// @param indexLoadingConfig fallback / no-override path; on the override path only `instanceDataManagerConfig`
+  ///                           and `segmentTier` are read (see contract above)
   /// @param logger      logger to emit error on fallback
   /// @return a Builder ready for the caller to chain `.set...` calls and `.build()`
   public static RealtimeSegmentConfig.Builder buildConsumingSegmentConfigBuilder(TableConfig tableConfig,
@@ -2296,6 +2306,14 @@ public final class TableConfigUtils {
       } catch (RuntimeException e) {
         logger.error("Failed to apply consumingOverride for table: {}; falling back to persisted shape",
             tableConfig.getTableName(), e);
+        /// Bump a server-side meter so the silent-degradation case is observable through metrics, not just logs.
+        /// Operators alerting on a non-zero CONSUMING_OVERRIDE_FALLBACK can detect and triage misconfigurations
+        /// without grepping per-segment logs.
+        ServerMetrics serverMetrics = ServerMetrics.get();
+        if (serverMetrics != null) {
+          serverMetrics.addMeteredTableValue(tableConfig.getTableName(),
+              ServerMeter.CONSUMING_OVERRIDE_FALLBACK, 1L);
+        }
       }
     }
     return new RealtimeSegmentConfig.Builder(indexLoadingConfig);
