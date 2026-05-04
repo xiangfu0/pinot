@@ -4,7 +4,6 @@
   "tenants": {
   },
   "segmentsConfig": {
-    "segmentPushType": "REFRESH",
     "replication": "1",
     "timeColumnName": "created_at_timestamp"
   },
@@ -12,6 +11,9 @@
     "loadMode": "MMAP"
   },
   "ingestionConfig": {
+    "batchIngestionConfig": {
+      "segmentIngestionType": "REFRESH"
+    },
     "transformConfigs": [
       {
         "columnName": "created_at_timestamp",
