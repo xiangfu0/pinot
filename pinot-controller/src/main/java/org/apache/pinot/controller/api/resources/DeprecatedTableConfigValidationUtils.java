@@ -123,7 +123,7 @@ public final class DeprecatedTableConfigValidationUtils {
 
   /**
    * Validates a freshly-submitted table config (no prior stored value). On any error the method throws
-   * {@link IllegalStateException}; warnings are returned so the caller can surface them in the response.
+   * {@link IllegalArgumentException}; warnings are returned so the caller can surface them in the response.
    */
   public static List<String> validateOnCreate(JsonNode newTableConfigJson, @Nullable String rootPathPrefix) {
     Result result = validate(newTableConfigJson, null, rootPathPrefix);
@@ -140,7 +140,7 @@ public final class DeprecatedTableConfigValidationUtils {
   /**
    * Validates an updated table config against its currently-stored counterpart. Only newly-introduced or
    * value-changed deprecated paths are reported, so legacy values that were already present do not block updates.
-   * On any error the method throws {@link IllegalStateException}; warnings are returned for the caller to surface.
+   * On any error the method throws {@link IllegalArgumentException}; warnings are returned for the caller to surface.
    */
   public static List<String> validateOnUpdate(JsonNode newTableConfigJson, @Nullable JsonNode oldTableConfigJson,
       @Nullable String rootPathPrefix) {

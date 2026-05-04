@@ -352,7 +352,7 @@ public class PinotTableRestletResource {
       tweakRealtimeTableConfig(realtimeTableConfigNode, copyTablePayload);
       try {
         DeprecatedTableConfigValidationUtils.validateNoDeprecatedConfigs(realtimeTableConfigNode);
-      } catch (IllegalStateException e) {
+      } catch (IllegalArgumentException e) {
         throw new ControllerApplicationException(LOGGER, e.getMessage(), Response.Status.BAD_REQUEST, e);
       }
       TableConfig realtimeTableConfig = JsonUtils.jsonNodeToObject(realtimeTableConfigNode, TableConfig.class);

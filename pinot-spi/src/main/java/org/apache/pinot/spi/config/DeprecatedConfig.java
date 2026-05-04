@@ -35,7 +35,7 @@ import java.lang.annotation.Target;
  * <p>Place this annotation on the Jackson-visible getter (the one that drives JSON property naming) so the
  * discovery walk picks up the correct serialized name.</p>
  */
-@Target({ElementType.METHOD, ElementType.FIELD})
+@Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface DeprecatedConfig {
 
