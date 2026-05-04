@@ -230,16 +230,27 @@ public class SqlQueryExecutor {
 
     LOGGER.info("Submitting push-based INSERT to controller: {}", url);
 
-    // Forward all caller-supplied headers (Authorization in particular). The controller's
+    // Forward caller-supplied headers (Authorization in particular). The controller's
     // /insert/execute is @Authenticate(AccessType.CREATE) + @Authorize(action=EXECUTE_INSERT) and
     // rejects unauthenticated requests with 401, so a null headers map fails closed at the
     // controller — but log a warning so misconfigured callers (forgot to plumb headers through
     // the broker dispatch) get a visible signal rather than a generic 401.
+    //
+    // Strip hop-by-hop and length-bearing headers from the inbound request before forwarding —
+    // re-emitting "Content-Length" or "Transfer-Encoding" causes Apache HttpClient to throw
+    // "Content-Length header already present" because sendJsonPostRequest computes its own length
+    // from the new payload. The forwarded body has nothing to do with the inbound body's framing.
     Map<String, String> requestHeaders = new HashMap<>();
     requestHeaders.put("Content-Type", "application/json");
     requestHeaders.put("accept", "application/json");
     if (headers != null && !headers.isEmpty()) {
-      requestHeaders.putAll(headers);
+      for (Map.Entry<String, String> entry : headers.entrySet()) {
+        String name = entry.getKey();
+        if (name == null || isStrippedForwardedHeader(name)) {
+          continue;
+        }
+        requestHeaders.put(name, entry.getValue());
+      }
     } else {
       LOGGER.warn("executePushInsert: caller-supplied headers are null/empty; the controller will "
           + "reject this request if authentication is enabled. Plumb auth headers through the "
@@ -261,6 +272,26 @@ public class SqlQueryExecutor {
           + ", first-200-chars=" + responseStr.substring(0, Math.min(200, responseStr.length())), e);
     }
     return JsonUtils.jsonNodeToObject(responseJson, InsertResult.class);
+  }
+
+  /**
+   * Returns true for headers that must NOT be forwarded from the inbound request to the
+   * controller-bound POST. Length/framing-bearing headers ({@code Content-Length},
+   * {@code Transfer-Encoding}) cause Apache HttpClient to throw "Content-Length header already
+   * present" because the outbound client recomputes them from the new payload. {@code Host} also
+   * mismatches the controller URL. {@code Content-Type} and {@code Accept} are explicitly set by
+   * us to {@code application/json}; allowing inbound versions through would clobber the JSON
+   * contract.
+   */
+  private static boolean isStrippedForwardedHeader(String name) {
+    String lower = name.toLowerCase(Locale.ROOT);
+    return lower.equals("content-length")
+        || lower.equals("transfer-encoding")
+        || lower.equals("content-type")
+        || lower.equals("accept")
+        || lower.equals("host")
+        || lower.equals("connection")
+        || lower.equals("expect");
   }
 
   private static InsertRequest buildInsertRequest(InsertIntoValues insertStmt) {
