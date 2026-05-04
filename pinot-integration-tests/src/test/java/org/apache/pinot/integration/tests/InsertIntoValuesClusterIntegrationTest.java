@@ -19,10 +19,14 @@
 package org.apache.pinot.integration.tests;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.commons.io.FileUtils;
+import org.apache.pinot.common.exception.HttpErrorStatusException;
 import org.apache.pinot.controller.ControllerConf;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableType;
@@ -155,7 +159,12 @@ public class InsertIntoValuesClusterIntegrationTest extends BaseClusterIntegrati
 
   private JsonNode postInsertRequest(String payload)
       throws Exception {
-    String url = getControllerBaseApiUrl() + "/insert/execute";
+    // The /insert/execute endpoint requires ?tableName=<table> as a query param to bind the
+    // table-scoped @Authorize check. Extract the value from the payload so callers don't need to
+    // pass it twice.
+    String tableName = JsonUtils.stringToJsonNode(payload).get("tableName").asText();
+    String url = getControllerBaseApiUrl() + "/insert/execute?tableName="
+        + URLEncoder.encode(tableName, StandardCharsets.UTF_8);
     String response = sendPostRequest(url, payload,
         Collections.singletonMap("accept", "application/json"));
     return JsonUtils.stringToJsonNode(response);
@@ -307,9 +316,22 @@ public class InsertIntoValuesClusterIntegrationTest extends BaseClusterIntegrati
     String tableName = "insertStatusNotFound";
     createOfflineTable(tableName);
 
-    JsonNode status = getInsertStatus("unknown-stmt-id", tableName + "_OFFLINE");
-    LOGGER.info("Status not found: {}", status);
-    assertEquals(status.get("errorCode").asText(), "NOT_FOUND");
+    // The resource maps any state=REJECTED coordinator response (including NOT_FOUND) to HTTP 404
+    // to honor the contract that REJECTED has no manifest persisted. ControllerTest.sendGetRequest
+    // wraps HttpErrorStatusException in an IOException on 4xx, so we catch IOException and unwrap
+    // to check the status code and error message.
+    try {
+      getInsertStatus("unknown-stmt-id", tableName + "_OFFLINE");
+      fail("Expected HTTP 404 for unknown statementId");
+    } catch (IOException e) {
+      Throwable cause = e.getCause();
+      assertTrue(cause instanceof HttpErrorStatusException,
+          "Expected cause to be HttpErrorStatusException, got: " + cause);
+      HttpErrorStatusException httpEx = (HttpErrorStatusException) cause;
+      assertEquals(httpEx.getStatusCode(), 404);
+      assertTrue(httpEx.getMessage().contains("errorCode=NOT_FOUND"),
+          "Expected message to mention errorCode=NOT_FOUND, got: " + httpEx.getMessage());
+    }
   }
 
   // ---- Test: Abort returns NOT_FOUND for unknown statement ----
@@ -354,7 +376,12 @@ public class InsertIntoValuesClusterIntegrationTest extends BaseClusterIntegrati
     String sql = "INSERT INTO " + tableName
         + " (id, name, score) VALUES (1, 'Alice', 95.5), (2, 'Bob', 87.3)";
 
-    JsonNode response = postQuery(sql);
+    // Use the HTTP endpoint explicitly: the base class's postQuery() randomly toggles between HTTP
+    // and gRPC endpoints, but BrokerGrpcServer routes all queries through the DQL handler (it does
+    // not dispatch on PinotSqlType). DML via gRPC is a known v1 limitation; until the gRPC server
+    // adds a DML branch (mirroring PinotClientRequest.executeSqlQuery), INSERT INTO must go over
+    // HTTP /query/sql.
+    JsonNode response = queryBrokerHttpEndpoint(sql);
     LOGGER.info("SQL INSERT response: {}", response);
     assertNotNull(response, "Broker must return a response for INSERT INTO VALUES");
     // Strict assertion: the result table must include exactly one row whose status column equals
