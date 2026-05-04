@@ -2308,25 +2308,51 @@ public final class TableConfigUtils {
         }
         IndexLoadingConfig consumingIlc = new IndexLoadingConfig(indexLoadingConfig.getInstanceDataManagerConfig(),
             consumingTableConfig, schemaCopy);
-        /// Preserve well-defined public mutations from the original IndexLoadingConfig that are commonly set by
-        /// callers between construction and segment-build. Less-common setters (column properties, etc.) are NOT
-        /// carried over — see Javadoc contract.
+        /// `segmentVersion` and `readMode` are already derived by the constructor from the same
+        /// `instanceDataManagerConfig` + `consumingTableConfig.indexingConfig` inputs the source ILC used, so they
+        /// don't need to be copied across. Tier overlay, however, is set by the caller post-construction (it is
+        /// not in either input), so we re-apply it explicitly.
         String segmentTier = indexLoadingConfig.getSegmentTier();
         if (segmentTier != null) {
           consumingIlc.setSegmentTier(segmentTier);
         }
-        consumingIlc.setSegmentVersion(indexLoadingConfig.getSegmentVersion());
-        consumingIlc.setReadMode(indexLoadingConfig.getReadMode());
         return new RealtimeSegmentConfig.Builder(consumingIlc);
       } catch (RuntimeException e) {
-        logger.error("Failed to apply consumingOverride for table: {}; falling back to persisted shape",
-            tableConfig.getTableName(), e);
+        /// Include the override snippet so the consuming-segment build log line is self-sufficient for triage —
+        /// operators reading the log do not need to also fetch the table config from ZK to see which override
+        /// failed. The metric (CONSUMING_OVERRIDE_FALLBACK) is the alerting hook; this log is the diagnostic.
+        logger.error("Failed to apply consumingOverride for table: {} (override snippet: {}); falling back to "
+            + "persisted shape — consuming segment will run with the un-overridden shape for its full lifetime",
+            tableConfig.getTableName(), summarizeConsumingOverrides(tableConfig), e);
         if (onFallback != null) {
           onFallback.run();
         }
       }
     }
     return new RealtimeSegmentConfig.Builder(indexLoadingConfig);
+  }
+
+  /// Returns a `column → override` short summary for the failure log.
+  private static String summarizeConsumingOverrides(TableConfig tableConfig) {
+    List<FieldConfig> fieldConfigs = tableConfig.getFieldConfigList();
+    if (fieldConfigs == null) {
+      return "{}";
+    }
+    StringBuilder sb = new StringBuilder("{");
+    boolean first = true;
+    for (FieldConfig fieldConfig : fieldConfigs) {
+      JsonNode override = fieldConfig.getConsumingOverride();
+      if (override == null || !override.isObject() || override.isEmpty()) {
+        continue;
+      }
+      if (!first) {
+        sb.append(", ");
+      }
+      sb.append(fieldConfig.getName()).append('=').append(override);
+      first = false;
+    }
+    sb.append('}');
+    return sb.toString();
   }
 
   public static boolean hasConsumingOverride(TableConfig tableConfig) {

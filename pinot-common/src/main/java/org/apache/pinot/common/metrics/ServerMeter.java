@@ -106,7 +106,7 @@ public enum ServerMeter implements AbstractMetrics.Meter {
   /// server fell back to the persisted shape. A non-zero value means at least one consuming segment is running
   /// with the wrong (un-overridden) in-memory shape — operators should inspect server logs and fix the override
   /// config. Emitted per-table via {@code addMeteredTableValue}.
-  CONSUMING_OVERRIDE_FALLBACK("events", false),
+  CONSUMING_OVERRIDE_FALLBACK("segments", false),
   SEGMENT_UPLOAD_FAILURE("segments", false),
   SEGMENT_UPLOAD_SUCCESS("segments", false),
   // Emitted only by Server to Deep-store segment uploader.
