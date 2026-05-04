@@ -41,20 +41,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
-/**
- * Validates raw table-config JSON for deprecated properties on create and update paths.
- *
- * <p>Rules are derived at class-load time from {@link DeprecatedConfig} annotations on getters reachable from
- * {@link TableConfig}. A violation's severity ({@link Severity#WARNING} vs {@link Severity#ERROR}) is decided by
- * comparing the annotation's {@code since} version against the running Pinot version (see
- * {@link #classifySeverity}): properties deprecated in the current major.minor release are warnings; properties
- * deprecated in any earlier release are errors. When the running version cannot be determined, all violations are
- * reported as errors so the safe default is to reject.
- *
- * <p>The validator operates on raw JSON rather than the deserialized {@link TableConfig} so it can detect
- * explicitly provided deprecated keys even when they carry default or false-y values that Jackson would otherwise
- * elide.</p>
- */
+/// Validates raw table-config JSON for deprecated properties on create and update paths.
+///
+/// Rules are derived at class-load time from [DeprecatedConfig] annotations on getters reachable from [TableConfig].
+/// A violation's severity ([Severity#WARNING] vs [Severity#ERROR]) is decided by comparing the annotation's `since`
+/// version against the running Pinot version (see [#classifySeverity]): properties deprecated in the current
+/// major.minor release are warnings; properties deprecated in any earlier release are errors. When the running
+/// version cannot be determined, all violations are reported as errors so the safe default is to reject.
+///
+/// The validator operates on raw JSON rather than the deserialized [TableConfig] so it can detect explicitly
+/// provided deprecated keys even when they carry default or false-y values that Jackson would otherwise elide.
 public final class DeprecatedTableConfigValidationUtils {
   private DeprecatedTableConfigValidationUtils() {
   }
@@ -69,10 +65,8 @@ public final class DeprecatedTableConfigValidationUtils {
     WARNING, ERROR
   }
 
-  /**
-   * Result of validating a table-config JSON, exposing errors and warnings separately so callers can decide whether
-   * to reject the request or surface non-fatal warnings to the user.
-   */
+  /// Result of validating a table-config JSON, exposing errors and warnings separately so callers can decide
+  /// whether to reject the request or surface non-fatal warnings to the user.
   public static final class Result {
     private final List<String> _errors;
     private final List<String> _warnings;
@@ -99,16 +93,14 @@ public final class DeprecatedTableConfigValidationUtils {
     }
   }
 
-  /**
-   * Validates a table-config JSON document. When {@code oldTableConfigJson} is non-null, only paths whose value
-   * newly appears in {@code newTableConfigJson} or whose value differs from the corresponding path in
-   * {@code oldTableConfigJson} are reported, so re-submitting an unchanged legacy field on an update is a no-op.
-   * When {@code oldTableConfigJson} is null (creation path), every present deprecated path is reported.
-   *
-   * @param newTableConfigJson the incoming table config to validate; must not be {@code null}
-   * @param oldTableConfigJson the currently-stored table config to diff against, or {@code null} for create paths
-   * @param rootPathPrefix optional prefix for emitted paths (e.g. {@code "realtime"} when validating a sub-section)
-   */
+  /// Validates a table-config JSON document. When `oldTableConfigJson` is non-null, only paths whose value newly
+  /// appears in `newTableConfigJson` or whose value differs from the corresponding path in `oldTableConfigJson` are
+  /// reported, so re-submitting an unchanged legacy field on an update is a no-op. When `oldTableConfigJson` is null
+  /// (creation path), every present deprecated path is reported.
+  ///
+  /// @param newTableConfigJson the incoming table config to validate; must not be `null`
+  /// @param oldTableConfigJson the currently-stored table config to diff against, or `null` for create paths
+  /// @param rootPathPrefix optional prefix for emitted paths (e.g. `"realtime"` when validating a sub-section)
   public static Result validate(JsonNode newTableConfigJson, @Nullable JsonNode oldTableConfigJson,
       @Nullable String rootPathPrefix) {
     Objects.requireNonNull(newTableConfigJson, "newTableConfigJson");
@@ -121,10 +113,8 @@ public final class DeprecatedTableConfigValidationUtils {
     return new Result(errors, warnings);
   }
 
-  /**
-   * Validates a freshly-submitted table config (no prior stored value). On any error the method throws
-   * {@link IllegalArgumentException}; warnings are returned so the caller can surface them in the response.
-   */
+  /// Validates a freshly-submitted table config (no prior stored value). On any error the method throws
+  /// [IllegalArgumentException]; warnings are returned so the caller can surface them in the response.
   public static List<String> validateOnCreate(JsonNode newTableConfigJson, @Nullable String rootPathPrefix) {
     Result result = validate(newTableConfigJson, null, rootPathPrefix);
     if (result.hasErrors()) {
@@ -137,11 +127,9 @@ public final class DeprecatedTableConfigValidationUtils {
     return result.getWarnings();
   }
 
-  /**
-   * Validates an updated table config against its currently-stored counterpart. Only newly-introduced or
-   * value-changed deprecated paths are reported, so legacy values that were already present do not block updates.
-   * On any error the method throws {@link IllegalArgumentException}; warnings are returned for the caller to surface.
-   */
+  /// Validates an updated table config against its currently-stored counterpart. Only newly-introduced or
+  /// value-changed deprecated paths are reported, so legacy values that were already present do not block updates.
+  /// On any error the method throws [IllegalArgumentException]; warnings are returned for the caller to surface.
   public static List<String> validateOnUpdate(JsonNode newTableConfigJson, @Nullable JsonNode oldTableConfigJson,
       @Nullable String rootPathPrefix) {
     Result result = validate(newTableConfigJson, oldTableConfigJson, rootPathPrefix);
@@ -306,10 +294,8 @@ public final class DeprecatedTableConfigValidationUtils {
     return majorMinor(version);
   }
 
-  /**
-   * Returns the {@code major.minor} prefix of a version string, stripping any pre-release qualifier (e.g.
-   * {@code -SNAPSHOT}) and ignoring the patch component. Returns {@code null} if the input does not parse.
-   */
+  /// Returns the `major.minor` prefix of a version string, stripping any pre-release qualifier (e.g. `-SNAPSHOT`)
+  /// and ignoring the patch component. Returns `null` if the input does not parse.
   @Nullable
   static String majorMinor(@Nullable String version) {
     if (version == null) {
@@ -342,11 +328,9 @@ public final class DeprecatedTableConfigValidationUtils {
     return true;
   }
 
-  /**
-   * Decides the severity for a violation based on the annotation's {@code since} value. The current Pinot release's
-   * deprecations are warnings (one-release grace period); older deprecations escalate to errors. If either version
-   * is unparseable, defaults to {@link Severity#ERROR} so unintended-warning regressions are avoided.
-   */
+  /// Decides the severity for a violation based on the annotation's `since` value. The current Pinot release's
+  /// deprecations are warnings (one-release grace period); older deprecations escalate to errors. If either version
+  /// is unparseable, defaults to [Severity#ERROR] so unintended-warning regressions are avoided.
   static Severity classifySeverity(String since) {
     String sinceMajorMinor = majorMinor(since);
     if (CURRENT_MAJOR_MINOR == null || sinceMajorMinor == null) {

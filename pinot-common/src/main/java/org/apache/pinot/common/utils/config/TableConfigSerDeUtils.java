@@ -297,17 +297,15 @@ public class TableConfigSerDeUtils {
     return znRecord;
   }
 
-  /**
-   * Reconstructs the table-config JSON tree from a stored {@link ZNRecord}, preserving every key originally written
-   * to ZK. Unlike {@code TableConfig.toJsonNode()}, this method does not round-trip through the Java bean and
-   * therefore does not strip fields that the bean's getters mark with {@code @JsonIgnore} or
-   * {@code @JsonInclude(NON_DEFAULT)}. It is intended for code paths (e.g. update-time deprecation diffing) that
-   * need to compare an incoming request against the exact bytes that were stored.
-   *
-   * @param znRecord the raw ZNRecord read from the property store
-   * @return a JsonNode equivalent to what the user originally PUT/POST-ed for the table, or {@code null} if the
-   * input is {@code null}
-   */
+  /// Reconstructs the table-config JSON tree from a stored [ZNRecord], preserving every key originally written to
+  /// ZK. Unlike `TableConfig.toJsonNode()`, this method does not round-trip through the Java bean and therefore
+  /// does not strip fields that the bean's getters mark with `@JsonIgnore` or `@JsonInclude(NON_DEFAULT)`. It is
+  /// intended for code paths (e.g. update-time deprecation diffing) that need to compare an incoming request
+  /// against the exact bytes that were stored.
+  ///
+  /// @param znRecord the raw ZNRecord read from the property store
+  /// @return a JsonNode equivalent to what the user originally PUT/POST-ed for the table, or `null` if the input is
+  /// `null`
   public static JsonNode toRawJsonNode(ZNRecord znRecord) {
     if (znRecord == null) {
       return null;

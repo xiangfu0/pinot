@@ -24,31 +24,25 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 
-/**
- * Marks a config getter as a deprecated JSON property in {@code TableConfig} (or any nested config bean).
- *
- * <p>Discovered at runtime by {@code DeprecatedTableConfigValidationUtils} to gate creation and update of table
- * configs. Severity is determined by comparing {@link #since()} against the running Pinot version: properties
- * deprecated in the current major.minor release are reported as <em>warnings</em>, while properties deprecated in
- * any earlier release are reported as <em>errors</em>.
- *
- * <p>Place this annotation on the Jackson-visible getter (the one that drives JSON property naming) so the
- * discovery walk picks up the correct serialized name.</p>
- */
+/// Marks a config getter as a deprecated JSON property in `TableConfig` (or any nested config bean).
+///
+/// Discovered at runtime by `DeprecatedTableConfigValidationUtils` to gate creation and update of table configs.
+/// Severity is determined by comparing [#since()] against the running Pinot version: properties deprecated in the
+/// current major.minor release are reported as **warnings**, while properties deprecated in any earlier release are
+/// reported as **errors**.
+///
+/// Place this annotation on the Jackson-visible getter (the one that drives JSON property naming) so the discovery
+/// walk picks up the correct serialized name.
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface DeprecatedConfig {
 
-  /**
-   * Human-readable replacement guidance, surfaced verbatim in the user-facing error/warning. Should describe what
-   * the user should set instead, e.g. {@code "Use 'segmentsConfig.replication' instead."}.
-   */
+  /// Human-readable replacement guidance, surfaced verbatim in the user-facing error/warning. Should describe what
+  /// the user should set instead, e.g. `"Use 'segmentsConfig.replication' instead."`.
   String replacement();
 
-  /**
-   * The Pinot release in which this property was deprecated, e.g. {@code "1.6.0"}. Used to decide whether a
-   * violation is reported as a warning (current major.minor) or an error (older). Format: {@code MAJOR.MINOR.PATCH}
-   * with optional {@code -SNAPSHOT}; only major.minor is compared.
-   */
+  /// The Pinot release in which this property was deprecated, e.g. `"1.6.0"`. Used to decide whether a violation is
+  /// reported as a warning (current major.minor) or an error (older). Format: `MAJOR.MINOR.PATCH` with optional
+  /// `-SNAPSHOT`; only major.minor is compared.
   String since();
 }
