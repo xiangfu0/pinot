@@ -415,7 +415,7 @@ public class TableConfigConsumingOverrideTest {
         .build();
     IndexLoadingConfig ilc = new IndexLoadingConfig(tableConfig, buildSchema());
     RealtimeSegmentConfig.Builder builder = TableConfigUtils.buildConsumingSegmentConfigBuilder(
-        tableConfig, buildSchema(), ilc, LoggerFactory.getLogger(TableConfigConsumingOverrideTest.class));
+        tableConfig, buildSchema(), ilc, LoggerFactory.getLogger(TableConfigConsumingOverrideTest.class), null);
     RealtimeSegmentConfig built = builder.build();
     FieldIndexConfigs colA = built.getIndexConfigByCol().get("colA");
     assertTrue(colA != null && colA.getConfig(StandardIndexes.inverted()).isEnabled(),
@@ -438,7 +438,7 @@ public class TableConfigConsumingOverrideTest {
         .build();
     IndexLoadingConfig ilc = new IndexLoadingConfig(tableConfig, buildSchema());
     RealtimeSegmentConfig.Builder builder = TableConfigUtils.buildConsumingSegmentConfigBuilder(
-        tableConfig, buildSchema(), ilc, LoggerFactory.getLogger(TableConfigConsumingOverrideTest.class));
+        tableConfig, buildSchema(), ilc, LoggerFactory.getLogger(TableConfigConsumingOverrideTest.class), null);
     RealtimeSegmentConfig built = builder.build();
     FieldIndexConfigs colA = built.getIndexConfigByCol().get("colA");
     assertTrue(colA.getConfig(StandardIndexes.dictionary()).isEnabled(),
@@ -565,14 +565,20 @@ public class TableConfigConsumingOverrideTest {
         .setNoDictionaryColumns(List.of("colA"))
         .build();
     IndexLoadingConfig ilc = new IndexLoadingConfig(tableConfig, buildSchema());
+    /// Track that the onFallback callback fired — this is the hook RealtimeSegmentDataManager uses to bump the
+    /// CONSUMING_OVERRIDE_FALLBACK metric, so the test asserts the contract the production caller relies on.
+    int[] fallbackInvocations = {0};
     /// Should NOT throw — the helper catches and logs.
     RealtimeSegmentConfig.Builder builder = TableConfigUtils.buildConsumingSegmentConfigBuilder(
-        tableConfig, buildSchema(), ilc, LoggerFactory.getLogger(TableConfigConsumingOverrideTest.class));
+        tableConfig, buildSchema(), ilc, LoggerFactory.getLogger(TableConfigConsumingOverrideTest.class),
+        () -> fallbackInvocations[0]++);
     RealtimeSegmentConfig built = builder.build();
     FieldIndexConfigs colA = built.getIndexConfigByCol().get("colA");
     /// Persisted shape on colA is RAW (no dictionary); the fallback must reflect that, NOT the override.
     assertFalse(colA.getConfig(StandardIndexes.dictionary()).isEnabled(),
         "Fallback path must use the persisted RAW shape, not the override-attempted dictionary shape");
+    assertEquals(fallbackInvocations[0], 1,
+        "onFallback callback must be invoked exactly once when the override merge fails");
   }
 
   @Test

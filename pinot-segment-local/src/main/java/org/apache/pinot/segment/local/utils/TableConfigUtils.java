@@ -42,8 +42,6 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.common.evaluator.FunctionEvaluatorFactory;
-import org.apache.pinot.common.metrics.ServerMeter;
-import org.apache.pinot.common.metrics.ServerMetrics;
 import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.common.request.context.FunctionContext;
 import org.apache.pinot.common.request.context.RequestContextUtils;
@@ -2263,8 +2261,10 @@ public final class TableConfigUtils {
   /// un-modified [IndexLoadingConfig]-driven builder is returned so existing code paths (tier overwrites,
   /// instance-level mutations on `IndexLoadingConfig`) flow through unchanged. If the override merge throws (a
   /// misconfiguration that slipped past validate), the call falls back to the `IndexLoadingConfig`-driven builder,
-  /// logs the error, and bumps the [ServerMeter#CONSUMING_OVERRIDE_FALLBACK] meter so the silent-degradation case
-  /// is observable through metrics.
+  /// logs the error, and invokes `onFallback` so the caller can emit a metric / surface the degradation. The
+  /// fallback-applied builder produces a consuming segment matching the persisted shape (no override) for the
+  /// full lifetime of that consuming segment — there is no auto-retry; operators must reload the table after
+  /// fixing the override config to pick up the corrected shape on the next consuming-segment build.
   ///
   /// **IndexLoadingConfig contract on the override path:** the helper rebuilds a fresh [IndexLoadingConfig] from
   /// `(indexLoadingConfig.getInstanceDataManagerConfig(), mergedTableConfig, schemaCopy)` and re-applies the
@@ -2272,23 +2272,28 @@ public final class TableConfigUtils {
   /// version, star-tree configs, etc.) is **not** carried over on the override path. Callers that need such
   /// mutations preserved must either set them on the returned Builder after this call, or extend this helper.
   ///
+  /// **Schema clone:** the override path defensively deep-copies the schema via JSON round-trip because the
+  /// override-path `IndexLoadingConfig` constructor invokes `TimestampIndexUtils.applyTimestampIndex` which
+  /// mutates the schema under a lock keyed to the *new* (per-call) TableConfig instance. The non-override path
+  /// constructs `IndexLoadingConfig` once at table-data-manager-load time (not per-segment-build), so the lock
+  /// is not racing per call there. The clone is therefore needed only on the override path. TODO: fix
+  /// TimestampIndexUtils to not mutate its inputs so this clone can be removed.
+  ///
   /// @param tableConfig source table config; not mutated
   /// @param schema      schema in scope; deep-copied before being passed to the override-path IndexLoadingConfig
   /// @param indexLoadingConfig fallback / no-override path; on the override path only `instanceDataManagerConfig`
   ///                           and `segmentTier` are read (see contract above)
   /// @param logger      logger to emit error on fallback
+  /// @param onFallback  optional callback invoked when the override merge fails and the helper falls back to the
+  ///                    persisted shape; intended for the caller to bump a metric (e.g.
+  ///                    [ServerMeter#CONSUMING_OVERRIDE_FALLBACK]) tagged with its own table-name context. May
+  ///                    be {@code null} to skip metric emission (e.g. in unit tests).
   /// @return a Builder ready for the caller to chain `.set...` calls and `.build()`
   public static RealtimeSegmentConfig.Builder buildConsumingSegmentConfigBuilder(TableConfig tableConfig,
-      Schema schema, IndexLoadingConfig indexLoadingConfig, Logger logger) {
+      Schema schema, IndexLoadingConfig indexLoadingConfig, Logger logger, @Nullable Runnable onFallback) {
     if (hasConsumingOverride(tableConfig)) {
       try {
         TableConfig consumingTableConfig = applyConsumingOverrides(tableConfig);
-        // Route the override-applied TableConfig back through IndexLoadingConfig so we preserve everything that
-        // IndexLoadingConfig layers on top of a raw TableConfig — instance-level config, tier overlay, schema-based
-        // timestamp-index materialization, etc. — instead of dropping them via the bare Builder(TableConfig, Schema)
-        // constructor. The IndexLoadingConfig constructor invokes TimestampIndexUtils.applyTimestampIndex which
-        // mutates its schema argument under a lock keyed to the TableConfig instance; pass a defensive schema copy
-        // so the original (possibly cluster-shared) schema is never mutated under a per-call TableConfig lock.
         Schema schemaCopy;
         try {
           schemaCopy = JsonUtils.jsonNodeToObject(schema.toJsonObject(), Schema.class);
@@ -2306,13 +2311,8 @@ public final class TableConfigUtils {
       } catch (RuntimeException e) {
         logger.error("Failed to apply consumingOverride for table: {}; falling back to persisted shape",
             tableConfig.getTableName(), e);
-        /// Bump a server-side meter so the silent-degradation case is observable through metrics, not just logs.
-        /// Operators alerting on a non-zero CONSUMING_OVERRIDE_FALLBACK can detect and triage misconfigurations
-        /// without grepping per-segment logs.
-        ServerMetrics serverMetrics = ServerMetrics.get();
-        if (serverMetrics != null) {
-          serverMetrics.addMeteredTableValue(tableConfig.getTableName(),
-              ServerMeter.CONSUMING_OVERRIDE_FALLBACK, 1L);
+        if (onFallback != null) {
+          onFallback.run();
         }
       }
     }

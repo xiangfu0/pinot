@@ -1831,7 +1831,9 @@ public class RealtimeSegmentDataManager extends SegmentDataManager {
     // committed/immutable segment ignores the override and uses the persisted table-config shape.
     String consumerDir = realtimeTableDataManager.getConsumerDir();
     RealtimeSegmentConfig.Builder realtimeSegmentConfigBuilder =
-        TableConfigUtils.buildConsumingSegmentConfigBuilder(_tableConfig, _schema, indexLoadingConfig, _segmentLogger);
+        TableConfigUtils.buildConsumingSegmentConfigBuilder(_tableConfig, _schema, indexLoadingConfig, _segmentLogger,
+            () -> _serverMetrics.addMeteredTableValue(_tableNameWithType, ServerMeter.CONSUMING_OVERRIDE_FALLBACK,
+                1L));
     realtimeSegmentConfigBuilder
         .setTableNameWithType(_tableNameWithType)
         .setSegmentName(_segmentNameStr)

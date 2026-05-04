@@ -269,10 +269,12 @@ public class ConsumingOverrideRealtimeTest extends CustomDataQueryClusterIntegra
     assertEquals(countAlphaPostCommit, countAlphaPreCommit,
         "Post-commit count for " + STRING_VALUES[0] + " must match pre-commit (override does not affect semantics)");
 
-    /// 6. Inspect the immutable segment(s) on each server: STRING_COLUMN MUST be RAW with no dictionary and no
-    ///    inverted index. STRING_COLUMN_NO_OVERRIDE MUST keep its default dictionary. Cross-check the in-memory
-    ///    DataSource view AND the on-disk ColumnMetadata view.
+    /// 6. Inspect every segment on every server. Sealed (immutable) segments MUST carry the persisted RAW shape
+    ///    (no dictionary, no inverted index) on disk. New consuming segments that came up after force-commit
+    ///    MUST also have the override applied — guards against a regression where the override is honored only
+    ///    on first-ever segment creation but lost on subsequent rollovers.
     int immutableSegmentsInspected = 0;
+    int newConsumingSegmentsInspected = 0;
     for (BaseServerStarter serverStarter : _serverStarters) {
       TableDataManager tableDataManager = serverStarter.getServerInstance().getInstanceDataManager()
           .getTableDataManager(realtimeTableName);
@@ -283,8 +285,20 @@ public class ConsumingOverrideRealtimeTest extends CustomDataQueryClusterIntegra
       try {
         for (SegmentDataManager sdm : segmentDataManagers) {
           IndexSegment segment = sdm.getSegment();
-          /// After forceCommit, only NEW consuming segments may remain mutable; the previously-consuming segments
-          /// must be immutable. Filter to immutable ones (which is what we want to inspect for the persisted shape).
+
+          if (segment instanceof MutableSegmentImpl) {
+            /// New consuming segment that replaced a force-committed one: must still have the override applied.
+            DataSource overriddenDs = segment.getDataSource(STRING_COLUMN);
+            assertNotNull(overriddenDs.getDictionary(),
+                STRING_COLUMN + " must have a dictionary on the new consuming segment after forceCommit "
+                    + "— consumingOverride must be re-applied to every consuming segment, not just the first one. "
+                    + "Segment: " + sdm.getSegmentName());
+            assertNotNull(overriddenDs.getInvertedIndex(),
+                STRING_COLUMN + " must have an inverted index on the new consuming segment after forceCommit. "
+                    + "Segment: " + sdm.getSegmentName());
+            newConsumingSegmentsInspected++;
+            continue;
+          }
           if (!(segment instanceof ImmutableSegmentImpl)) {
             continue;
           }
@@ -326,6 +340,8 @@ public class ConsumingOverrideRealtimeTest extends CustomDataQueryClusterIntegra
     }
     assertTrue(immutableSegmentsInspected > 0,
         "Expected at least one immutable (sealed) segment after forceCommit, got " + immutableSegmentsInspected);
+    assertTrue(newConsumingSegmentsInspected > 0,
+        "Expected at least one new consuming segment after forceCommit, got " + newConsumingSegmentsInspected);
 
     /// 7. Re-run a different filter to make sure the post-commit query path actually executes against the
     ///    immutable segment (which has no inverted index — exercises the brute-force scan path) and still returns

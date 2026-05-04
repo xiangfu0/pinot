@@ -185,8 +185,10 @@ public class StatelessRealtimeSegmentWriter implements Closeable {
     // behavior). Only switch to a TableConfig-driven Builder when a FieldConfig.consumingOverride is configured,
     // so a column can have a richer in-memory index shape (e.g. dictionary + inverted) than what is persisted.
     IngestionConfig ingestionConfig = _tableConfig.getIngestionConfig();
+    /// StatelessRealtimeSegmentWriter is a one-shot tool (segment re-ingestion) and has no per-instance metrics
+    /// pipeline; pass null for the fallback callback. The error log is sufficient for this offline use.
     RealtimeSegmentConfig.Builder realtimeSegmentConfigBuilder =
-        TableConfigUtils.buildConsumingSegmentConfigBuilder(_tableConfig, _schema, indexLoadingConfig, _logger);
+        TableConfigUtils.buildConsumingSegmentConfigBuilder(_tableConfig, _schema, indexLoadingConfig, _logger, null);
     realtimeSegmentConfigBuilder
         .setTableNameWithType(_tableNameWithType)
         .setSegmentName(_segmentName)

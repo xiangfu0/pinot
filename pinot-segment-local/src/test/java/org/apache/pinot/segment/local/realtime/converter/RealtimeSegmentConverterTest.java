@@ -76,6 +76,7 @@ import org.apache.pinot.spi.utils.JsonUtils;
 import org.apache.pinot.spi.utils.ReadMode;
 import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
+import org.slf4j.LoggerFactory;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.DataProvider;
@@ -1626,11 +1627,14 @@ public class RealtimeSegmentConverterTest implements PinotBuffersAfterMethodChec
     String tableNameWithType = tableConfig.getTableName();
     String segmentName = "testTableConsumingOverride__0__0__123456";
 
-    // Mutable consuming segment: built from the consuming-override-applied table config so STRING_COLUMN1 has a
-    // dictionary in memory, just like the production RealtimeSegmentDataManager / StatelessRealtimeSegmentWriter
-    // paths now do.
-    TableConfig consumingTableConfig = TableConfigUtils.applyConsumingOverrides(tableConfig);
-    RealtimeSegmentConfig realtimeSegmentConfig = new RealtimeSegmentConfig.Builder(consumingTableConfig, schema)
+    /// Mutable consuming segment: built via the production dispatch helper so STRING_COLUMN1 has a dictionary in
+    /// memory the same way RealtimeSegmentDataManager / StatelessRealtimeSegmentWriter would build it. Using the
+    /// dispatch helper here (instead of `new Builder(consumingTableConfig, schema)`) makes the test exercise the
+    /// real production code path so a regression in the helper is caught at unit-test time.
+    IndexLoadingConfig indexLoadingConfig = new IndexLoadingConfig(tableConfig, schema);
+    RealtimeSegmentConfig realtimeSegmentConfig =
+        TableConfigUtils.buildConsumingSegmentConfigBuilder(tableConfig, schema, indexLoadingConfig,
+            LoggerFactory.getLogger(RealtimeSegmentConverterTest.class), null)
         .setTableNameWithType(tableNameWithType)
         .setSegmentName(segmentName)
         .setStreamName(tableNameWithType)
