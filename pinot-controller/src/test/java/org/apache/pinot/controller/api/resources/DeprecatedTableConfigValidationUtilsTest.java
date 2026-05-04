@@ -19,9 +19,12 @@
 package org.apache.pinot.controller.api.resources;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.util.List;
+import org.apache.pinot.controller.api.resources.DeprecatedTableConfigValidationUtils.DeprecatedConfigRule;
 import org.apache.pinot.controller.api.resources.DeprecatedTableConfigValidationUtils.Result;
 import org.apache.pinot.controller.api.resources.DeprecatedTableConfigValidationUtils.Severity;
 import org.apache.pinot.spi.utils.JsonUtils;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 import static org.testng.Assert.assertEquals;
@@ -142,12 +145,72 @@ public class DeprecatedTableConfigValidationUtilsTest {
   public void testRulesDiscoveredFromAnnotations() {
     // Sanity check that the annotation walk picks up the expected paths from TableConfig.
     boolean foundIndexType = DeprecatedTableConfigValidationUtils.rulesForTesting().stream()
-        .anyMatch(rule -> rule.pathSegments().equals(java.util.List.of("fieldConfigList", "*", "indexType")));
+        .anyMatch(rule -> rule.pathSegments().equals(List.of("fieldConfigList", "*", "indexType")));
     assertTrue(foundIndexType, "expected fieldConfigList[*].indexType rule");
 
     boolean foundNestedMinimize = DeprecatedTableConfigValidationUtils.rulesForTesting().stream()
-        .anyMatch(rule -> rule.pathSegments().equals(java.util.List.of(
+        .anyMatch(rule -> rule.pathSegments().equals(List.of(
             "instanceAssignmentConfigMap", "*", "replicaGroupPartitionConfig", "minimizeDataMovement")));
     assertTrue(foundNestedMinimize, "expected nested map-wildcard rule");
+  }
+
+  /// Provides every rule discovered by the annotation walk so the parameterized test below covers the full set
+  /// 1:1. If a new {@link org.apache.pinot.spi.config.DeprecatedConfig @DeprecatedConfig} is added on a getter, this
+  /// test automatically exercises it without needing a new test case.
+  @DataProvider(name = "allRules")
+  public Object[][] allRules() {
+    List<DeprecatedConfigRule> rules = DeprecatedTableConfigValidationUtils.rulesForTesting();
+    Object[][] data = new Object[rules.size()][];
+    for (int i = 0; i < rules.size(); i++) {
+      data[i] = new Object[] {rules.get(i)};
+    }
+    return data;
+  }
+
+  @Test(dataProvider = "allRules")
+  public void testEveryRuleFiresOnSyntheticInput(DeprecatedConfigRule rule)
+      throws Exception {
+    // Build a JSON tree that contains the deprecated path. Wildcards become object fields named "x" so the
+    // validator's collectMatches walks into them just like it would for real array/map entries.
+    String synthetic = synthesizeJsonForPath(rule.pathSegments());
+    String expectedPath = expectedPathInMessage(rule.pathSegments());
+
+    Result result = DeprecatedTableConfigValidationUtils.validate(JsonUtils.stringToJsonNode(synthetic), null, null);
+    if (rule.severity() == Severity.ERROR) {
+      assertTrue(result.getErrors().stream().anyMatch(m -> m.contains(expectedPath)),
+          "expected error containing '" + expectedPath + "', got errors=" + result.getErrors() + ", warnings="
+              + result.getWarnings());
+    } else {
+      assertTrue(result.getWarnings().stream().anyMatch(m -> m.contains(expectedPath)),
+          "expected warning containing '" + expectedPath + "', got warnings=" + result.getWarnings() + ", errors="
+              + result.getErrors());
+    }
+  }
+
+  /// Build a minimal JSON document that places a non-null leaf value at the rule's path. Wildcard segments are
+  /// realised as a single object field named "x", which the validator treats identically to any other map key.
+  private static String synthesizeJsonForPath(List<String> path) {
+    StringBuilder open = new StringBuilder();
+    StringBuilder close = new StringBuilder();
+    for (String segment : path.subList(0, path.size() - 1)) {
+      String key = "*".equals(segment) ? "x" : segment;
+      open.append("{\"").append(key).append("\":");
+      close.append("}");
+    }
+    String leaf = path.get(path.size() - 1);
+    String leafKey = "*".equals(leaf) ? "x" : leaf;
+    open.append("{\"").append(leafKey).append("\":\"v\"}");
+    return open.append(close).toString();
+  }
+
+  private static String expectedPathInMessage(List<String> path) {
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < path.size(); i++) {
+      if (i > 0) {
+        sb.append('.');
+      }
+      sb.append("*".equals(path.get(i)) ? "x" : path.get(i));
+    }
+    return sb.toString();
   }
 }

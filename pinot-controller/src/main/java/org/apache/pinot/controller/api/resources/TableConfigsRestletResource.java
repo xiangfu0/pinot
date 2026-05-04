@@ -213,7 +213,7 @@ public class TableConfigsRestletResource {
       tableConfigsAndUnrecognizedProps =
           JsonUtils.stringToObjectAndUnrecognizedProperties(tableConfigsStr, TableConfigs.class);
     } catch (Exception e) {
-      throw new ControllerApplicationException(LOGGER, String.format("Invalid TableConfigs. %s", e.getMessage()),
+      throw new ControllerApplicationException(LOGGER, "Invalid TableConfigs. " + e.getMessage(),
           Response.Status.BAD_REQUEST, e);
     }
     TableConfigs tableConfigs = tableConfigsAndUnrecognizedProps.getLeft();
@@ -235,7 +235,7 @@ public class TableConfigsRestletResource {
     } catch (ControllerApplicationException e) {
       throw e;
     } catch (Exception e) {
-      throw new ControllerApplicationException(LOGGER, String.format("Invalid TableConfigs. %s", e.getMessage()),
+      throw new ControllerApplicationException(LOGGER, "Invalid TableConfigs. " + e.getMessage(),
           Response.Status.BAD_REQUEST, e);
     }
 
@@ -503,8 +503,7 @@ public class TableConfigsRestletResource {
       // Preserve the upstream status (e.g. 500 from validateConfig); don't downgrade to 400.
       throw e;
     } catch (Exception e) {
-      throw new ControllerApplicationException(LOGGER,
-          String.format("Invalid TableConfigs: %s. Reason: %s", tableConfigs.getTableName(), e.getMessage()),
+      throw new ControllerApplicationException(LOGGER, "Invalid TableConfigs. " + e.getMessage(),
           Response.Status.BAD_REQUEST, e);
     }
 
