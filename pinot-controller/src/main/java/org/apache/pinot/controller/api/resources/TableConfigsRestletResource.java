@@ -234,9 +234,13 @@ public class TableConfigsRestletResource {
       tableConfigs.setTableName(rawTableName);
     } catch (ControllerApplicationException e) {
       throw e;
-    } catch (Exception e) {
+    } catch (IOException | IllegalArgumentException | IllegalStateException e) {
       throw new ControllerApplicationException(LOGGER, "Invalid TableConfigs. " + e.getMessage(),
           Response.Status.BAD_REQUEST, e);
+    } catch (RuntimeException e) {
+      _controllerMetrics.addMeteredGlobalValue(ControllerMeter.CONTROLLER_TABLE_ADD_ERROR, 1L);
+      LOGGER.warn("Failed to validate TableConfigs for create of table: {}", rawTableName, e);
+      throw e;
     }
 
     TableConfig offlineTableConfig = tableConfigs.getOffline();
@@ -406,9 +410,15 @@ public class TableConfigsRestletResource {
       tableConfigs.setTableName(tableName);
     } catch (ControllerApplicationException e) {
       throw e;
-    } catch (Exception e) {
-      throw new ControllerApplicationException(LOGGER, String.format("Invalid TableConfigs: %s. Reason: %s", tableName,
-          e.getMessage()), Response.Status.BAD_REQUEST, e);
+    } catch (IOException | IllegalArgumentException | IllegalStateException e) {
+      // Narrowed to client-input exception types so transient ZK / Helix errors propagate as 5xx instead of being
+      // mis-reported as 400.
+      throw new ControllerApplicationException(LOGGER, "Invalid TableConfigs: " + tableName + ". " + e.getMessage(),
+          Response.Status.BAD_REQUEST, e);
+    } catch (RuntimeException e) {
+      _controllerMetrics.addMeteredGlobalValue(ControllerMeter.CONTROLLER_TABLE_UPDATE_ERROR, 1L);
+      LOGGER.warn("Failed to validate TableConfigs for update of table: {}", tableName, e);
+      throw e;
     }
 
     if (!_pinotHelixResourceManager.hasOfflineTable(tableName) && !_pinotHelixResourceManager.hasRealtimeTable(
@@ -502,9 +512,12 @@ public class TableConfigsRestletResource {
     } catch (ControllerApplicationException e) {
       // Preserve the upstream status (e.g. 500 from validateConfig); don't downgrade to 400.
       throw e;
-    } catch (Exception e) {
+    } catch (IllegalArgumentException | IllegalStateException e) {
       throw new ControllerApplicationException(LOGGER, "Invalid TableConfigs. " + e.getMessage(),
           Response.Status.BAD_REQUEST, e);
+    } catch (RuntimeException e) {
+      LOGGER.warn("Failed to validate TableConfigs for: {}", tableConfigs.getTableName(), e);
+      throw e;
     }
 
     // validate permission
@@ -649,7 +662,10 @@ public class TableConfigsRestletResource {
 
   @Nullable
   private static JsonNode subConfigJson(JsonNode tableConfigsJson, TableType type) {
-    JsonNode node = tableConfigsJson.get(type.name().toLowerCase());
-    return node != null ? node : tableConfigsJson.get(type.name());
+    // Mirror what Jackson populates on the deserialized POJO: TableConfigs uses @JsonProperty("offline") /
+    // @JsonProperty("realtime"), so any uppercase variant in the raw user JSON is already silently ignored at
+    // deserialization time. We deliberately use the same lookup here so the deprecation pass agrees with what
+    // ends up in the stored config.
+    return tableConfigsJson.get(type.name().toLowerCase());
   }
 }

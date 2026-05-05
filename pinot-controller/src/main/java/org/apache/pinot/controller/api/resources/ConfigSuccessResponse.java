@@ -24,7 +24,6 @@ import java.util.Map;
 
 public final class ConfigSuccessResponse extends SuccessResponse {
   private final Map<String, Object> _unrecognizedProperties;
-  @JsonInclude(JsonInclude.Include.NON_EMPTY)
   private final List<String> _deprecationWarnings;
 
   public ConfigSuccessResponse(String status, Map<String, Object> unrecognizedProperties) {
@@ -34,7 +33,7 @@ public final class ConfigSuccessResponse extends SuccessResponse {
   public ConfigSuccessResponse(String status, Map<String, Object> unrecognizedProperties,
       List<String> deprecationWarnings) {
     super(status);
-    _unrecognizedProperties = unrecognizedProperties;
+    _unrecognizedProperties = unrecognizedProperties == null ? Map.of() : unrecognizedProperties;
     _deprecationWarnings = deprecationWarnings == null ? List.of() : deprecationWarnings;
   }
 
@@ -42,6 +41,9 @@ public final class ConfigSuccessResponse extends SuccessResponse {
     return _unrecognizedProperties;
   }
 
+  /// `@JsonInclude(NON_EMPTY)` is on the getter so the empty-list case is elided from the response. Older clients
+  /// that strict-parse this DTO continue to see the original (pre-deprecationWarnings) shape when no warnings fire.
+  @JsonInclude(JsonInclude.Include.NON_EMPTY)
   public List<String> getDeprecationWarnings() {
     return _deprecationWarnings;
   }

@@ -26,9 +26,10 @@ import java.lang.annotation.Target;
 
 /// Marks a config getter as a deprecated JSON property in `TableConfig` (or any nested config bean).
 ///
-/// Discovered at runtime by `DeprecatedTableConfigValidationUtils` to gate creation and update of table configs.
-/// Severity is determined by comparing [#since()] against the running Pinot version: properties deprecated in the
-/// current major.minor release are reported as **warnings**, while properties deprecated in any earlier release are
+/// **Metadata-only**: this annotation has no runtime effect on serialization or deserialization. It is consumed by
+/// the controller's `DeprecatedTableConfigValidationUtils` to gate creation and update of table configs. Severity
+/// is determined by comparing [#since()] against the running Pinot version: properties deprecated in the current
+/// major.minor release are reported as **warnings**, while properties deprecated in any earlier release are
 /// reported as **errors**.
 ///
 /// Place this annotation on the Jackson-visible getter (the one that drives JSON property naming) so the discovery
@@ -42,7 +43,7 @@ public @interface DeprecatedConfig {
   String replacement();
 
   /// The Pinot release in which this property was deprecated, e.g. `"1.6.0"`. Used to decide whether a violation is
-  /// reported as a warning (current major.minor) or an error (older). Format: `MAJOR.MINOR.PATCH` with optional
-  /// `-SNAPSHOT`; only major.minor is compared.
+  /// reported as a warning (current major.minor) or an error (older). Format: `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`
+  /// with an optional `-SNAPSHOT` qualifier; only the leading major.minor pair is compared.
   String since();
 }

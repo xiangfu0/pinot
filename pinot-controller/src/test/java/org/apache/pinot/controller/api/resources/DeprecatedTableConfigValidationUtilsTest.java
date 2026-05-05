@@ -100,13 +100,73 @@ public class DeprecatedTableConfigValidationUtilsTest {
   public void testUpdateRejectsValueChangeOnDeprecatedField()
       throws Exception {
     // Legacy config had segmentPushType=APPEND. The update changes it to REFRESH — the diff treats this as a new
-    // write to a deprecated key and reports an error (because the annotation's since=1.5.0 is older than the
+    // write to a deprecated key and reports an error (because the annotation's since is older than the
     // running release line).
     JsonNode oldJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"segmentPushType\":\"APPEND\"}}");
     JsonNode newJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"segmentPushType\":\"REFRESH\"}}");
 
     Result result = DeprecatedTableConfigValidationUtils.validate(newJson, oldJson, null);
     assertTrue(result.hasErrors(), "expected error on changed deprecated value");
+    assertTrue(result.getErrors().get(0).contains("segmentsConfig.segmentPushType"), result.getErrors().toString());
+  }
+
+  @Test
+  public void testUpdateAllowsReSubmittedDefaultValueWhenAbsentFromStored()
+      throws Exception {
+    // Many deprecated booleans carry @JsonInclude(NON_DEFAULT). A previous create with `enableSnapshot: false`
+    // (the type default) is stripped at ZK write time, so the stored config has no `enableSnapshot` key. On PUT,
+    // the diff sees the path as missing in the stored config but present in the new submission with the type
+    // default — the validator must treat this as a no-op so users can re-submit cached configs unchanged.
+    JsonNode oldJson = JsonUtils.stringToJsonNode("{\"upsertConfig\":{}}");
+    JsonNode newJson = JsonUtils.stringToJsonNode("{\"upsertConfig\":{\"enableSnapshot\":false}}");
+
+    Result result = DeprecatedTableConfigValidationUtils.validate(newJson, oldJson, null);
+    assertFalse(result.hasErrors(), "errors=" + result.getErrors());
+    assertFalse(result.hasWarnings(), "warnings=" + result.getWarnings());
+  }
+
+  @Test
+  public void testUpdateTreatsExplicitJsonNullStoredValueAsPresent()
+      throws Exception {
+    // The stored JSON has an explicit `null` value for a deprecated path. The new submission flips it to a
+    // non-default `true`. Both differ, so the diff must report it (the default-skip applies only when the path
+    // was *absent* in the stored config, not when it was present-but-null).
+    JsonNode oldJson = JsonUtils.stringToJsonNode("{\"upsertConfig\":{\"enableSnapshot\":null}}");
+    JsonNode newJson = JsonUtils.stringToJsonNode("{\"upsertConfig\":{\"enableSnapshot\":true}}");
+
+    Result result = DeprecatedTableConfigValidationUtils.validate(newJson, oldJson, null);
+    assertTrue(result.hasErrors(), "expected error on flip from null to true");
+    assertTrue(result.getErrors().get(0).contains("upsertConfig.enableSnapshot"), result.getErrors().toString());
+  }
+
+  @Test
+  public void testUpdateRejectsDeliberateFlipFromNonDefaultToDefault()
+      throws Exception {
+    // The default-skip optimisation must not silently swallow a deliberate value flip on an existing field.
+    // Stored config has `enableSnapshot: true`; user submits `enableSnapshot: false` — this is a value change on
+    // a deprecated path and must be reported (per validateOnUpdate's contract: value-changed deprecated paths are
+    // flagged, regardless of whether the new value happens to be the type default).
+    JsonNode oldJson = JsonUtils.stringToJsonNode("{\"upsertConfig\":{\"enableSnapshot\":true}}");
+    JsonNode newJson = JsonUtils.stringToJsonNode("{\"upsertConfig\":{\"enableSnapshot\":false}}");
+
+    Result result = DeprecatedTableConfigValidationUtils.validate(newJson, oldJson, null);
+    assertTrue(result.hasErrors(), "expected error on deliberate flip true → false");
+    assertTrue(result.getErrors().get(0).contains("upsertConfig.enableSnapshot"), result.getErrors().toString());
+  }
+
+  @Test
+  public void testUpdateRejectsEmptyStringValueForNullDefaultField()
+      throws Exception {
+    // String-returning deprecated getters initialise to null (the Java default), not "". A user submitting
+    // "segmentPushType":"" on update — when the stored config lacks the key — is supplying a real value that
+    // Jackson would NOT elide under NON_DEFAULT, and must be flagged. Locks the textual branch of
+    // isJacksonDefault returning false (rather than treating empty string as default).
+    JsonNode oldJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"replication\":\"1\"}}");
+    JsonNode newJson = JsonUtils.stringToJsonNode(
+        "{\"segmentsConfig\":{\"replication\":\"1\",\"segmentPushType\":\"\"}}");
+
+    Result result = DeprecatedTableConfigValidationUtils.validate(newJson, oldJson, null);
+    assertTrue(result.hasErrors(), "expected error on empty-string value for deprecated path");
     assertTrue(result.getErrors().get(0).contains("segmentsConfig.segmentPushType"), result.getErrors().toString());
   }
 
@@ -136,9 +196,31 @@ public class DeprecatedTableConfigValidationUtilsTest {
 
   @Test
   public void testSeverityClassification() {
-    // When current version cannot be determined, default to ERROR (safe).
-    Severity s = DeprecatedTableConfigValidationUtils.classifySeverity("garbage");
-    assertEquals(s, Severity.ERROR);
+    // An unparseable annotation `since` reflects a code-side bug and classifies as ERROR.
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("garbage"), Severity.ERROR);
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity(""), Severity.ERROR);
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("1"), Severity.ERROR);
+  }
+
+  @Test
+  public void testSeverityFallsBackToWarningWhenCurrentVersionUnknown() {
+    // When the running Pinot version cannot be determined (e.g. shaded jar / IDE without filtered resources), a
+    // misconfigured deployment must NOT silently start rejecting every previously-valid table config. The
+    // fallback is WARNING for parseable `since` values, ERROR only when `since` itself is unparseable.
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("1.6.0", null), Severity.WARNING);
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("1.5.0", null), Severity.WARNING);
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("0.3.0", null), Severity.WARNING);
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("garbage", null), Severity.ERROR);
+  }
+
+  @Test
+  public void testSeverityWithExplicitCurrentVersion() {
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("1.6.0", "1.6"), Severity.WARNING);
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("1.6.0-SNAPSHOT", "1.6"), Severity.WARNING);
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("1.5.0", "1.6"), Severity.ERROR);
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("0.3.0", "1.6"), Severity.ERROR);
+    // Unparseable since wins over a known current version.
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("garbage", "1.6"), Severity.ERROR);
   }
 
   @Test
@@ -168,12 +250,24 @@ public class DeprecatedTableConfigValidationUtilsTest {
   }
 
   @Test(dataProvider = "allRules")
-  public void testEveryRuleFiresOnSyntheticInput(DeprecatedConfigRule rule)
+  public void testEveryRuleFiresOnSyntheticInputAsArrayWildcard(DeprecatedConfigRule rule)
       throws Exception {
-    // Build a JSON tree that contains the deprecated path. Wildcards become object fields named "x" so the
-    // validator's collectMatches walks into them just like it would for real array/map entries.
-    String synthetic = synthesizeJsonForPath(rule.pathSegments());
-    String expectedPath = expectedPathInMessage(rule.pathSegments());
+    runEveryRuleCase(rule, /* arrayWildcard */ true);
+  }
+
+  @Test(dataProvider = "allRules")
+  public void testEveryRuleFiresOnSyntheticInputAsMapWildcard(DeprecatedConfigRule rule)
+      throws Exception {
+    runEveryRuleCase(rule, /* arrayWildcard */ false);
+  }
+
+  /// Builds a JSON tree containing the deprecated path and asserts the rule fires. The {@code arrayWildcard} flag
+  /// controls how `*` segments are realised: as `[ {...} ]` (array branch) or `{"x":...}` (object branch). Running
+  /// both shapes ensures `collectMatches` is exercised on both wildcard branches for every rule.
+  private static void runEveryRuleCase(DeprecatedConfigRule rule, boolean arrayWildcard)
+      throws Exception {
+    String synthetic = synthesizeJsonForPath(rule.pathSegments(), arrayWildcard);
+    String expectedPath = expectedPathInMessage(rule.pathSegments(), arrayWildcard);
 
     Result result = DeprecatedTableConfigValidationUtils.validate(JsonUtils.stringToJsonNode(synthetic), null, null);
     if (rule.severity() == Severity.ERROR) {
@@ -187,29 +281,45 @@ public class DeprecatedTableConfigValidationUtilsTest {
     }
   }
 
-  /// Build a minimal JSON document that places a non-null leaf value at the rule's path. Wildcard segments are
-  /// realised as a single object field named "x", which the validator treats identically to any other map key.
-  private static String synthesizeJsonForPath(List<String> path) {
+  private static String synthesizeJsonForPath(List<String> path, boolean arrayWildcard) {
     StringBuilder open = new StringBuilder();
     StringBuilder close = new StringBuilder();
     for (String segment : path.subList(0, path.size() - 1)) {
-      String key = "*".equals(segment) ? "x" : segment;
-      open.append("{\"").append(key).append("\":");
-      close.append("}");
+      if ("*".equals(segment)) {
+        if (arrayWildcard) {
+          open.append("[");
+          close.insert(0, "]");
+        } else {
+          open.append("{\"x\":");
+          close.insert(0, "}");
+        }
+      } else {
+        open.append("{\"").append(segment).append("\":");
+        close.insert(0, "}");
+      }
     }
     String leaf = path.get(path.size() - 1);
-    String leafKey = "*".equals(leaf) ? "x" : leaf;
-    open.append("{\"").append(leafKey).append("\":\"v\"}");
+    if ("*".equals(leaf)) {
+      open.append(arrayWildcard ? "[\"v\"]" : "{\"x\":\"v\"}");
+    } else {
+      open.append("{\"").append(leaf).append("\":\"v\"}");
+    }
     return open.append(close).toString();
   }
 
-  private static String expectedPathInMessage(List<String> path) {
+  private static String expectedPathInMessage(List<String> path, boolean arrayWildcard) {
     StringBuilder sb = new StringBuilder();
-    for (int i = 0; i < path.size(); i++) {
-      if (i > 0) {
-        sb.append('.');
+    for (String segment : path) {
+      if ("*".equals(segment) && arrayWildcard) {
+        // The walker emits `[<index>]` (no preceding `.`) for array entries.
+        sb.append("[0]");
+      } else {
+        String key = "*".equals(segment) ? "x" : segment;
+        if (sb.length() > 0) {
+          sb.append('.');
+        }
+        sb.append(key);
       }
-      sb.append("*".equals(path.get(i)) ? "x" : path.get(i));
     }
     return sb.toString();
   }

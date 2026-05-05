@@ -24,6 +24,8 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -47,7 +49,10 @@ import org.slf4j.LoggerFactory;
 /// A violation's severity ([Severity#WARNING] vs [Severity#ERROR]) is decided by comparing the annotation's `since`
 /// version against the running Pinot version (see [#classifySeverity]): properties deprecated in the current
 /// major.minor release are warnings; properties deprecated in any earlier release are errors. When the running
-/// version cannot be determined, all violations are reported as errors so the safe default is to reject.
+/// Pinot version itself cannot be determined (e.g. running from an IDE or a shaded jar where
+/// `pinot-version.properties` was not maven-filtered), violations fall back to **warnings** so a misconfigured
+/// deployment does not silently start rejecting every previously-valid table config; only an unparseable annotation
+/// `since` value still classifies as an error, since that case is a code-side bug rather than an environment one.
 ///
 /// The validator operates on raw JSON rather than the deserialized [TableConfig] so it can detect explicitly
 /// provided deprecated keys even when they carry default or false-y values that Jackson would otherwise elide.
@@ -142,15 +147,6 @@ public final class DeprecatedTableConfigValidationUtils {
           String.join("; ", result.getWarnings()));
     }
     return result.getWarnings();
-  }
-
-  // Backward-compatible API kept for existing call sites.
-  public static void validateNoDeprecatedConfigs(JsonNode tableConfigJson) {
-    validateOnCreate(tableConfigJson, null);
-  }
-
-  public static void validateNoDeprecatedConfigs(JsonNode tableConfigJson, @Nullable String rootPathPrefix) {
-    validateOnCreate(tableConfigJson, rootPathPrefix);
   }
 
   static List<DeprecatedConfigRule> rulesForTesting() {
@@ -329,14 +325,29 @@ public final class DeprecatedTableConfigValidationUtils {
   }
 
   /// Decides the severity for a violation based on the annotation's `since` value. The current Pinot release's
-  /// deprecations are warnings (one-release grace period); older deprecations escalate to errors. If either version
-  /// is unparseable, defaults to [Severity#ERROR] so unintended-warning regressions are avoided.
+  /// deprecations are warnings (one-release grace period); older deprecations escalate to errors.
+  ///
+  /// When the current Pinot version cannot be determined (e.g. running from an IDE / shaded jar where
+  /// `pinot-version.properties` was not maven-filtered), severity falls back to [Severity#WARNING] so a
+  /// misconfigured deployment does not silently start rejecting every previously-valid table config. An
+  /// unparseable `since` value on the annotation itself still classifies as [Severity#ERROR] because that case
+  /// reflects a code-side bug rather than an environment-side one.
   static Severity classifySeverity(String since) {
+    return classifySeverity(since, CURRENT_MAJOR_MINOR);
+  }
+
+  /// Test seam for [#classifySeverity(String)] that takes the current major.minor version explicitly so the
+  /// version-unknown fallback branch can be unit-tested without manipulating the classloader-scoped
+  /// `pinot-version.properties` resource.
+  static Severity classifySeverity(String since, @Nullable String currentMajorMinor) {
     String sinceMajorMinor = majorMinor(since);
-    if (CURRENT_MAJOR_MINOR == null || sinceMajorMinor == null) {
+    if (sinceMajorMinor == null) {
       return Severity.ERROR;
     }
-    return CURRENT_MAJOR_MINOR.equals(sinceMajorMinor) ? Severity.WARNING : Severity.ERROR;
+    if (currentMajorMinor == null) {
+      return Severity.WARNING;
+    }
+    return currentMajorMinor.equals(sinceMajorMinor) ? Severity.WARNING : Severity.ERROR;
   }
 
   static final class DeprecatedConfigRule {
@@ -365,10 +376,22 @@ public final class DeprecatedTableConfigValidationUtils {
       List<MatchedPath> matches = new ArrayList<>();
       collectMatches(newRoot, oldRoot, 0, pathPrefix, matches);
       for (MatchedPath match : matches) {
-        // On create paths (oldRoot == null) every match is reported. On update paths a path is only reported if it
-        // is newly introduced or its value differs from the previously-stored value.
-        if (oldRoot != null && match._oldValue != null && Objects.equals(match._newValue, match._oldValue)) {
-          continue;
+        if (oldRoot != null) {
+          // Update path. Silently drop matches that are unchanged from the stored config, OR that are absent in
+          // the stored config but whose new value is the type's Java default. The default-skip handles the case
+          // where many deprecated getters carry @JsonInclude(NON_DEFAULT): a previous create with
+          // `enableSnapshot: false` is stripped at ZK write time, so on PUT the diff would otherwise see `false`
+          // as "newly introduced" and reject an unchanged config. Crucially, the default-skip applies ONLY when
+          // the stored config did not contain the path — a deliberate flip of an existing non-default value back
+          // to the default (e.g. `true` → `false`) is still reported, matching validateOnUpdate's contract that
+          // value-changed deprecated paths must be flagged.
+          if (match._oldValue != null) {
+            if (Objects.equals(match._newValue, match._oldValue)) {
+              continue;
+            }
+          } else if (isJacksonDefault(match._newValue)) {
+            continue;
+          }
         }
         String message = "'" + match._path + "' is deprecated since " + _since + ". " + _replacement;
         if (_severity == Severity.ERROR) {
@@ -377,6 +400,51 @@ public final class DeprecatedTableConfigValidationUtils {
           warnings.add(message);
         }
       }
+    }
+
+    /// Returns true when the JSON value matches the Java zero-value for its type (`false` for booleans, `0` for
+    /// numerics, empty for strings/arrays/objects, and explicit JSON `null`). This is an approximation of
+    /// Jackson's `@JsonInclude(NON_DEFAULT)` semantics: the real Jackson behaviour consults the bean's actual
+    /// initialised default by instantiating it, but every deprecated getter currently annotated with
+    /// `@DeprecatedConfig` uses a type-zero default, so the approximation is exact for today's rules. If a future
+    /// `@DeprecatedConfig` annotation is added on a field whose bean default is non-zero (e.g. an enum that
+    /// defaults to a non-null value), update this helper to consult the bean default via reflection.
+    ///
+    /// Numeric types are compared via integer paths where possible to avoid the `double`-coercion edge cases
+    /// (lossy conversion for `BigDecimal`/`BigInteger`, IEEE-754 `-0.0 == 0.0d`, etc.). Today no annotated getter
+    /// returns a floating-point or arbitrary-precision type, but the dispatch is robust enough to extend to those
+    /// cases in the future.
+    private static boolean isJacksonDefault(@Nullable JsonNode node) {
+      if (node == null || node.isMissingNode() || node.isNull()) {
+        return true;
+      }
+      if (node.isBoolean()) {
+        return !node.booleanValue();
+      }
+      if (node.isShort() || node.isInt() || node.isLong()) {
+        return node.longValue() == 0L;
+      }
+      if (node.isBigInteger()) {
+        return BigInteger.ZERO.equals(node.bigIntegerValue());
+      }
+      if (node.isBigDecimal()) {
+        return BigDecimal.ZERO.compareTo(node.decimalValue()) == 0;
+      }
+      if (node.isFloatingPointNumber()) {
+        // Use Double.compare so -0.0 is treated as non-default (it differs from the Java zero-value of 0.0d).
+        return Double.compare(node.doubleValue(), 0.0d) == 0;
+      }
+      if (node.isTextual()) {
+        // String-returning deprecated getters today (e.g. segmentPushType) all initialise to null, not "". Match
+        // Jackson's actual NON_DEFAULT contract: only the explicit-null case (handled above) is "default";
+        // empty-string is a real user-supplied value and must be flagged on update.
+        return false;
+      }
+      if (node.isArray() || node.isObject()) {
+        return node.isEmpty();
+      }
+      // BinaryNode / POJONode never arise from text JSON parsed by Jackson; treat as non-default conservatively.
+      return false;
     }
 
     private void collectMatches(@Nullable JsonNode newNode, @Nullable JsonNode oldNode, int idx, String currentPath,
