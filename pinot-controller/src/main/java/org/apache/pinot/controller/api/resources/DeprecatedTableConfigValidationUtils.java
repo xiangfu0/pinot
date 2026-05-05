@@ -343,15 +343,17 @@ public final class DeprecatedTableConfigValidationUtils {
   /// Test seam for [#classifySeverity(String)] that takes the current major.minor version explicitly so the
   /// version-unknown fallback branch can be unit-tested without manipulating the classloader-scoped
   /// `pinot-version.properties` resource.
+  ///
+  /// Initial soft-launch policy: every parseable `since` returns WARNING so existing callers that already use
+  /// deprecated keys (TableConfigBuilder setters, integration test bases, downstream automations) keep working.
+  /// Only an unparseable `since` (a code-side bug in the annotation) classifies as ERROR. A follow-up PR can
+  /// promote older deprecations to ERROR after the codebase migrates off them.
   static Severity classifySeverity(String since, @Nullable String currentMajorMinor) {
     String sinceMajorMinor = majorMinor(since);
     if (sinceMajorMinor == null) {
       return Severity.ERROR;
     }
-    if (currentMajorMinor == null) {
-      return Severity.WARNING;
-    }
-    return currentMajorMinor.equals(sinceMajorMinor) ? Severity.WARNING : Severity.ERROR;
+    return Severity.WARNING;
   }
 
   static final class DeprecatedConfigRule {

@@ -392,7 +392,7 @@ public class TableConfigsRestletResourceTest extends ControllerTest {
   }
 
   @Test
-  public void testCreateConfigRejectsDeprecatedTableProperties()
+  public void testCreateConfigReportsDeprecatedTablePropertiesAsWarning()
       throws Exception {
     PinotAdminClient adminClient = getOrCreateAdminClient();
     String tableName = "testDeprecatedCreate";
@@ -404,16 +404,17 @@ public class TableConfigsRestletResourceTest extends ControllerTest {
         .put("replicasPerPartition", "3");
 
     try {
-      adminClient.getTableClient().createTableConfigs(tableConfigsJson.toPrettyString(), null, null);
-      fail("Creation of TableConfigs with deprecated table configs should have failed");
-    } catch (Exception e) {
-      Assert.assertTrue(e.getMessage().contains("realtime.segmentsConfig.replicasPerPartition"),
-          "Expected deprecated replicasPerPartition rejection but got: " + e.getMessage());
+      String response =
+          adminClient.getTableClient().createTableConfigs(tableConfigsJson.toPrettyString(), null, null);
+      Assert.assertTrue(response.contains("realtime.segmentsConfig.replicasPerPartition"),
+          "Expected deprecation warning in response: " + response);
+    } finally {
+      adminClient.getTableClient().deleteTableConfigs(tableName, null);
     }
   }
 
   @Test
-  public void testUpdateConfigRejectsNewlyIntroducedDeprecatedProperty()
+  public void testUpdateConfigReportsNewlyIntroducedDeprecatedPropertyAsWarning()
       throws Exception {
     PinotAdminClient adminClient = getOrCreateAdminClient();
     String tableName = "testDeprecatedUpdateNew";
@@ -425,14 +426,10 @@ public class TableConfigsRestletResourceTest extends ControllerTest {
       ObjectNode tableConfigsJson = (ObjectNode) JsonUtils.stringToJsonNode(tableConfigs.toPrettyJsonString());
       ((ObjectNode) tableConfigsJson.get(TableType.REALTIME.name().toLowerCase()).get("segmentsConfig"))
           .put("replicasPerPartition", "3");
-      try {
-        adminClient.getTableClient()
-            .updateTableConfigs(tableName, tableConfigsJson.toPrettyString(), null, false, false);
-        fail("Update of TableConfigs introducing a deprecated key should have failed");
-      } catch (Exception e) {
-        Assert.assertTrue(e.getMessage().contains("realtime.segmentsConfig.replicasPerPartition"),
-            "Expected deprecated replicasPerPartition rejection but got: " + e.getMessage());
-      }
+      String response = adminClient.getTableClient()
+          .updateTableConfigs(tableName, tableConfigsJson.toPrettyString(), null, false, false);
+      Assert.assertTrue(response.contains("realtime.segmentsConfig.replicasPerPartition"),
+          "Expected deprecation warning in update response: " + response);
     } finally {
       adminClient.getTableClient().deleteTableConfigs(tableName, null);
     }

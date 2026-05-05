@@ -31,37 +31,41 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
-import static org.testng.Assert.expectThrows;
 
 
 public class DeprecatedTableConfigValidationUtilsTest {
 
   @Test
-  public void testRejectsDeprecatedConfigsOnCreate()
+  public void testReportsDeprecatedConfigsOnCreateAsWarnings()
       throws Exception {
-    // Each of these deprecations is older than the current major.minor, so they should all be reported as errors.
+    // Soft-launch policy: every parseable @DeprecatedConfig annotation is reported as a WARNING on create so
+    // legacy callers (TableConfigBuilder setters, integration test bases, downstream automations) keep working.
+    // A follow-up PR can promote to ERROR after the codebase migrates off these paths.
     JsonNode tableConfigJson = JsonUtils.stringToJsonNode("{"
         + "\"segmentsConfig\":{\"replicasPerPartition\":\"APPEND\",\"minimizeDataMovement\":false},"
         + "\"fieldConfigList\":[{\"name\":\"c1\",\"indexType\":\"INVERTED\"}],"
         + "\"instanceAssignmentConfigMap\":{\"CONSUMING\":{\"replicaGroupPartitionConfig\":"
         + "{\"minimizeDataMovement\":false}}}}");
 
-    IllegalArgumentException e = expectThrows(IllegalArgumentException.class,
-        () -> DeprecatedTableConfigValidationUtils.validateOnCreate(tableConfigJson, "realtime"));
-    assertTrue(e.getMessage().contains("realtime.segmentsConfig.replicasPerPartition"), e.getMessage());
-    assertTrue(e.getMessage().contains("realtime.segmentsConfig.minimizeDataMovement"), e.getMessage());
-    assertTrue(e.getMessage().contains("realtime.fieldConfigList[0].indexType"), e.getMessage());
-    assertTrue(e.getMessage().contains(
-            "realtime.instanceAssignmentConfigMap.CONSUMING.replicaGroupPartitionConfig.minimizeDataMovement"),
-        e.getMessage());
+    java.util.List<String> warnings =
+        DeprecatedTableConfigValidationUtils.validateOnCreate(tableConfigJson, "realtime");
+    assertTrue(warnings.stream().anyMatch(w -> w.contains("realtime.segmentsConfig.replicasPerPartition")), warnings
+        .toString());
+    assertTrue(warnings.stream().anyMatch(w -> w.contains("realtime.segmentsConfig.minimizeDataMovement")), warnings
+        .toString());
+    assertTrue(warnings.stream().anyMatch(w -> w.contains("realtime.fieldConfigList[0].indexType")), warnings
+        .toString());
+    assertTrue(warnings.stream().anyMatch(w -> w.contains(
+            "realtime.instanceAssignmentConfigMap.CONSUMING.replicaGroupPartitionConfig.minimizeDataMovement")),
+        warnings.toString());
   }
 
   @Test
   public void testCurrentVersionDeprecationIsWarningNotError()
       throws Exception {
     // tableIndexConfig.createInvertedIndexDuringSegmentGeneration is annotated with since=1.6.0, matching the
-    // current Pinot release line. It should be reported as a warning (one-release grace period) rather than as an
-    // error that blocks creation.
+    // current Pinot release line. It is reported as a warning (matches the soft-launch policy where every
+    // parseable `since` classifies as a warning).
     JsonNode tableConfigJson = JsonUtils.stringToJsonNode(
         "{\"tableIndexConfig\":{\"createInvertedIndexDuringSegmentGeneration\":false}}");
 
@@ -97,18 +101,17 @@ public class DeprecatedTableConfigValidationUtilsTest {
   }
 
   @Test
-  public void testUpdateRejectsValueChangeOnDeprecatedField()
+  public void testUpdateReportsValueChangeOnDeprecatedFieldAsWarning()
       throws Exception {
-    // Legacy config had replicasPerPartition=APPEND. The update changes it to REFRESH — the diff treats this as a new
-    // write to a deprecated key and reports an error (because the annotation's since is older than the
-    // running release line).
+    // Legacy config had replicasPerPartition=APPEND. The update changes it to REFRESH — the diff treats this as
+    // a new write to a deprecated key and reports a warning under the soft-launch policy.
     JsonNode oldJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"replicasPerPartition\":\"APPEND\"}}");
     JsonNode newJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"replicasPerPartition\":\"REFRESH\"}}");
 
     Result result = DeprecatedTableConfigValidationUtils.validate(newJson, oldJson, null);
-    assertTrue(result.hasErrors(), "expected error on changed deprecated value");
-    assertTrue(result.getErrors().get(0).contains("segmentsConfig.replicasPerPartition"),
-        result.getErrors().toString());
+    assertTrue(result.hasWarnings(), "expected warning on changed deprecated value");
+    assertTrue(result.getWarnings().get(0).contains("segmentsConfig.replicasPerPartition"),
+        result.getWarnings().toString());
   }
 
   @Test
@@ -136,53 +139,55 @@ public class DeprecatedTableConfigValidationUtilsTest {
     JsonNode newJson = JsonUtils.stringToJsonNode("{\"upsertConfig\":{\"enableSnapshot\":true}}");
 
     Result result = DeprecatedTableConfigValidationUtils.validate(newJson, oldJson, null);
-    assertTrue(result.hasErrors(), "expected error on flip from null to true");
-    assertTrue(result.getErrors().get(0).contains("upsertConfig.enableSnapshot"), result.getErrors().toString());
+    assertTrue(result.hasWarnings(), "expected warning on flip from null to true");
+    assertTrue(result.getWarnings().get(0).contains("upsertConfig.enableSnapshot"),
+        result.getWarnings().toString());
   }
 
   @Test
-  public void testUpdateRejectsDeliberateFlipFromNonDefaultToDefault()
+  public void testUpdateReportsDeliberateFlipFromNonDefaultToDefaultAsWarning()
       throws Exception {
     // The default-skip optimisation must not silently swallow a deliberate value flip on an existing field.
     // Stored config has `enableSnapshot: true`; user submits `enableSnapshot: false` — this is a value change on
-    // a deprecated path and must be reported (per validateOnUpdate's contract: value-changed deprecated paths are
-    // flagged, regardless of whether the new value happens to be the type default).
+    // a deprecated path and is reported as a warning under the soft-launch policy.
     JsonNode oldJson = JsonUtils.stringToJsonNode("{\"upsertConfig\":{\"enableSnapshot\":true}}");
     JsonNode newJson = JsonUtils.stringToJsonNode("{\"upsertConfig\":{\"enableSnapshot\":false}}");
 
     Result result = DeprecatedTableConfigValidationUtils.validate(newJson, oldJson, null);
-    assertTrue(result.hasErrors(), "expected error on deliberate flip true → false");
-    assertTrue(result.getErrors().get(0).contains("upsertConfig.enableSnapshot"), result.getErrors().toString());
+    assertTrue(result.hasWarnings(), "expected warning on deliberate flip true → false");
+    assertTrue(result.getWarnings().get(0).contains("upsertConfig.enableSnapshot"),
+        result.getWarnings().toString());
   }
 
   @Test
-  public void testUpdateRejectsEmptyStringValueForNullDefaultField()
+  public void testUpdateReportsEmptyStringValueForNullDefaultField()
       throws Exception {
     // String-returning deprecated getters initialise to null (the Java default), not "". A user submitting
     // "replicasPerPartition":"" on update — when the stored config lacks the key — is supplying a real value that
-    // Jackson would NOT elide under NON_DEFAULT, and must be flagged. Locks the textual branch of
+    // Jackson would NOT elide under NON_DEFAULT, and is flagged as a warning. Locks the textual branch of
     // isJacksonDefault returning false (rather than treating empty string as default).
     JsonNode oldJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"replication\":\"1\"}}");
     JsonNode newJson = JsonUtils.stringToJsonNode(
         "{\"segmentsConfig\":{\"replication\":\"1\",\"replicasPerPartition\":\"\"}}");
 
     Result result = DeprecatedTableConfigValidationUtils.validate(newJson, oldJson, null);
-    assertTrue(result.hasErrors(), "expected error on empty-string value for deprecated path");
-    assertTrue(result.getErrors().get(0).contains("segmentsConfig.replicasPerPartition"),
-        result.getErrors().toString());
+    assertTrue(result.hasWarnings(), "expected warning on empty-string value for deprecated path");
+    assertTrue(result.getWarnings().get(0).contains("segmentsConfig.replicasPerPartition"),
+        result.getWarnings().toString());
   }
 
   @Test
-  public void testUpdateRejectsNewlyIntroducedDeprecatedField()
+  public void testUpdateReportsNewlyIntroducedDeprecatedField()
       throws Exception {
-    // Legacy config did not contain the deprecated field. Adding it on update fires the same error as on create.
+    // Legacy config did not contain the deprecated field. Adding it on update fires a warning under the
+    // soft-launch policy (parseable since classifies as warning).
     JsonNode oldJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"replication\":\"1\"}}");
     JsonNode newJson = JsonUtils.stringToJsonNode(
         "{\"segmentsConfig\":{\"replication\":\"1\",\"replicasPerPartition\":\"APPEND\"}}");
 
     Result result = DeprecatedTableConfigValidationUtils.validate(newJson, oldJson, null);
-    assertTrue(result.hasErrors());
-    assertTrue(result.getErrors().get(0).contains("segmentsConfig.replicasPerPartition"));
+    assertTrue(result.hasWarnings());
+    assertTrue(result.getWarnings().get(0).contains("segmentsConfig.replicasPerPartition"));
   }
 
   @Test
@@ -205,23 +210,17 @@ public class DeprecatedTableConfigValidationUtilsTest {
   }
 
   @Test
-  public void testSeverityFallsBackToWarningWhenCurrentVersionUnknown() {
-    // When the running Pinot version cannot be determined (e.g. shaded jar / IDE without filtered resources), a
-    // misconfigured deployment must NOT silently start rejecting every previously-valid table config. The
-    // fallback is WARNING for parseable `since` values, ERROR only when `since` itself is unparseable.
+  public void testSeverityIsWarningForAllParseableSinceUnderSoftLaunch() {
+    // Soft-launch policy: every parseable `since` returns WARNING, regardless of the running Pinot version, so
+    // existing callers that already use deprecated keys keep working. ERROR is reserved for unparseable values
+    // (which reflect a code-side annotation bug, not user-supplied data).
     assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("1.6.0", null), Severity.WARNING);
     assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("1.5.0", null), Severity.WARNING);
     assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("0.3.0", null), Severity.WARNING);
-    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("garbage", null), Severity.ERROR);
-  }
-
-  @Test
-  public void testSeverityWithExplicitCurrentVersion() {
     assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("1.6.0", "1.6"), Severity.WARNING);
-    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("1.6.0-SNAPSHOT", "1.6"), Severity.WARNING);
-    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("1.5.0", "1.6"), Severity.ERROR);
-    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("0.3.0", "1.6"), Severity.ERROR);
-    // Unparseable since wins over a known current version.
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("1.5.0", "1.6"), Severity.WARNING);
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("0.3.0", "1.6"), Severity.WARNING);
+    assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("garbage", null), Severity.ERROR);
     assertEquals(DeprecatedTableConfigValidationUtils.classifySeverity("garbage", "1.6"), Severity.ERROR);
   }
 

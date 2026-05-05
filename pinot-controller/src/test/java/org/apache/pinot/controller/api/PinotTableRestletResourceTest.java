@@ -355,18 +355,22 @@ public class PinotTableRestletResourceTest extends ControllerTest {
   }
 
   @Test
-  public void testRejectsDeprecatedConfigOnCreateAndOnUpdateWhenNewlyIntroduced()
+  public void testReportsDeprecatedConfigOnCreateAndOnUpdateAsWarning()
       throws Exception {
-    // Create with a deprecated property is rejected.
+    // Soft-launch policy: deprecated keys are reported via the deprecationWarnings field on the success
+    // response, not rejected with a 400.
     TableConfig offlineTableConfig = _offlineBuilder.setTableName(OFFLINE_TABLE_NAME).build();
     ObjectNode createTableJson = (ObjectNode) JsonUtils.stringToJsonNode(offlineTableConfig.toJsonString());
     createTableJson.with("segmentsConfig").put("replicasPerPartition", "APPEND");
 
-    IOException createException = expectThrows(IOException.class, () -> createTable(createTableJson.toString()));
-    assertHasStatus(createException, 400);
-    assertTrue(createException.getMessage().contains("segmentsConfig.replicasPerPartition"));
+    JsonNode createResponse = JsonUtils.stringToJsonNode(createTable(createTableJson.toString()));
+    JsonNode createWarnings = createResponse.path("deprecationWarnings");
+    assertTrue(createWarnings.isArray() && createWarnings.size() > 0,
+        "expected deprecationWarnings on create response: " + createResponse);
+    assertTrue(createWarnings.toString().contains("segmentsConfig.replicasPerPartition"),
+        createWarnings.toString());
 
-    // Update that introduces a deprecated property that was not previously set is also rejected.
+    // Update that introduces a previously-absent deprecated property: also reported as a warning.
     String rawTableName = "deprecated_update_table";
     DEFAULT_INSTANCE.addDummySchema(rawTableName);
     TableConfig existingTableConfig = getOfflineTableBuilder(rawTableName).build();
@@ -374,10 +378,13 @@ public class PinotTableRestletResourceTest extends ControllerTest {
 
     ObjectNode updateTableJson = (ObjectNode) JsonUtils.stringToJsonNode(existingTableConfig.toJsonString());
     updateTableJson.with("segmentsConfig").put("replicasPerPartition", "APPEND");
-    IOException updateException = expectThrows(IOException.class,
-        () -> updateTable(existingTableConfig.getTableName(), updateTableJson.toString()));
-    assertHasStatus(updateException, 400);
-    assertTrue(updateException.getMessage().contains("segmentsConfig.replicasPerPartition"));
+    JsonNode updateResponse = JsonUtils.stringToJsonNode(
+        updateTable(existingTableConfig.getTableName(), updateTableJson.toString()));
+    JsonNode updateWarnings = updateResponse.path("deprecationWarnings");
+    assertTrue(updateWarnings.isArray() && updateWarnings.size() > 0,
+        "expected deprecationWarnings on update response: " + updateResponse);
+    assertTrue(updateWarnings.toString().contains("segmentsConfig.replicasPerPartition"),
+        updateWarnings.toString());
   }
 
   @Test
