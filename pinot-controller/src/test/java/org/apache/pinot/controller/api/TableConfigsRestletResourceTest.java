@@ -414,6 +414,55 @@ public class TableConfigsRestletResourceTest extends ControllerTest {
   }
 
   @Test
+  public void testUpdateConfigRejectsNewlyIntroducedDeprecatedProperty()
+      throws Exception {
+    PinotAdminClient adminClient = getOrCreateAdminClient();
+    String tableName = "testDeprecatedUpdateNew";
+    TableConfigs tableConfigs =
+        new TableConfigs(tableName, createDummySchema(tableName), createOfflineTableConfig(tableName),
+            createRealtimeTableConfig(tableName));
+    adminClient.getTableClient().createTableConfigs(tableConfigs.toPrettyJsonString(), null, null);
+    try {
+      ObjectNode tableConfigsJson = (ObjectNode) JsonUtils.stringToJsonNode(tableConfigs.toPrettyJsonString());
+      ((ObjectNode) tableConfigsJson.get(TableType.REALTIME.name().toLowerCase()).get(TableConfig.INDEXING_CONFIG_KEY))
+          .set("streamConfigs", JsonUtils.objectToJsonNode(FakeStreamConfigUtils.getDefaultLowLevelStreamConfigs()
+              .getStreamConfigsMap()));
+      try {
+        adminClient.getTableClient()
+            .updateTableConfigs(tableName, tableConfigsJson.toPrettyString(), null, false, false);
+        fail("Update of TableConfigs introducing a deprecated key should have failed");
+      } catch (Exception e) {
+        Assert.assertTrue(e.getMessage().contains("realtime.tableIndexConfig.streamConfigs"),
+            "Expected deprecated streamConfigs rejection but got: " + e.getMessage());
+      }
+    } finally {
+      adminClient.getTableClient().deleteTableConfigs(tableName, null);
+    }
+  }
+
+  @Test
+  public void testUpdateMissingTableConfigsReportsNotExistsNotDeprecation()
+      throws Exception {
+    PinotAdminClient adminClient = getOrCreateAdminClient();
+    String tableName = "testMissingUpdate";
+    TableConfigs tableConfigs =
+        new TableConfigs(tableName, createDummySchema(tableName), createOfflineTableConfig(tableName),
+            createRealtimeTableConfig(tableName));
+    ObjectNode tableConfigsJson = (ObjectNode) JsonUtils.stringToJsonNode(tableConfigs.toPrettyJsonString());
+    ((ObjectNode) tableConfigsJson.get(TableType.REALTIME.name().toLowerCase()).get(TableConfig.INDEXING_CONFIG_KEY))
+        .set("streamConfigs", JsonUtils.objectToJsonNode(FakeStreamConfigUtils.getDefaultLowLevelStreamConfigs()
+            .getStreamConfigsMap()));
+    try {
+      adminClient.getTableClient()
+          .updateTableConfigs(tableName, tableConfigsJson.toPrettyString(), null, false, false);
+      fail("Update of a non-existent TableConfigs should have failed");
+    } catch (Exception e) {
+      Assert.assertTrue(e.getMessage().contains("does not exist"),
+          "Expected 'does not exist' error to take precedence over deprecation, but got: " + e.getMessage());
+    }
+  }
+
+  @Test
   public void testListConfigs()
       throws Exception {
     PinotAdminClient adminClient = getOrCreateAdminClient();

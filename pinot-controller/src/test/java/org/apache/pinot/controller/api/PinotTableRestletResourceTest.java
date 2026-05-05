@@ -381,6 +381,28 @@ public class PinotTableRestletResourceTest extends ControllerTest {
   }
 
   @Test
+  public void testUpdateMissingTableReports404NotDeprecationError()
+      throws Exception {
+    // PUT to a missing table whose body contains a deprecated key must report 404 (table does not exist) rather
+    // than a misleading 400 about a deprecated property — the existence check runs before the deprecation diff.
+    String rawTableName = "missing_update_with_legacy_key";
+    DEFAULT_INSTANCE.addDummySchema(rawTableName);
+    TableConfig tableConfig = getOfflineTableBuilder(rawTableName).build();
+    ObjectNode updateTableJson = (ObjectNode) JsonUtils.stringToJsonNode(tableConfig.toJsonString());
+    updateTableJson.with("segmentsConfig").put("segmentPushType", "APPEND");
+    IOException e = expectThrows(IOException.class,
+        () -> updateTable(tableConfig.getTableName(), updateTableJson.toString()));
+    String message = e.getMessage() != null ? e.getMessage() : "";
+    assertTrue(message.contains("\"code\":404") || message.contains("status: 404")
+            || message.contains("status code: 404"),
+        "Expected 404 status, got: " + message);
+    assertTrue(message.contains("does not exist"),
+        "Expected 'does not exist' to take precedence over deprecation, got: " + message);
+    assertTrue(!message.contains("Newly introduced deprecated"),
+        "404 must take precedence over deprecation diff, got: " + message);
+  }
+
+  @Test
   public void testUpdateAllowsUnchangedLegacyDeprecatedConfig()
       throws Exception {
     // Simulate a table whose stored config already contains a deprecated property (e.g. created on an older
