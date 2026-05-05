@@ -50,9 +50,7 @@ import org.apache.pinot.spi.config.table.UpsertConfig;
 import org.apache.pinot.spi.config.table.assignment.InstanceAssignmentConfig;
 import org.apache.pinot.spi.config.table.assignment.InstancePartitionsType;
 import org.apache.pinot.spi.config.table.assignment.SegmentAssignmentConfig;
-import org.apache.pinot.spi.config.table.ingestion.BatchIngestionConfig;
 import org.apache.pinot.spi.config.table.ingestion.IngestionConfig;
-import org.apache.pinot.spi.config.table.ingestion.StreamIngestionConfig;
 import org.apache.pinot.spi.config.table.sampler.TableSamplerConfig;
 
 
@@ -508,38 +506,6 @@ public class TableConfigBuilder {
   }
 
   public TableConfig build() {
-    IngestionConfig ingestionConfig = _ingestionConfig;
-    BatchIngestionConfig batchIngestionConfig =
-        ingestionConfig != null ? ingestionConfig.getBatchIngestionConfig() : null;
-    if (batchIngestionConfig == null) {
-      if (_segmentPushType != null || _segmentPushFrequency != null) {
-        batchIngestionConfig = new BatchIngestionConfig(null, _segmentPushType, _segmentPushFrequency);
-      }
-    } else {
-      if (batchIngestionConfig.getSegmentIngestionType() == null) {
-        batchIngestionConfig.setSegmentIngestionType(_segmentPushType);
-      }
-      if (batchIngestionConfig.getSegmentIngestionFrequency() == null) {
-        batchIngestionConfig.setSegmentIngestionFrequency(_segmentPushFrequency);
-      }
-    }
-
-    StreamIngestionConfig streamIngestionConfig =
-        ingestionConfig != null ? ingestionConfig.getStreamIngestionConfig() : null;
-    if (streamIngestionConfig == null && _streamConfigs != null && !_streamConfigs.isEmpty()) {
-      streamIngestionConfig = new StreamIngestionConfig(Collections.singletonList(_streamConfigs));
-    }
-
-    if (ingestionConfig == null) {
-      if (batchIngestionConfig != null || streamIngestionConfig != null) {
-        ingestionConfig = new IngestionConfig();
-      }
-    }
-    if (ingestionConfig != null) {
-      ingestionConfig.setBatchIngestionConfig(batchIngestionConfig);
-      ingestionConfig.setStreamIngestionConfig(streamIngestionConfig);
-    }
-
     // Validation config
     SegmentsValidationAndRetentionConfig validationConfig = new SegmentsValidationAndRetentionConfig();
     validationConfig.setTimeColumnName(_timeColumnName);
@@ -549,6 +515,8 @@ public class TableConfigBuilder {
     validationConfig.setDeletedSegmentsRetentionPeriod(_deletedSegmentsRetentionPeriod);
     validationConfig.setReplacedSegmentsRetentionPeriod(_replacedSegmentsRetentionPeriod);
     validationConfig.setLineageEntryCleanupRetentionPeriod(_lineageEntryCleanupRetentionPeriod);
+    validationConfig.setSegmentPushFrequency(_segmentPushFrequency);
+    validationConfig.setSegmentPushType(_segmentPushType);
     validationConfig.setReplicaGroupStrategyConfig(_replicaGroupStrategyConfig);
     validationConfig.setCompletionConfig(_completionConfig);
     validationConfig.setReplication(_numReplicas);
@@ -573,6 +541,7 @@ public class TableConfigBuilder {
     indexingConfig.setOnHeapDictionaryColumns(_onHeapDictionaryColumns);
     indexingConfig.setBloomFilterColumns(_bloomFilterColumns);
     indexingConfig.setRangeIndexColumns(_rangeIndexColumns);
+    indexingConfig.setStreamConfigs(_streamConfigs);
     indexingConfig.setSegmentPartitionConfig(_segmentPartitionConfig);
     indexingConfig.setNullHandlingEnabled(_nullHandlingEnabled);
     indexingConfig.setColumnMajorSegmentBuilderEnabled(_columnMajorSegmentBuilderEnabled);
@@ -598,7 +567,7 @@ public class TableConfigBuilder {
     TableConfig tableConfig =
         new TableConfig(_tableName, _tableType.toString(), validationConfig, tenantConfig, indexingConfig,
             _customConfig, _quotaConfig, _taskConfig, _routingConfig, _queryConfig, _instanceAssignmentConfigMap,
-            _fieldConfigList, _upsertConfig, _dedupConfig, _dimensionTableConfig, ingestionConfig, _tierConfigList,
+            _fieldConfigList, _upsertConfig, _dedupConfig, _dimensionTableConfig, _ingestionConfig, _tierConfigList,
             _isDimTable, _tunerConfigList, _instancePartitionsMap, _segmentAssignmentConfigMap, _tableSamplers);
     tableConfig.setDescription(_description);
     tableConfig.setTags(_tags);

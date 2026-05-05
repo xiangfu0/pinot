@@ -219,8 +219,6 @@ public class IndexingConfig extends BaseJsonConfig {
    */
   @Nullable
   @Deprecated
-  @DeprecatedConfig(replacement = "Use 'ingestionConfig.streamIngestionConfig.streamConfigMaps' instead.",
-      since = "0.7.1")
   public Map<String, String> getStreamConfigs() {
     return _streamConfigs;
   }

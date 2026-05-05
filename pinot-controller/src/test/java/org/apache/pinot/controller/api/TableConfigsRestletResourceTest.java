@@ -400,16 +400,15 @@ public class TableConfigsRestletResourceTest extends ControllerTest {
         new TableConfigs(tableName, createDummySchema(tableName), createOfflineTableConfig(tableName),
             createRealtimeTableConfig(tableName));
     ObjectNode tableConfigsJson = (ObjectNode) JsonUtils.stringToJsonNode(tableConfigs.toPrettyJsonString());
-    ((ObjectNode) tableConfigsJson.get(TableType.REALTIME.name().toLowerCase()).get(TableConfig.INDEXING_CONFIG_KEY))
-        .set("streamConfigs", JsonUtils.objectToJsonNode(FakeStreamConfigUtils.getDefaultLowLevelStreamConfigs()
-            .getStreamConfigsMap()));
+    ((ObjectNode) tableConfigsJson.get(TableType.REALTIME.name().toLowerCase()).get("segmentsConfig"))
+        .put("replicasPerPartition", "3");
 
     try {
       adminClient.getTableClient().createTableConfigs(tableConfigsJson.toPrettyString(), null, null);
       fail("Creation of TableConfigs with deprecated table configs should have failed");
     } catch (Exception e) {
-      Assert.assertTrue(e.getMessage().contains("realtime.tableIndexConfig.streamConfigs"),
-          "Expected deprecated streamConfigs rejection but got: " + e.getMessage());
+      Assert.assertTrue(e.getMessage().contains("realtime.segmentsConfig.replicasPerPartition"),
+          "Expected deprecated replicasPerPartition rejection but got: " + e.getMessage());
     }
   }
 
@@ -424,16 +423,15 @@ public class TableConfigsRestletResourceTest extends ControllerTest {
     adminClient.getTableClient().createTableConfigs(tableConfigs.toPrettyJsonString(), null, null);
     try {
       ObjectNode tableConfigsJson = (ObjectNode) JsonUtils.stringToJsonNode(tableConfigs.toPrettyJsonString());
-      ((ObjectNode) tableConfigsJson.get(TableType.REALTIME.name().toLowerCase()).get(TableConfig.INDEXING_CONFIG_KEY))
-          .set("streamConfigs", JsonUtils.objectToJsonNode(FakeStreamConfigUtils.getDefaultLowLevelStreamConfigs()
-              .getStreamConfigsMap()));
+      ((ObjectNode) tableConfigsJson.get(TableType.REALTIME.name().toLowerCase()).get("segmentsConfig"))
+          .put("replicasPerPartition", "3");
       try {
         adminClient.getTableClient()
             .updateTableConfigs(tableName, tableConfigsJson.toPrettyString(), null, false, false);
         fail("Update of TableConfigs introducing a deprecated key should have failed");
       } catch (Exception e) {
-        Assert.assertTrue(e.getMessage().contains("realtime.tableIndexConfig.streamConfigs"),
-            "Expected deprecated streamConfigs rejection but got: " + e.getMessage());
+        Assert.assertTrue(e.getMessage().contains("realtime.segmentsConfig.replicasPerPartition"),
+            "Expected deprecated replicasPerPartition rejection but got: " + e.getMessage());
       }
     } finally {
       adminClient.getTableClient().deleteTableConfigs(tableName, null);
@@ -449,9 +447,8 @@ public class TableConfigsRestletResourceTest extends ControllerTest {
         new TableConfigs(tableName, createDummySchema(tableName), createOfflineTableConfig(tableName),
             createRealtimeTableConfig(tableName));
     ObjectNode tableConfigsJson = (ObjectNode) JsonUtils.stringToJsonNode(tableConfigs.toPrettyJsonString());
-    ((ObjectNode) tableConfigsJson.get(TableType.REALTIME.name().toLowerCase()).get(TableConfig.INDEXING_CONFIG_KEY))
-        .set("streamConfigs", JsonUtils.objectToJsonNode(FakeStreamConfigUtils.getDefaultLowLevelStreamConfigs()
-            .getStreamConfigsMap()));
+    ((ObjectNode) tableConfigsJson.get(TableType.REALTIME.name().toLowerCase()).get("segmentsConfig"))
+        .put("replicasPerPartition", "3");
     try {
       adminClient.getTableClient()
           .updateTableConfigs(tableName, tableConfigsJson.toPrettyString(), null, false, false);

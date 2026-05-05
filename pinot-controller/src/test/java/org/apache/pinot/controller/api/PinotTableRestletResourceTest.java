@@ -360,11 +360,11 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     // Create with a deprecated property is rejected.
     TableConfig offlineTableConfig = _offlineBuilder.setTableName(OFFLINE_TABLE_NAME).build();
     ObjectNode createTableJson = (ObjectNode) JsonUtils.stringToJsonNode(offlineTableConfig.toJsonString());
-    createTableJson.with("segmentsConfig").put("segmentPushType", "APPEND");
+    createTableJson.with("segmentsConfig").put("replicasPerPartition", "APPEND");
 
     IOException createException = expectThrows(IOException.class, () -> createTable(createTableJson.toString()));
     assertHasStatus(createException, 400);
-    assertTrue(createException.getMessage().contains("segmentsConfig.segmentPushType"));
+    assertTrue(createException.getMessage().contains("segmentsConfig.replicasPerPartition"));
 
     // Update that introduces a deprecated property that was not previously set is also rejected.
     String rawTableName = "deprecated_update_table";
@@ -373,11 +373,11 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     createTable(existingTableConfig.toJsonString());
 
     ObjectNode updateTableJson = (ObjectNode) JsonUtils.stringToJsonNode(existingTableConfig.toJsonString());
-    updateTableJson.with("segmentsConfig").put("segmentPushType", "APPEND");
+    updateTableJson.with("segmentsConfig").put("replicasPerPartition", "APPEND");
     IOException updateException = expectThrows(IOException.class,
         () -> updateTable(existingTableConfig.getTableName(), updateTableJson.toString()));
     assertHasStatus(updateException, 400);
-    assertTrue(updateException.getMessage().contains("segmentsConfig.segmentPushType"));
+    assertTrue(updateException.getMessage().contains("segmentsConfig.replicasPerPartition"));
   }
 
   @Test
@@ -389,7 +389,7 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     DEFAULT_INSTANCE.addDummySchema(rawTableName);
     TableConfig tableConfig = getOfflineTableBuilder(rawTableName).build();
     ObjectNode updateTableJson = (ObjectNode) JsonUtils.stringToJsonNode(tableConfig.toJsonString());
-    updateTableJson.with("segmentsConfig").put("segmentPushType", "APPEND");
+    updateTableJson.with("segmentsConfig").put("replicasPerPartition", "APPEND");
     IOException e = expectThrows(IOException.class,
         () -> updateTable(tableConfig.getTableName(), updateTableJson.toString()));
     String message = e.getMessage() != null ? e.getMessage() : "";
@@ -416,7 +416,7 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     // Inject a deprecated value directly into ZK to mimic a pre-existing legacy config.
     String tableNameWithType = TableNameBuilder.OFFLINE.tableNameWithType(rawTableName);
     TableConfig stored = DEFAULT_INSTANCE.getHelixResourceManager().getTableConfig(tableNameWithType);
-    stored.getValidationConfig().setSegmentPushType("APPEND");
+    stored.getValidationConfig().setReplicasPerPartition("3");
     DEFAULT_INSTANCE.getHelixResourceManager().setExistingTableConfig(stored);
 
     // Re-submit the same legacy value. The diff against the stored config means this is treated as unchanged and

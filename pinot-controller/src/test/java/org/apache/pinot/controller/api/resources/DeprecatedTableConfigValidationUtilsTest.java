@@ -41,14 +41,14 @@ public class DeprecatedTableConfigValidationUtilsTest {
       throws Exception {
     // Each of these deprecations is older than the current major.minor, so they should all be reported as errors.
     JsonNode tableConfigJson = JsonUtils.stringToJsonNode("{"
-        + "\"segmentsConfig\":{\"segmentPushType\":\"APPEND\",\"minimizeDataMovement\":false},"
+        + "\"segmentsConfig\":{\"replicasPerPartition\":\"APPEND\",\"minimizeDataMovement\":false},"
         + "\"fieldConfigList\":[{\"name\":\"c1\",\"indexType\":\"INVERTED\"}],"
         + "\"instanceAssignmentConfigMap\":{\"CONSUMING\":{\"replicaGroupPartitionConfig\":"
         + "{\"minimizeDataMovement\":false}}}}");
 
     IllegalArgumentException e = expectThrows(IllegalArgumentException.class,
         () -> DeprecatedTableConfigValidationUtils.validateOnCreate(tableConfigJson, "realtime"));
-    assertTrue(e.getMessage().contains("realtime.segmentsConfig.segmentPushType"), e.getMessage());
+    assertTrue(e.getMessage().contains("realtime.segmentsConfig.replicasPerPartition"), e.getMessage());
     assertTrue(e.getMessage().contains("realtime.segmentsConfig.minimizeDataMovement"), e.getMessage());
     assertTrue(e.getMessage().contains("realtime.fieldConfigList[0].indexType"), e.getMessage());
     assertTrue(e.getMessage().contains(
@@ -86,10 +86,10 @@ public class DeprecatedTableConfigValidationUtilsTest {
   @Test
   public void testUpdateAllowsUnchangedLegacyDeprecatedValue()
       throws Exception {
-    // Legacy config is already stored with segmentPushType=APPEND. Re-submitting the same value must NOT trigger
+    // Legacy config is already stored with replicasPerPartition=APPEND. Re-submitting the same value must NOT trigger
     // an error: the diff sees the value as unchanged.
-    JsonNode oldJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"segmentPushType\":\"APPEND\"}}");
-    JsonNode newJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"segmentPushType\":\"APPEND\"}}");
+    JsonNode oldJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"replicasPerPartition\":\"APPEND\"}}");
+    JsonNode newJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"replicasPerPartition\":\"APPEND\"}}");
 
     Result result = DeprecatedTableConfigValidationUtils.validate(newJson, oldJson, null);
     assertFalse(result.hasErrors(), "errors=" + result.getErrors());
@@ -99,15 +99,16 @@ public class DeprecatedTableConfigValidationUtilsTest {
   @Test
   public void testUpdateRejectsValueChangeOnDeprecatedField()
       throws Exception {
-    // Legacy config had segmentPushType=APPEND. The update changes it to REFRESH — the diff treats this as a new
+    // Legacy config had replicasPerPartition=APPEND. The update changes it to REFRESH — the diff treats this as a new
     // write to a deprecated key and reports an error (because the annotation's since is older than the
     // running release line).
-    JsonNode oldJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"segmentPushType\":\"APPEND\"}}");
-    JsonNode newJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"segmentPushType\":\"REFRESH\"}}");
+    JsonNode oldJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"replicasPerPartition\":\"APPEND\"}}");
+    JsonNode newJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"replicasPerPartition\":\"REFRESH\"}}");
 
     Result result = DeprecatedTableConfigValidationUtils.validate(newJson, oldJson, null);
     assertTrue(result.hasErrors(), "expected error on changed deprecated value");
-    assertTrue(result.getErrors().get(0).contains("segmentsConfig.segmentPushType"), result.getErrors().toString());
+    assertTrue(result.getErrors().get(0).contains("segmentsConfig.replicasPerPartition"),
+        result.getErrors().toString());
   }
 
   @Test
@@ -158,16 +159,17 @@ public class DeprecatedTableConfigValidationUtilsTest {
   public void testUpdateRejectsEmptyStringValueForNullDefaultField()
       throws Exception {
     // String-returning deprecated getters initialise to null (the Java default), not "". A user submitting
-    // "segmentPushType":"" on update — when the stored config lacks the key — is supplying a real value that
+    // "replicasPerPartition":"" on update — when the stored config lacks the key — is supplying a real value that
     // Jackson would NOT elide under NON_DEFAULT, and must be flagged. Locks the textual branch of
     // isJacksonDefault returning false (rather than treating empty string as default).
     JsonNode oldJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"replication\":\"1\"}}");
     JsonNode newJson = JsonUtils.stringToJsonNode(
-        "{\"segmentsConfig\":{\"replication\":\"1\",\"segmentPushType\":\"\"}}");
+        "{\"segmentsConfig\":{\"replication\":\"1\",\"replicasPerPartition\":\"\"}}");
 
     Result result = DeprecatedTableConfigValidationUtils.validate(newJson, oldJson, null);
     assertTrue(result.hasErrors(), "expected error on empty-string value for deprecated path");
-    assertTrue(result.getErrors().get(0).contains("segmentsConfig.segmentPushType"), result.getErrors().toString());
+    assertTrue(result.getErrors().get(0).contains("segmentsConfig.replicasPerPartition"),
+        result.getErrors().toString());
   }
 
   @Test
@@ -176,11 +178,11 @@ public class DeprecatedTableConfigValidationUtilsTest {
     // Legacy config did not contain the deprecated field. Adding it on update fires the same error as on create.
     JsonNode oldJson = JsonUtils.stringToJsonNode("{\"segmentsConfig\":{\"replication\":\"1\"}}");
     JsonNode newJson = JsonUtils.stringToJsonNode(
-        "{\"segmentsConfig\":{\"replication\":\"1\",\"segmentPushType\":\"APPEND\"}}");
+        "{\"segmentsConfig\":{\"replication\":\"1\",\"replicasPerPartition\":\"APPEND\"}}");
 
     Result result = DeprecatedTableConfigValidationUtils.validate(newJson, oldJson, null);
     assertTrue(result.hasErrors());
-    assertTrue(result.getErrors().get(0).contains("segmentsConfig.segmentPushType"));
+    assertTrue(result.getErrors().get(0).contains("segmentsConfig.replicasPerPartition"));
   }
 
   @Test
