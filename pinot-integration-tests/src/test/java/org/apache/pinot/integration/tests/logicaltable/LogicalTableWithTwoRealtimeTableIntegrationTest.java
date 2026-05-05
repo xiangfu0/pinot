@@ -175,6 +175,8 @@ public class LogicalTableWithTwoRealtimeTableIntegrationTest extends BaseLogical
     Map<String, String> streamConfigs = new HashMap<>(IngestionConfigUtils.getFirstStreamConfigMap(tableConfig));
     streamConfigs.put("stream.kafka.partition.ids", String.valueOf(partitionId));
 
+    tableConfig.getIndexingConfig().setStreamConfigs(null);
+
     IngestionConfig ingestionConfig = new IngestionConfig();
     ingestionConfig.setStreamIngestionConfig(new StreamIngestionConfig(List.of(streamConfigs)));
     tableConfig.setIngestionConfig(ingestionConfig);
