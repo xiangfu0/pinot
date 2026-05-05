@@ -816,8 +816,17 @@ public class PinotTableRestletResource {
       throw new ControllerApplicationException(LOGGER, msg, Response.Status.BAD_REQUEST, e);
     }
 
+    // Existence check runs before the deprecation diff so a PUT to a missing table reports 404 rather than a
+    // misleading 400 about deprecated keys.
+    if (!_pinotHelixResourceManager.hasTable(tableNameWithType)) {
+      throw new ControllerApplicationException(LOGGER, "Table " + tableNameWithType + " does not exist",
+          Response.Status.NOT_FOUND);
+    }
+
     // Deprecation diff is computed against the byte-faithful stored ZNRecord. Runs outside the BAD_REQUEST catch
     // so ZK transient failures propagate as 5xx rather than masquerading as client-side validation errors.
+    // Best-effort: read and write are not atomic, so a concurrent legal write between the read here and the write
+    // below can leave deprecated keys in the stored config without firing a deprecation error.
     try {
       JsonNode oldTableConfigJson = TableConfigSerDeUtils.toRawJsonNode(
           ZKMetadataProvider.getTableConfigZNRecord(_pinotHelixResourceManager.getPropertyStore(),
@@ -834,10 +843,6 @@ public class PinotTableRestletResource {
     }
 
     try {
-      if (!_pinotHelixResourceManager.hasTable(tableNameWithType)) {
-        throw new ControllerApplicationException(LOGGER, "Table " + tableNameWithType + " does not exist",
-            Response.Status.NOT_FOUND);
-      }
       _pinotHelixResourceManager.updateTableConfig(tableConfig, force);
     } catch (TableConfigBackwardIncompatibleException e) {
       String errStr = String.format("Failed to update configuration for %s due to: %s", tableName, e.getMessage());

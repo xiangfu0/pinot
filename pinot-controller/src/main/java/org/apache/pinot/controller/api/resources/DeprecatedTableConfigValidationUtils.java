@@ -135,8 +135,12 @@ public final class DeprecatedTableConfigValidationUtils {
   /// Validates an updated table config against its currently-stored counterpart. Only newly-introduced or
   /// value-changed deprecated paths are reported, so legacy values that were already present do not block updates.
   /// On any error the method throws [IllegalArgumentException]; warnings are returned for the caller to surface.
-  public static List<String> validateOnUpdate(JsonNode newTableConfigJson, @Nullable JsonNode oldTableConfigJson,
+  ///
+  /// Callers must ensure the table exists before invoking this method; pass the stored config JSON (never `null`)
+  /// for `oldTableConfigJson`. For paths where no stored counterpart exists, use [#validateOnCreate] instead.
+  public static List<String> validateOnUpdate(JsonNode newTableConfigJson, JsonNode oldTableConfigJson,
       @Nullable String rootPathPrefix) {
+    Objects.requireNonNull(oldTableConfigJson, "oldTableConfigJson; use validateOnCreate for create paths");
     Result result = validate(newTableConfigJson, oldTableConfigJson, rootPathPrefix);
     if (result.hasErrors()) {
       throw new IllegalArgumentException("Newly introduced deprecated table config properties are not allowed: "

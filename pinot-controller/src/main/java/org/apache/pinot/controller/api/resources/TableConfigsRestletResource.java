@@ -397,6 +397,16 @@ public class TableConfigsRestletResource {
     Pair<TableConfigs, Map<String, Object>> tableConfigsAndUnrecognizedProps;
     TableConfigs tableConfigs;
     List<String> deprecationWarnings;
+
+    // Existence check runs before deprecation validation so a PUT to a missing TableConfigs reports the actual
+    // problem (table does not exist) instead of a misleading "deprecated property" 400 from create-mode fallback.
+    if (!_pinotHelixResourceManager.hasOfflineTable(tableName) && !_pinotHelixResourceManager.hasRealtimeTable(
+        tableName)) {
+      throw new ControllerApplicationException(LOGGER,
+          String.format("TableConfigs: %s does not exist. Use POST to create it first.", tableName),
+          Response.Status.BAD_REQUEST);
+    }
+
     try {
       tableConfigsAndUnrecognizedProps =
           JsonUtils.stringToObjectAndUnrecognizedProperties(tableConfigsStr, TableConfigs.class);
@@ -419,13 +429,6 @@ public class TableConfigsRestletResource {
       _controllerMetrics.addMeteredGlobalValue(ControllerMeter.CONTROLLER_TABLE_UPDATE_ERROR, 1L);
       LOGGER.warn("Failed to validate TableConfigs for update of table: {}", tableName, e);
       throw e;
-    }
-
-    if (!_pinotHelixResourceManager.hasOfflineTable(tableName) && !_pinotHelixResourceManager.hasRealtimeTable(
-        tableName)) {
-      throw new ControllerApplicationException(LOGGER,
-          String.format("TableConfigs: %s does not exist. Use POST to create it first.", tableName),
-          Response.Status.BAD_REQUEST);
     }
 
     TableConfig offlineTableConfig = tableConfigs.getOffline();
