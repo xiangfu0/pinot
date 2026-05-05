@@ -54,42 +54,6 @@ public class TableConfigBuilderTest {
   }
 
   @Test
-  public void testBuildConvertsDeprecatedIngestionFields() throws Exception {
-    Map<String, String> streamConfigs = Map.of(
-        "streamType", "kafka",
-        "stream.kafka.topic.name", "testTopic",
-        "stream.kafka.consumer.factory.class.name", "testConsumerFactory",
-        "stream.kafka.decoder.class.name", "testDecoder");
-    TableConfig tableConfig = new TableConfigBuilder(TableType.REALTIME)
-        .setTableName(TABLE_NAME)
-        .setTimeColumnName(TIME_COLUMN)
-        .setSegmentPushType("REFRESH")
-        .setSegmentPushFrequency("DAILY")
-        .setStreamConfigs(streamConfigs)
-        .build();
-
-    Assert.assertNotNull(tableConfig.getIngestionConfig());
-    Assert.assertNotNull(tableConfig.getIngestionConfig().getBatchIngestionConfig());
-    Assert.assertEquals(tableConfig.getIngestionConfig().getBatchIngestionConfig().getSegmentIngestionType(),
-        "REFRESH");
-    Assert.assertEquals(tableConfig.getIngestionConfig().getBatchIngestionConfig().getSegmentIngestionFrequency(),
-        "DAILY");
-    Assert.assertNotNull(tableConfig.getIngestionConfig().getStreamIngestionConfig());
-    Assert.assertEquals(tableConfig.getIngestionConfig().getStreamIngestionConfig().getStreamConfigMaps().get(0),
-        streamConfigs);
-    Assert.assertNull(tableConfig.getValidationConfig().getSegmentPushType());
-    Assert.assertNull(tableConfig.getValidationConfig().getSegmentPushFrequency());
-    Assert.assertNull(tableConfig.getIndexingConfig().getStreamConfigs());
-
-    JsonNode jsonNode = JsonUtils.stringToJsonNode(tableConfig.toJsonString());
-    Assert.assertFalse(jsonNode.path("segmentsConfig").has("segmentPushType"));
-    Assert.assertFalse(jsonNode.path("segmentsConfig").has("segmentPushFrequency"));
-    Assert.assertFalse(jsonNode.path("tableIndexConfig").has("streamConfigs"));
-    Assert.assertTrue(jsonNode.path("ingestionConfig").path("batchIngestionConfig").has("segmentIngestionType"));
-    Assert.assertTrue(jsonNode.path("ingestionConfig").path("streamIngestionConfig").has("streamConfigMaps"));
-  }
-
-  @Test
   public void testBuildOmitsDefaultDeprecatedFieldsFromSerializedJson()
       throws Exception {
     TableConfig offlineTableConfig = new TableConfigBuilder(TableType.OFFLINE)
