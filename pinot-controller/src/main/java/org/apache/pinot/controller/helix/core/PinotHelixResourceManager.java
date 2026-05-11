@@ -159,8 +159,13 @@ import org.apache.pinot.controller.helix.core.realtime.PinotLLCRealtimeSegmentMa
 import org.apache.pinot.controller.helix.core.util.ControllerZkHelixUtils;
 import org.apache.pinot.controller.helix.core.util.MessagingServiceUtils;
 import org.apache.pinot.controller.workload.QueryWorkloadManager;
+import org.apache.pinot.core.common.MinionConstants;
 import org.apache.pinot.core.util.NumberUtils;
 import org.apache.pinot.core.util.NumericException;
+import org.apache.pinot.materializedview.consistency.MaterializedViewConsistencyManager;
+import org.apache.pinot.materializedview.metadata.MaterializedViewDefinitionMetadata;
+import org.apache.pinot.materializedview.metadata.MaterializedViewDefinitionMetadataUtils;
+import org.apache.pinot.materializedview.metadata.MaterializedViewRuntimeMetadataUtils;
 import org.apache.pinot.segment.local.utils.TableConfigUtils;
 import org.apache.pinot.segment.spi.SegmentMetadata;
 import org.apache.pinot.spi.config.DatabaseConfig;
@@ -168,6 +173,7 @@ import org.apache.pinot.spi.config.instance.Instance;
 import org.apache.pinot.spi.config.instance.InstanceConfigValidatorRegistry;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableStatsHumanReadable;
+import org.apache.pinot.spi.config.table.TableTaskConfig;
 import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.config.table.TagOverrideConfig;
 import org.apache.pinot.spi.config.table.TenantConfig;
@@ -198,6 +204,7 @@ import org.apache.pinot.spi.utils.TimeUtils;
 import org.apache.pinot.spi.utils.builder.TableNameBuilder;
 import org.apache.pinot.spi.utils.retry.RetryPolicies;
 import org.apache.pinot.spi.utils.retry.RetryPolicy;
+import org.apache.pinot.sql.parsers.CalciteSqlParser;
 import org.apache.zookeeper.data.Stat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -256,6 +263,7 @@ public class PinotHelixResourceManager {
   // renames. The resulting extra session is consistent with the controller's existing footprint
   // (_propertyStore cache client, _leadControllerManager manager client are each distinct).
   private volatile ZkClient _zkClient;
+  private volatile MaterializedViewConsistencyManager _materializedViewConsistencyManager;
 
   public PinotHelixResourceManager(String helixClusterName, @Nullable String dataDir,
       boolean isSingleTenantCluster, boolean enableBatchMessageMode, int deletedSegmentsRetentionInDays,
@@ -1967,6 +1975,7 @@ public class PinotHelixResourceManager {
       return is;
     });
     _queryWorkloadManager.propagateWorkloadFor(tableNameWithType);
+    notifyMaterializedViewConsistencyManagerForTableCreate(tableConfig);
     LOGGER.info("Adding table {}: Successfully added table", tableNameWithType);
   }
 
@@ -2204,6 +2213,11 @@ public class PinotHelixResourceManager {
 
   public void registerPinotLLCRealtimeSegmentManager(PinotLLCRealtimeSegmentManager pinotLLCRealtimeSegmentManager) {
     _pinotLLCRealtimeSegmentManager = pinotLLCRealtimeSegmentManager;
+  }
+
+  public void registerMaterializedViewConsistencyManager(
+      MaterializedViewConsistencyManager materializedViewConsistencyManager) {
+    _materializedViewConsistencyManager = materializedViewConsistencyManager;
   }
 
   private void assignInstances(TableConfig tableConfig, boolean override) {
@@ -2560,6 +2574,23 @@ public class PinotHelixResourceManager {
     MinionTaskMetadataUtils.deleteTaskMetadata(_propertyStore, tableNameWithType);
     LOGGER.info("Deleting table {}: Removed all minion task metadata", tableNameWithType);
 
+    // Remove materialized view metadata (if any) and unregister from consistency manager
+    notifyMaterializedViewConsistencyManagerForTableDrop(tableNameWithType);
+    try {
+      MaterializedViewDefinitionMetadataUtils.delete(_propertyStore, tableNameWithType);
+      LOGGER.info("Deleting table {}: Removed MV definition metadata", tableNameWithType);
+    } catch (Exception e) {
+      LOGGER.debug("Deleting table {}: No MV definition metadata to remove or removal failed",
+          tableNameWithType, e);
+    }
+    try {
+      MaterializedViewRuntimeMetadataUtils.delete(_propertyStore, tableNameWithType);
+      LOGGER.info("Deleting table {}: Removed MV runtime metadata", tableNameWithType);
+    } catch (Exception e) {
+      LOGGER.debug("Deleting table {}: No MV runtime metadata to remove or removal failed",
+          tableNameWithType, e);
+    }
+
     // Remove table config
     // NOTE: This should always be the last step for deletion to avoid race condition in table re-create
     ZKMetadataProvider.removeResourceConfigFromPropertyStore(_propertyStore, tableNameWithType);
@@ -2832,6 +2863,9 @@ public class PinotHelixResourceManager {
     LOGGER.info("Added segment: {} of table: {} to property store", segmentName, tableNameWithType);
 
     assignSegment(tableConfig, segmentZKMetadata);
+
+    notifyMaterializedViewConsistencyManager(tableNameWithType, segmentZKMetadata.getStartTimeMs(),
+        segmentZKMetadata.getEndTimeMs());
   }
 
   public boolean needTieredSegmentAssignment(TableConfig tableConfig) {
@@ -4618,6 +4652,8 @@ public class PinotHelixResourceManager {
     LOGGER.info("endReplaceSegments is successfully processed in {} ms on attempt: {}. (tableNameWithType = {}, "
             + "segmentLineageEntryId = {})", System.currentTimeMillis() - endReplaceSegmentsTs, attemptCount + 1,
         tableNameWithType, segmentLineageEntryId);
+
+    notifyMaterializedViewConsistencyManagerForReplace(tableNameWithType, segmentLineageEntryId);
   }
 
   /**
@@ -5206,4 +5242,132 @@ public class PinotHelixResourceManager {
     System.out.println(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(record));
   }
    */
+
+  // ── MV Consistency Manager helpers ──
+
+  private void notifyMaterializedViewConsistencyManagerForTableCreate(TableConfig tableConfig) {
+    MaterializedViewConsistencyManager mgr = _materializedViewConsistencyManager;
+    if (mgr == null) {
+      return;
+    }
+    try {
+      TableTaskConfig taskConfig = tableConfig.getTaskConfig();
+      if (taskConfig == null) {
+        return;
+      }
+      Map<String, String> materializedViewTaskConfigs =
+          taskConfig.getConfigsForTaskType(MinionConstants.MaterializedViewTask.TASK_TYPE);
+      if (materializedViewTaskConfigs == null) {
+        return;
+      }
+      String definedSQL = materializedViewTaskConfigs.get(MinionConstants.MaterializedViewTask.DEFINED_SQL_KEY);
+      if (definedSQL == null || definedSQL.isEmpty()) {
+        return;
+      }
+      String sourceTable = CalciteSqlParser.compileToPinotQuery(definedSQL).getDataSource().getTableName();
+      mgr.onMaterializedViewTableCreated(tableConfig.getTableName(), Collections.singletonList(sourceTable));
+    } catch (Exception e) {
+      LOGGER.warn("Failed to register MV table {} with consistency manager", tableConfig.getTableName(), e);
+    }
+  }
+
+  private void notifyMaterializedViewConsistencyManagerForTableDrop(String tableNameWithType) {
+    MaterializedViewConsistencyManager mgr = _materializedViewConsistencyManager;
+    if (mgr == null) {
+      return;
+    }
+    try {
+      MaterializedViewDefinitionMetadata materializedViewDefinition =
+          MaterializedViewDefinitionMetadataUtils.fetch(_propertyStore, tableNameWithType);
+      if (materializedViewDefinition != null && materializedViewDefinition.getBaseTables() != null
+          && !materializedViewDefinition.getBaseTables().isEmpty()) {
+        mgr.onMaterializedViewTableDropped(tableNameWithType, materializedViewDefinition.getBaseTables());
+        return;
+      }
+      // Fall back to reading source table from table task config
+      TableConfig tableConfig = ZKMetadataProvider.getTableConfig(_propertyStore, tableNameWithType);
+      if (tableConfig == null) {
+        return;
+      }
+      TableTaskConfig taskConfig = tableConfig.getTaskConfig();
+      if (taskConfig == null) {
+        return;
+      }
+      Map<String, String> materializedViewTaskConfigs =
+          taskConfig.getConfigsForTaskType(MinionConstants.MaterializedViewTask.TASK_TYPE);
+      if (materializedViewTaskConfigs == null) {
+        return;
+      }
+      String definedSQL = materializedViewTaskConfigs.get(MinionConstants.MaterializedViewTask.DEFINED_SQL_KEY);
+      if (definedSQL == null || definedSQL.isEmpty()) {
+        return;
+      }
+      String sourceTable = CalciteSqlParser.compileToPinotQuery(definedSQL).getDataSource().getTableName();
+      mgr.onMaterializedViewTableDropped(tableNameWithType, Collections.singletonList(sourceTable));
+    } catch (Exception e) {
+      LOGGER.warn("Failed to unregister MV table {} from consistency manager", tableNameWithType, e);
+    }
+  }
+
+  private void notifyMaterializedViewConsistencyManager(String tableNameWithType, long startTimeMs, long endTimeMs) {
+    MaterializedViewConsistencyManager mgr = _materializedViewConsistencyManager;
+    if (mgr == null) {
+      return;
+    }
+    String rawTableName = TableNameBuilder.extractRawTableName(tableNameWithType);
+    if (startTimeMs < 0 || endTimeMs < 0) {
+      // Consuming/realtime segments and segments built from records with null timestamps
+      // can carry -1 startTime/endTime in their ZK metadata. Skipping the notification would
+      // leave any MV defined on top of this base table with stale VALID partitions; we instead
+      // signal a full-range invalidation so the consistency manager marks every affected
+      // partition STALE. The BUCKET_MISSING_MARK_CAP throttle bounds the blast radius for
+      // long-history MVs.
+      LOGGER.warn("Base table {} segment update reports startTimeMs={}, endTimeMs={}; treating "
+              + "as full-range MV invalidation.", tableNameWithType, startTimeMs, endTimeMs);
+      mgr.onBaseTableDataChange(rawTableName, 0L, Long.MAX_VALUE);
+      return;
+    }
+    mgr.onBaseTableDataChange(rawTableName, startTimeMs, endTimeMs);
+  }
+
+  private void notifyMaterializedViewConsistencyManagerForReplace(String tableNameWithType,
+      String segmentLineageEntryId) {
+    MaterializedViewConsistencyManager mgr = _materializedViewConsistencyManager;
+    if (mgr == null) {
+      return;
+    }
+    try {
+      SegmentLineage lineage = SegmentLineageAccessHelper.getSegmentLineage(_propertyStore, tableNameWithType);
+      if (lineage == null) {
+        return;
+      }
+      LineageEntry entry = lineage.getLineageEntry(segmentLineageEntryId);
+      if (entry == null) {
+        return;
+      }
+      long minStart = Long.MAX_VALUE;
+      long maxEnd = Long.MIN_VALUE;
+      for (String segName : entry.getSegmentsFrom()) {
+        SegmentZKMetadata meta = getSegmentZKMetadata(tableNameWithType, segName);
+        if (meta != null) {
+          minStart = Math.min(minStart, meta.getStartTimeMs());
+          maxEnd = Math.max(maxEnd, meta.getEndTimeMs());
+        }
+      }
+      for (String segName : entry.getSegmentsTo()) {
+        SegmentZKMetadata meta = getSegmentZKMetadata(tableNameWithType, segName);
+        if (meta != null) {
+          minStart = Math.min(minStart, meta.getStartTimeMs());
+          maxEnd = Math.max(maxEnd, meta.getEndTimeMs());
+        }
+      }
+      if (minStart != Long.MAX_VALUE && maxEnd != Long.MIN_VALUE) {
+        String rawTableName = TableNameBuilder.extractRawTableName(tableNameWithType);
+        mgr.onBaseTableDataChange(rawTableName, minStart, maxEnd);
+      }
+    } catch (Exception e) {
+      LOGGER.warn("Failed to notify MV consistency manager for segment replace on table: {}",
+          tableNameWithType, e);
+    }
+  }
 }

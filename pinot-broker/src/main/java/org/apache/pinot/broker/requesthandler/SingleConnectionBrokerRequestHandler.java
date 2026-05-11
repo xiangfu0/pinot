@@ -20,9 +20,11 @@ package org.apache.pinot.broker.requesthandler;
 
 import com.google.common.collect.Maps;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import org.apache.pinot.broker.broker.AccessControlFactory;
 import org.apache.pinot.broker.queryquota.QueryQuotaManager;
@@ -48,6 +50,7 @@ import org.apache.pinot.core.transport.ServerInstance;
 import org.apache.pinot.core.transport.ServerResponse;
 import org.apache.pinot.core.transport.ServerRoutingInstance;
 import org.apache.pinot.core.transport.server.routing.stats.ServerRoutingStatsManager;
+import org.apache.pinot.materializedview.handler.MaterializedViewHandler;
 import org.apache.pinot.spi.accounting.ThreadAccountant;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.exception.QueryErrorCode;
@@ -75,9 +78,10 @@ public class SingleConnectionBrokerRequestHandler extends BaseSingleStageBrokerR
       AccessControlFactory accessControlFactory, QueryQuotaManager queryQuotaManager, TableCache tableCache,
       NettyConfig nettyConfig, TlsConfig tlsConfig, ServerRoutingStatsManager serverRoutingStatsManager,
       FailureDetector failureDetector, ThreadAccountant threadAccountant,
-      MultiClusterRoutingContext multiClusterRoutingContext) {
+      MultiClusterRoutingContext multiClusterRoutingContext,
+      @Nullable MaterializedViewHandler materializedViewHandler) {
     super(config, brokerId, requestIdGenerator, routingManager, accessControlFactory, queryQuotaManager, tableCache,
-        threadAccountant, multiClusterRoutingContext);
+        threadAccountant, multiClusterRoutingContext, materializedViewHandler);
     _brokerReduceService = new BrokerReduceService(_config);
     _queryRouter = new QueryRouter(_brokerId, nettyConfig, tlsConfig, serverRoutingStatsManager, threadAccountant);
     _failureDetector = failureDetector;
@@ -194,6 +198,120 @@ public class SingleConnectionBrokerRequestHandler extends BaseSingleStageBrokerR
     }
     _brokerMetrics.addMeteredTableValue(rawTableName, BrokerMeter.TOTAL_SERVER_RESPONSE_SIZE,
         scatterResult.getTotalResponseSize());
+
+    return brokerResponse;
+  }
+
+  @Override
+  protected BrokerResponseNative processMaterializedViewSplitBrokerRequest(long requestId,
+      long materializedViewRequestId, BrokerRequest originalBrokerRequest, TableRouteInfo baseRoute,
+      TableRouteInfo materializedViewRoute, long timeoutMs, ServerStats serverStats, RequestContext requestContext)
+      throws Exception {
+    String rawTableName =
+        TableNameBuilder.extractRawTableName(originalBrokerRequest.getQuerySource().getTableName());
+
+    long scatterGatherStartTimeNs = System.nanoTime();
+
+    // Submit base-table and materialized view queries in parallel through the QueryRouter.
+    // Each route may fan out to multiple servers (especially if the base table is hybrid).
+    // The MV sub-query uses its own request id so it cannot collide with the base sub-query on
+    // servers that receive both requests.
+    AsyncQueryResponse baseAsyncResponse =
+        _queryRouter.submitQuery(requestId, rawTableName, baseRoute, timeoutMs);
+    AsyncQueryResponse materializedViewAsyncResponse =
+        _queryRouter.submitQuery(materializedViewRequestId, rawTableName, materializedViewRoute, timeoutMs);
+
+    // Collect responses from both queries
+    Map<ServerRoutingInstance, ServerResponse> baseFinalResponses = baseAsyncResponse.getFinalResponses();
+    Map<ServerRoutingInstance, ServerResponse> viewFinalResponses = materializedViewAsyncResponse.getFinalResponses();
+
+    if (baseAsyncResponse.getStatus() == QueryResponse.Status.TIMED_OUT
+        || materializedViewAsyncResponse.getStatus() == QueryResponse.Status.TIMED_OUT) {
+      _brokerMetrics.addMeteredTableValue(rawTableName, BrokerMeter.BROKER_RESPONSES_WITH_TIMEOUTS, 1);
+    }
+
+    // Mark failed servers as unhealthy
+    ServerRoutingInstance baseFailedServer = baseAsyncResponse.getFailedServer();
+    if (baseFailedServer != null) {
+      _failureDetector.markServerUnhealthy(baseFailedServer.getInstanceId(), baseFailedServer.getHostname());
+    }
+    ServerRoutingInstance viewFailedServer = materializedViewAsyncResponse.getFailedServer();
+    if (viewFailedServer != null) {
+      _failureDetector.markServerUnhealthy(viewFailedServer.getInstanceId(), viewFailedServer.getHostname());
+    }
+
+    _brokerMetrics.addPhaseTiming(rawTableName, BrokerQueryPhase.SCATTER_GATHER,
+        System.nanoTime() - scatterGatherStartTimeNs);
+
+    // Merge DataTables from both base and MV responses into a single map using identity
+    // equality so that ServerRoutingInstance objects from different sub-queries never collide.
+    // ServerRoutingInstance.equals() keyed on (hostname, port, tableType) can produce the
+    // same hash for base and MV rows on a shared server, causing silent overwrites with a
+    // regular HashMap.
+    int totalServersQueried = baseFinalResponses.size() + viewFinalResponses.size();
+    long totalResponseSize = 0;
+    Map<ServerRoutingInstance, DataTable> dataTableMap = new IdentityHashMap<>(totalServersQueried);
+    List<ServerRoutingInstance> serversNotResponded = new ArrayList<>();
+
+    for (Map.Entry<ServerRoutingInstance, ServerResponse> entry : baseFinalResponses.entrySet()) {
+      ServerResponse serverResponse = entry.getValue();
+      DataTable dataTable = serverResponse.getDataTable();
+      if (dataTable != null) {
+        dataTableMap.put(entry.getKey(), dataTable);
+        totalResponseSize += serverResponse.getResponseSize();
+      } else {
+        serversNotResponded.add(entry.getKey());
+      }
+    }
+    for (Map.Entry<ServerRoutingInstance, ServerResponse> entry : viewFinalResponses.entrySet()) {
+      ServerResponse serverResponse = entry.getValue();
+      DataTable dataTable = serverResponse.getDataTable();
+      if (dataTable != null) {
+        dataTableMap.put(entry.getKey(), dataTable);
+        totalResponseSize += serverResponse.getResponseSize();
+      } else {
+        serversNotResponded.add(entry.getKey());
+      }
+    }
+    int numServersResponded = dataTableMap.size();
+
+    // Reduce using the original user query so that the correct reducer (selection, aggregation,
+    // group-by) is selected and intermediate results are merged properly.
+    long reduceStartTimeNs = System.nanoTime();
+    long reduceTimeoutMs = timeoutMs - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - scatterGatherStartTimeNs);
+    BrokerResponseNative brokerResponse =
+        _brokerReduceService.reduceOnDataTable(originalBrokerRequest, originalBrokerRequest, dataTableMap,
+            reduceTimeoutMs, _brokerMetrics);
+    long reduceTimeNanos = System.nanoTime() - reduceStartTimeNs;
+    _brokerMetrics.addPhaseTiming(rawTableName, BrokerQueryPhase.REDUCE, reduceTimeNanos);
+
+    brokerResponse.setNumServersQueried(totalServersQueried);
+    brokerResponse.setNumServersResponded(numServersResponded);
+    brokerResponse.setBrokerReduceTimeMs(TimeUnit.NANOSECONDS.toMillis(reduceTimeNanos));
+
+    // Propagate send exceptions from both queries
+    Exception baseSendException = baseAsyncResponse.getException();
+    if (baseSendException != null) {
+      brokerResponse.addException(
+          new QueryProcessingException(QueryErrorCode.BROKER_REQUEST_SEND, baseSendException.getMessage()));
+    }
+    Exception materializedViewSendException = materializedViewAsyncResponse.getException();
+    if (materializedViewSendException != null) {
+      brokerResponse.addException(
+          new QueryProcessingException(QueryErrorCode.BROKER_REQUEST_SEND, materializedViewSendException.getMessage()));
+    }
+
+    int numServersNotResponded = serversNotResponded.size();
+    if (numServersNotResponded != 0) {
+      brokerResponse.addException(new QueryProcessingException(QueryErrorCode.SERVER_NOT_RESPONDING,
+          String.format("%d servers %s not responded", numServersNotResponded, serversNotResponded)));
+      _brokerMetrics.addMeteredTableValue(rawTableName,
+          BrokerMeter.BROKER_RESPONSES_WITH_PARTIAL_SERVERS_RESPONDED, 1);
+    }
+    if (brokerResponse.getExceptionsSize() > 0) {
+      _brokerMetrics.addMeteredTableValue(rawTableName, BrokerMeter.BROKER_RESPONSES_WITH_PROCESSING_EXCEPTIONS, 1);
+    }
+    _brokerMetrics.addMeteredTableValue(rawTableName, BrokerMeter.TOTAL_SERVER_RESPONSE_SIZE, totalResponseSize);
 
     return brokerResponse;
   }

@@ -188,19 +188,42 @@ public class BrokerReduceService extends BaseReduceService {
     if (brokerRequest == serverBrokerRequest) {
       queryContext = serverQueryContext;
     } else {
+      // brokerRequest and serverBrokerRequest differ when the query is either (a) a gapfill
+      // (parser wrapped the user's SELECT into an outer SELECT) or (b) an MV-rewritten query
+      // (broker rewrote serverBrokerRequest to target the MV table while the user's
+      // brokerRequest stays at the base table for result-shape derivations). Only (a) needs
+      // the gapfill post-processor; (b) just uses the user's queryContext directly. Any other
+      // mismatched (brokerRequest != serverBrokerRequest) caller is rejected to preserve the
+      // original BadQueryRequestException invariant ("Nested query is not supported without
+      // gapfill") that pre-dated MV rewrite.
       queryContext = QueryContextConverterUtils.getQueryContext(brokerRequest.getPinotQuery());
       GapfillUtils.GapfillType gapfillType = GapfillUtils.getGapfillType(queryContext);
-      if (gapfillType == null) {
+      if (gapfillType != null) {
+        BaseGapfillProcessor gapfillProcessor = GapfillProcessorFactory.getGapfillProcessor(queryContext, gapfillType);
+        gapfillProcessor.process(brokerResponseNative);
+      } else if (!isMaterializedViewRewrite(brokerRequest, serverBrokerRequest)) {
         throw new BadQueryRequestException("Nested query is not supported without gapfill");
       }
-      BaseGapfillProcessor gapfillProcessor = GapfillProcessorFactory.getGapfillProcessor(queryContext, gapfillType);
-      gapfillProcessor.process(brokerResponseNative);
     }
 
     if (!serverQueryContext.isExplain()) {
       updateAlias(queryContext, brokerResponseNative);
     }
     return brokerResponseNative;
+  }
+
+  /// MV rewrite signal: the broker swaps `serverBrokerRequest`'s table name to point at the
+  /// materialized view while keeping `brokerRequest`'s table name on the user-facing base table.
+  /// If both objects are different instances AND the table names differ, we're on the MV path.
+  private static boolean isMaterializedViewRewrite(BrokerRequest brokerRequest, BrokerRequest serverBrokerRequest) {
+    if (brokerRequest == serverBrokerRequest) {
+      return false;
+    }
+    String userTable = brokerRequest.getQuerySource() != null
+        ? brokerRequest.getQuerySource().getTableName() : null;
+    String serverTable = serverBrokerRequest.getQuerySource() != null
+        ? serverBrokerRequest.getQuerySource().getTableName() : null;
+    return userTable != null && !userTable.equals(serverTable);
   }
 
   public void shutDown() {

@@ -144,6 +144,7 @@ import org.apache.pinot.core.transport.ListenerConfig;
 import org.apache.pinot.core.transport.grpc.GrpcQueryServer;
 import org.apache.pinot.core.util.ListenerConfigUtil;
 import org.apache.pinot.core.util.trace.ContinuousJfrStarter;
+import org.apache.pinot.materializedview.consistency.MaterializedViewConsistencyManager;
 import org.apache.pinot.segment.local.utils.TableConfigUtils;
 import org.apache.pinot.segment.spi.partition.PartitionFunctionFactory;
 import org.apache.pinot.spi.config.instance.InstanceConfigValidatorRegistry;
@@ -239,6 +240,7 @@ public abstract class BaseControllerStarter implements ServiceStartable {
   protected RebalancePreChecker _rebalancePreChecker;
   protected TableRebalanceManager _tableRebalanceManager;
   protected DefaultClusterConfigChangeHandler _clusterConfigChangeHandler;
+  protected MaterializedViewConsistencyManager _materializedViewConsistencyManager;
 
   @Override
   public void init(PinotConfiguration pinotConfiguration)
@@ -605,7 +607,21 @@ public abstract class BaseControllerStarter implements ServiceStartable {
     LOGGER.info("Starting Pinot Helix resource manager and connecting to Zookeeper");
     _helixResourceManager.start(_helixParticipantManager, _controllerMetrics);
 
-    // Initialize segment lifecycle event listeners
+    // Register MV consistency manager BEFORE any other lifecycle listener initialization.
+    // PinotHelixResourceManager.notifyMaterializedView* methods are entered as soon as
+    // _helixResourceManager.start() returns (segment add/delete/replace handlers no-op if
+    // the manager is null), so we want this to be the very first thing wired up so any
+    // segment events arriving immediately after Helix participant becomes online will
+    // correctly trigger STALE marking.
+    LOGGER.info("Initializing MaterializedView consistency manager");
+    _materializedViewConsistencyManager = new MaterializedViewConsistencyManager();
+    _materializedViewConsistencyManager.init(_helixResourceManager.getPropertyStore());
+    _helixResourceManager.registerMaterializedViewConsistencyManager(_materializedViewConsistencyManager);
+    _helixResourceManager.getSegmentDeletionManager()
+        .registerMaterializedViewConsistencyManager(_materializedViewConsistencyManager);
+
+    // Initialize segment lifecycle event listeners (registered after MV manager so any
+    // listener that fires immediately on registration sees a fully-wired notify path).
     PinotSegmentLifecycleEventListenerManager.getInstance().init(_helixParticipantManager);
 
     LOGGER.info("Starting task resource manager");
@@ -1152,6 +1168,11 @@ public abstract class BaseControllerStarter implements ServiceStartable {
 
       LOGGER.info("Stopping Jersey admin API");
       _adminApp.stop();
+
+      if (_materializedViewConsistencyManager != null) {
+        LOGGER.info("Stopping MV consistency manager");
+        _materializedViewConsistencyManager.stop();
+      }
 
       LOGGER.info("Stopping resource manager");
       _helixResourceManager.stop();

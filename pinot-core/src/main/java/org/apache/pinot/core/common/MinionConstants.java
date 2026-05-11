@@ -347,4 +347,76 @@ public class MinionConstants {
 
     public static final String MAX_ZK_CREATION_TIME_MILLIS_KEY = "maxZKCreationTimeMillis";
   }
+
+  /// Materializes pre-aggregated data into an OFFLINE table based on a user-defined SQL query.
+  /// The generator computes a time window and appends it to the SQL; the executor queries the
+  /// base table via the broker, builds segments from the results, and uploads them to the MV table.
+  ///
+  /// Supports three task modes: `APPEND` (new time windows), `OVERWRITE`
+  /// (re-materialize stale partitions), and `DELETE` (remove expired partitions).
+  ///
+  /// User-facing config keys: `definedSQL`, `bucketTimePeriod`,
+  /// `bufferTimePeriod` (optional), `maxNumRecordsPerSegment` (optional, default
+  /// [DEFAULT_MAX_NUM_RECORDS_PER_SEGMENT]).
+  public static class MaterializedViewTask {
+    public static final String TASK_TYPE = "MaterializedViewTask";
+
+    public static final String DEFINED_SQL_KEY = "definedSQL";
+    public static final String BUCKET_TIME_PERIOD_KEY = "bucketTimePeriod";
+    public static final String BUFFER_TIME_PERIOD_KEY = "bufferTimePeriod";
+    public static final String MAX_NUM_RECORDS_PER_SEGMENT_KEY = "maxNumRecordsPerSegment";
+
+    public static final String WINDOW_START_MS_KEY = "windowStartMs";
+    public static final String WINDOW_END_MS_KEY = "windowEndMs";
+    public static final String SOURCE_TABLE_NAME_KEY = "sourceTableName";
+    public static final String PARTITION_FINGERPRINTS_KEY = "partitionFingerprints";
+
+    /// Generator-populated copy of the user's declared `LIMIT` value from `definedSQL`.
+    /// Passed through to the executor so it can detect result-set truncation (when the query
+    /// actually returned `LIMIT`-many rows, the window is almost certainly incomplete and
+    /// must not be marked VALID / advance the runtime watermark).
+    public static final String EFFECTIVE_LIMIT_KEY = "effectiveLimit";
+
+    public static final String TASK_MODE_KEY = "taskMode";
+    public static final String TASK_MODE_APPEND = "APPEND";
+    public static final String TASK_MODE_OVERWRITE = "OVERWRITE";
+    public static final String TASK_MODE_DELETE = "DELETE";
+
+    public static final int DEFAULT_MAX_NUM_RECORDS_PER_SEGMENT = 5_000_000;
+
+    /// Maximum number of APPEND task windows to schedule in a single generator cycle.
+    /// Increase this to back-fill historical data faster. Default 4 lets a typical onboarding
+    /// back-fill complete in roughly `N/4` scheduling cycles instead of `N` for a
+    /// single-task-per-cycle setup, while keeping minion-pool contention bounded.
+    public static final String MAX_TASKS_PER_BATCH_KEY = "maxTasksPerBatch";
+    public static final int DEFAULT_MAX_TASKS_PER_BATCH = 4;
+
+    /// Per-MV staleness SLO.  Broker excludes the MV from rewrite when
+    /// `(now - watermarkMs) > stalenessThresholdMs`, falling back to the base table.
+    /// Operators set this to bound the maximum age of MV-served data.  Default `0` means
+    /// "no SLO check" (broker uses any MV with a non-zero watermark).
+    public static final String STALENESS_THRESHOLD_MS_KEY = "stalenessThresholdMs";
+    public static final long DEFAULT_STALENESS_THRESHOLD_MS = 0L;
+
+    /// Hard upper bound on the user-facing `maxTasksPerBatch` config - values above this
+    /// are rejected at table-create time. Distinct from the internal scheduler-loop iteration
+    /// cap (which can be larger because it covers historical-VALID skip work, not just slot
+    /// count).
+    public static final int MAX_TASKS_PER_BATCH_USER_CAP = 1_000;
+
+    /// Auto-injected `LIMIT` value used when `definedSQL` omits an explicit LIMIT.
+    ///
+    /// Without this, the broker would silently apply its cluster-wide default query limit
+    /// (see `pinot.broker.default.query.limit`, default 10) to MV-generation queries and
+    /// truncate every window to that many rows - the executor's saturation gate cannot detect
+    /// such truncation because it never sees the broker's silent override.
+    public static final int DEFAULT_MATERIALIZED_VIEW_QUERY_LIMIT = 1_000_000;
+
+    /// Hard upper bound on any user-declared LIMIT in `definedSQL`. Capped at
+    /// `100_000_000` so a single window cannot OOM the executor - the executor must
+    /// accumulate all returned rows in memory before the saturation gate can detect
+    /// truncation. Operators with legitimately larger windows must split via narrower
+    /// `bucketTimePeriod` or filters in `definedSQL`.
+    public static final int MAX_MATERIALIZED_VIEW_QUERY_LIMIT = 100_000_000;
+  }
 }

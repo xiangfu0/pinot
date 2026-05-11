@@ -335,6 +335,11 @@ public class CommonConstants {
   public static class Broker {
     public static final String ROUTING_TABLE_CONFIG_PREFIX = "pinot.broker.routing.table";
     public static final String ACCESS_CONTROL_CONFIG_PREFIX = "pinot.broker.access.control";
+    /// Config prefix for the materialized-view handler. The class to instantiate is
+    /// read from the `class` key under this prefix; any handler-specific options live
+    /// under the same prefix and are passed through to the handler's `init`. Default
+    /// implementation: `DefaultMaterializedViewHandler`.
+    public static final String MATERIALIZED_VIEW_HANDLER_CONFIG_PREFIX = "pinot.broker.materialized.view.handler";
     public static final String METRICS_CONFIG_PREFIX = "pinot.broker.metrics";
     public static final String EVENT_LISTENER_CONFIG_PREFIX = "pinot.broker.event.listener";
     // Prefix for table sampler configs:
@@ -367,6 +372,11 @@ public class CommonConstants {
         "pinot.broker.query.log.logBeforeProcessing";
     public static final boolean DEFAULT_BROKER_QUERY_LOG_BEFORE_PROCESSING = true;
     public static final String CONFIG_OF_BROKER_QUERY_ENABLE_NULL_HANDLING = "pinot.broker.query.enable.null.handling";
+    /// When true, the broker initializes materialized view metadata cache and query rewrite engine.
+    /// When false (default), MV rewrite is disabled regardless of per-query `useMaterializedView` option.
+    public static final String CONFIG_OF_BROKER_QUERY_ENABLE_MATERIALIZED_VIEW_REWRITE =
+        "pinot.broker.query.enable.materialized.view.rewrite";
+    public static final boolean DEFAULT_BROKER_QUERY_ENABLE_MATERIALIZED_VIEW_REWRITE = false;
     /// Provide broker level default for query option [Request.QueryOptionKey#REGEX_DICT_SIZE_THRESHOLD]
     public static final String CONFIG_OF_BROKER_QUERY_REGEX_DICT_SIZE_THRESHOLD =
         "pinot.broker.query.regex.dict.size.threshold";
