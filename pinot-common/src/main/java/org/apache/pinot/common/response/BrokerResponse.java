@@ -437,4 +437,19 @@ public interface BrokerResponse {
    * @return true if RLS filters were applied, false otherwise
    */
   boolean getRLSFiltersApplied();
+
+  /// Get the materialized view table name that was hit (used) for this query, or `null`
+  /// if no materialized view was used.  Impls that do not track MV rewrite (e.g. MSE response
+  /// paths) return `null`; the setter on those impls is a DEBUG-logged no-op.
+  @Nullable
+  default String getMaterializedViewQueried() {
+    return null;
+  }
+
+  /// Set the materialized view table name that was hit (used) for this query.
+  default void setMaterializedViewQueried(@Nullable String materializedViewQueried) {
+    LOGGER.debug("setMaterializedViewQueried called on BrokerResponse impl {} that does not "
+        + "override the setter; MV queried name {} will not be surfaced in the response",
+        getClass().getName(), materializedViewQueried);
+  }
 }
