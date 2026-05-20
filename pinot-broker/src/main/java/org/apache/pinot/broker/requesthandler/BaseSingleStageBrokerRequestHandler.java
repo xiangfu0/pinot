@@ -329,15 +329,6 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
       JsonNode request, @Nullable RequesterIdentity requesterIdentity, RequestContext requestContext,
       @Nullable HttpHeaders httpHeaders, AccessControl accessControl)
       throws Exception {
-    // The MATERIALIZED_VIEW_REWRITE query option is a broker-internal marker stamped during a
-    // committed FULL_REWRITE swap; it is read by BrokerReduceService to opt out of the "Nested
-    // query is not supported without gapfill" safety net.  A user-supplied option of the same
-    // name would otherwise let a hostile or buggy client bypass that safety net for any
-    // brokerRequest != serverBrokerRequest path the broker may grow in the future.  Strip it
-    // before any compile work so the marker is only ever present when the broker itself sets it.
-    if (sqlNodeAndOptions.getOptions() != null) {
-      sqlNodeAndOptions.getOptions().remove(QueryOptionKey.MATERIALIZED_VIEW_REWRITE);
-    }
     boolean queryWasLogged = _queryLogger.logQueryReceived(requestId, query);
 
     String queryHash = CommonConstants.Broker.DEFAULT_QUERY_HASH;
@@ -434,6 +425,18 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
       JsonNode request, @Nullable RequesterIdentity requesterIdentity, RequestContext requestContext,
       @Nullable HttpHeaders httpHeaders, AccessControl accessControl, boolean queryWasLogged)
       throws Exception {
+    // The MATERIALIZED_VIEW_REWRITE query option is a broker-internal marker stamped during a
+    // committed FULL_REWRITE swap; it is read by BrokerReduceService to opt out of the "Nested
+    // query is not supported without gapfill" safety net.  A user-supplied option of the same
+    // name would otherwise let a hostile or buggy client bypass that safety net for any
+    // brokerRequest != serverBrokerRequest path the broker may grow in the future.  Strip it
+    // here so the marker is only ever present when the broker itself sets it during the
+    // FULL_REWRITE swap below.  doHandleRequest is the choke point that both the top-level
+    // handleRequest entry and the IN_SUBQUERY recursion go through, so a single strip here
+    // covers both paths.
+    if (sqlNodeAndOptions.getOptions() != null) {
+      sqlNodeAndOptions.getOptions().remove(QueryOptionKey.MATERIALIZED_VIEW_REWRITE);
+    }
     // Compile the request into PinotQuery
     long compilationStartTimeNs = System.nanoTime();
     CompileResult compileResult =

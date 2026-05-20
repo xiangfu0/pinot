@@ -439,15 +439,13 @@ public class SingleConnectionBrokerRequestHandler extends BaseSingleStageBrokerR
     }
   }
 
-  /// Merges base and MV server responses into one IdentityHashMap whose entries are accumulated
-  /// by reference equality rather than by `ServerRoutingInstance.equals()`. The MV split path
-  /// can route both sub-queries to the same physical server (same hostname+port+tableType, so
-  /// `equals()` matches) but with distinct `ServerRoutingInstance` instances — a regular HashMap
-  /// would silently overwrite one DataTable with the other and produce under-counted results.
-  ///
-  /// Package-private so the test suite can pin this contract without spinning up a broker.
+  /// Counts responses that successfully returned a DataTable. Production callers use this in the
+  /// MV-split path to detect "all of one side's servers failed" — if `viewFinalResponses` is
+  /// non-empty AND the count is zero, the split would silently undercount the historical half
+  /// (and symmetrically for the base side), so the caller throws to trigger the outer fallback.
+  /// Package-private for direct unit-test coverage of the guard's boolean.
   @VisibleForTesting
-  private static int countSuccessfulDataTables(Map<ServerRoutingInstance, ServerResponse> responses) {
+  static int countSuccessfulDataTables(Map<ServerRoutingInstance, ServerResponse> responses) {
     int count = 0;
     for (ServerResponse r : responses.values()) {
       if (r.getDataTable() != null) {
@@ -457,6 +455,14 @@ public class SingleConnectionBrokerRequestHandler extends BaseSingleStageBrokerR
     return count;
   }
 
+  /// Merges base and MV server responses into one IdentityHashMap whose entries are accumulated
+  /// by reference equality rather than by `ServerRoutingInstance.equals()`. The MV split path
+  /// can route both sub-queries to the same physical server (same hostname+port+tableType, so
+  /// `equals()` matches) but with distinct `ServerRoutingInstance` instances — a regular HashMap
+  /// would silently overwrite one DataTable with the other and produce under-counted results.
+  ///
+  /// Package-private so the test suite can pin this contract without spinning up a broker.
+  @VisibleForTesting
   static Map<ServerRoutingInstance, DataTable> mergeDataTablesByIdentity(
       Map<ServerRoutingInstance, ServerResponse> baseResponses,
       Map<ServerRoutingInstance, ServerResponse> viewResponses,

@@ -90,6 +90,59 @@ public class SingleConnectionBrokerRequestHandlerMergeTest {
     assertEquals(serversNotResponded.size(), 0);
   }
 
+  /// Pins the production guard logic in `processMaterializedViewSplitBrokerRequest`:
+  ///
+  ///   if (!viewFinalResponses.isEmpty() && countSuccessfulDataTables(viewFinalResponses) == 0) throw …
+  ///
+  /// The guard catches the case where every server on one branch of the MV split returned no
+  /// DataTable.  Without this regression test, flipping the comparison (e.g. `!= 0`) or removing
+  /// the call would silently undercount the historical half of every MV-split query.
+  @Test
+  public void testCountSuccessfulDataTablesAllNullReturnsZero() {
+    ServerRoutingInstance s1 = new ServerRoutingInstance("server-1", 9000, TableType.OFFLINE);
+    ServerRoutingInstance s2 = new ServerRoutingInstance("server-2", 9000, TableType.OFFLINE);
+    ServerResponse r1 = mock(ServerResponse.class);
+    when(r1.getDataTable()).thenReturn(null);
+    ServerResponse r2 = mock(ServerResponse.class);
+    when(r2.getDataTable()).thenReturn(null);
+    Map<ServerRoutingInstance, ServerResponse> responses = new HashMap<>();
+    responses.put(s1, r1);
+    responses.put(s2, r2);
+
+    int count = SingleConnectionBrokerRequestHandler.countSuccessfulDataTables(responses);
+    assertEquals(count, 0,
+        "All-null DataTable responses must yield zero — guard depends on this to detect total split-side failure");
+  }
+
+  @Test
+  public void testCountSuccessfulDataTablesMixedReturnsCorrectCount() {
+    ServerRoutingInstance s1 = new ServerRoutingInstance("server-1", 9000, TableType.OFFLINE);
+    ServerRoutingInstance s2 = new ServerRoutingInstance("server-2", 9000, TableType.OFFLINE);
+    ServerRoutingInstance s3 = new ServerRoutingInstance("server-3", 9000, TableType.OFFLINE);
+    ServerResponse ok1 = mock(ServerResponse.class);
+    when(ok1.getDataTable()).thenReturn(mock(DataTable.class));
+    ServerResponse failed = mock(ServerResponse.class);
+    when(failed.getDataTable()).thenReturn(null);
+    ServerResponse ok2 = mock(ServerResponse.class);
+    when(ok2.getDataTable()).thenReturn(mock(DataTable.class));
+    Map<ServerRoutingInstance, ServerResponse> responses = new HashMap<>();
+    responses.put(s1, ok1);
+    responses.put(s2, failed);
+    responses.put(s3, ok2);
+
+    int count = SingleConnectionBrokerRequestHandler.countSuccessfulDataTables(responses);
+    assertEquals(count, 2,
+        "Two of three responses carry a DataTable — guard must NOT trip (count > 0)");
+  }
+
+  @Test
+  public void testCountSuccessfulDataTablesEmptyMapReturnsZero() {
+    // Empty map is the "this side was not dispatched" case — the production guard skips it with
+    // `!viewFinalResponses.isEmpty() && ...`.  Confirming the count is zero anchors the
+    // documented short-circuit so future refactors don't accidentally split the two checks.
+    assertEquals(SingleConnectionBrokerRequestHandler.countSuccessfulDataTables(new HashMap<>()), 0);
+  }
+
   @Test
   public void testNullDataTableRecordedAsServerNotResponded() {
     ServerRoutingInstance instance = new ServerRoutingInstance("server-1", 9000, TableType.OFFLINE);

@@ -950,4 +950,130 @@ public class BaseSingleStageBrokerRequestHandlerTest {
         "User-supplied materializedViewRewrite option must be stripped before compile but options were: "
             + serverOptions);
   }
+
+  /**
+   * Pins the C1 fix: FULL_REWRITE is skipped at the broker layer when the base table has a
+   * REALTIME sibling, because a batch MV cannot cover newly-streamed rows. Without this guard
+   * the MV swap would silently drop all rows ingested via the realtime stream since the MV last
+   * refreshed — an invisible data-loss path.
+   */
+  @Test
+  public void testMaterializedViewFullRewriteSkippedForHybridBaseTable()
+      throws Exception {
+    String baseOfflineTable = "baseTable_OFFLINE";
+    String baseRealtimeTable = "baseTable_REALTIME";
+    String materializedViewOfflineTable = "mv_baseTable_OFFLINE";
+    String baseRawTable = "baseTable";
+    String materializedViewRawTable = "mv_baseTable";
+
+    String userSql = "SELECT ts, SUM(revenue) FROM baseTable GROUP BY ts LIMIT 100";
+    PinotQuery materializedViewQuery = CalciteSqlParser.compileToPinotQuery(
+        "SELECT ts, SUM(revenue) FROM mv_baseTable_OFFLINE GROUP BY ts LIMIT 100");
+
+    MaterializedViewRewritePlan plan = new MaterializedViewRewritePlan(
+        materializedViewOfflineTable, MatchType.EXACT, ExecutionMode.FULL_REWRITE, materializedViewQuery, 1.0);
+    MaterializedViewRewriteResult viewResult =
+        new MaterializedViewRewriteResult(List.of(materializedViewOfflineTable), plan);
+
+    MaterializedViewQueryRewriteEngine materializedViewEngine = mock(MaterializedViewQueryRewriteEngine.class);
+    when(materializedViewEngine.tryRewrite(any(PinotQuery.class), anyString())).thenReturn(viewResult);
+    MaterializedViewHandler materializedViewHandler = new DefaultMaterializedViewHandler(materializedViewEngine);
+
+    Schema baseSchema = new Schema.SchemaBuilder()
+        .setSchemaName(baseRawTable)
+        .addSingleValueDimension("ts", DataType.STRING)
+        .addMetric("revenue", DataType.DOUBLE)
+        .build();
+    Schema materializedViewSchema = new Schema.SchemaBuilder()
+        .setSchemaName(materializedViewRawTable)
+        .addSingleValueDimension("ts", DataType.STRING)
+        .addMetric("revenue", DataType.DOUBLE)
+        .build();
+
+    TableCache tableCache = mock(TableCache.class);
+    when(tableCache.getActualTableName(baseRawTable)).thenReturn(baseRawTable);
+    when(tableCache.getSchema(baseRawTable)).thenReturn(baseSchema);
+    when(tableCache.getSchema(materializedViewRawTable)).thenReturn(materializedViewSchema);
+    when(tableCache.getColumnNameMap(anyString())).thenReturn(Map.of("ts", "ts", "revenue", "revenue"));
+    TableConfig tableCfg = mock(TableConfig.class);
+    TenantConfig tenant = new TenantConfig("t_BROKER", "t_SERVER", null);
+    when(tableCfg.getTenantConfig()).thenReturn(tenant);
+    when(tableCache.getTableConfig(baseOfflineTable)).thenReturn(tableCfg);
+    when(tableCache.getTableConfig(materializedViewOfflineTable)).thenReturn(tableCfg);
+    // Critical to this test: the base table is HYBRID. The realtime sibling must exist in the cache
+    // so the FULL_REWRITE hybrid-guard at BaseSingleStageBrokerRequestHandler trips.
+    when(tableCache.getTableConfig(baseRealtimeTable)).thenReturn(tableCfg);
+
+    BrokerRoutingManager routingManager = mock(BrokerRoutingManager.class);
+    when(routingManager.routingExists(baseOfflineTable)).thenReturn(true);
+    when(routingManager.routingExists(baseRealtimeTable)).thenReturn(true);
+    when(routingManager.getQueryTimeoutMs(anyString())).thenReturn(10000L);
+    RoutingTable rt = mock(RoutingTable.class);
+    when(rt.getServerInstanceToSegmentsMap()).thenReturn(
+        Map.of(new ServerInstance(new InstanceConfig("server01_9000")),
+            new SegmentsToQuery(List.of("seg01"), List.of())));
+    when(routingManager.getRoutingTable(any(), Mockito.anyLong())).thenReturn(rt);
+
+    QueryQuotaManager quotaManager = mock(QueryQuotaManager.class);
+    when(quotaManager.acquireDatabase(anyString())).thenReturn(true);
+    when(quotaManager.acquireApplication(anyString())).thenReturn(true);
+    when(quotaManager.acquire(anyString())).thenReturn(true);
+
+    BrokerMetrics.register(mock(BrokerMetrics.class));
+    PinotConfiguration config = new PinotConfiguration();
+    BrokerQueryEventListenerFactory.init(config);
+
+    AtomicReference<BrokerRequest> capturedServerBrokerRequest = new AtomicReference<>();
+    BaseSingleStageBrokerRequestHandler handler =
+        new BaseSingleStageBrokerRequestHandler(config, "broker1", new BrokerRequestIdGenerator(),
+            routingManager, new AllowAllAccessControlFactory(), quotaManager, tableCache,
+            ThreadAccountantUtils.getNoOpAccountant(), null, materializedViewHandler) {
+          @Override
+          public void start() {
+          }
+
+          @Override
+          public void shutDown() {
+          }
+
+          @Override
+          protected BrokerResponseNative processBrokerRequest(long requestId,
+              BrokerRequest originalBrokerRequest, BrokerRequest serverBrokerRequest,
+              TableRouteInfo route, long timeoutMs, ServerStats serverStats,
+              RequestContext requestContext) {
+            capturedServerBrokerRequest.set(serverBrokerRequest);
+            return BrokerResponseNative.empty();
+          }
+
+          @Override
+          protected BrokerResponseNative processMaterializedViewSplitBrokerRequest(long requestId,
+              long materializedViewRequestId, BrokerRequest originalBrokerRequest, TableRouteInfo baseRoute,
+              TableRouteInfo materializedViewRoute, long timeoutMs, ServerStats serverStats,
+              RequestContext requestContext) {
+            Assert.fail("Split path must not be entered when FULL_REWRITE is skipped");
+            return null;
+          }
+        };
+
+    BrokerResponseNative response = (BrokerResponseNative) handler.handleRequest(userSql);
+    BrokerRequest serverBrokerRequest = capturedServerBrokerRequest.get();
+    Assert.assertNotNull(serverBrokerRequest,
+        "processBrokerRequest must have been reached after the FULL_REWRITE skip; exceptions: "
+            + response.getExceptions());
+    // Server-side query MUST target a base-table variant (OFFLINE or REALTIME) — never the MV
+    // table — because the hybrid guard rejected the FULL_REWRITE swap. Hybrid tables dispatch
+    // to both offline + realtime broker requests, so the test accepts either base-side name.
+    String serverTableName = serverBrokerRequest.getPinotQuery().getDataSource().getTableName();
+    Assert.assertTrue(
+        serverTableName.equals(baseOfflineTable) || serverTableName.equals(baseRealtimeTable),
+        "FULL_REWRITE must be skipped on hybrid base tables to avoid silently dropping realtime data; "
+            + "expected server query against a base-table variant but got: " + serverTableName);
+    Assert.assertNotEquals(serverTableName, materializedViewOfflineTable,
+        "Server query must not target the MV table when the FULL_REWRITE was skipped");
+    // And the MV-rewrite marker must NOT have been stamped on the server query.
+    Map<String, String> serverOptions = serverBrokerRequest.getPinotQuery().getQueryOptions();
+    Assert.assertTrue(serverOptions == null
+            || !serverOptions.containsKey(CommonConstants.Broker.Request.QueryOptionKey.MATERIALIZED_VIEW_REWRITE),
+        "FULL_REWRITE marker must not be stamped when rewrite is skipped; options: " + serverOptions);
+  }
 }
