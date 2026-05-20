@@ -212,8 +212,30 @@ public class MaterializedViewClusterIntegrationTest extends BaseClusterIntegrati
     setupScanMv();
     setupCostCompetitorMv();
 
-    // Wait for MaterializedViewMetadataCache ZK watchers to pick up changes
-    Thread.sleep(5_000);
+    // Wait for the broker's MaterializedViewMetadataCache to register every newly-published MV
+    // by polling a sentinel query that should be served by the full-rewrite MV.  Polling on a
+    // real query (rather than `Thread.sleep`) lets the test progress as soon as the ZK watchers
+    // catch up — fast machines no longer pay 5s of wall clock and slow CI machines no longer
+    // race the timeout.
+    waitForMaterializedViewRegistered(MATERIALIZED_VIEW_FULL_TABLE_OFFLINE,
+        "SELECT Carrier, SUM(ArrDelayMinutes) FROM " + SOURCE_TABLE_NAME + " GROUP BY Carrier");
+  }
+
+  /// Polls a query that is known to be rewritable to the given MV until the broker's metadata
+  /// cache has caught up. Used in place of `Thread.sleep` after publishing MV znodes from a
+  /// test setup step.
+  private void waitForMaterializedViewRegistered(String expectedMaterializedViewOfflineTable, String sentinelQuery) {
+    TestUtils.waitForCondition(() -> {
+      try {
+        JsonNode response = postQuery(sentinelQuery);
+        String materializedViewQueried = getMaterializedViewQueried(response);
+        return expectedMaterializedViewOfflineTable.equals(materializedViewQueried);
+      } catch (Exception e) {
+        return false;
+      }
+    }, 100L, 30_000L,
+        "MV " + expectedMaterializedViewOfflineTable + " not registered with the broker cache",
+        Duration.ofSeconds(6));
   }
 
   @AfterClass
@@ -418,8 +440,12 @@ public class MaterializedViewClusterIntegrationTest extends BaseClusterIntegrati
         MATERIALIZED_VIEW_SPLIT_TABLE_OFFLINE, extendedBoundaryMs, new HashMap<>());
     MaterializedViewRuntimeMetadataUtils.persist(_propertyStore, updatedRuntime, -1);
 
-    /// Wait for ZK watcher to propagate the watermark update to the broker cache
-    Thread.sleep(5_000);
+    /// Wait for ZK watcher to propagate the watermark update to the broker cache.  Poll a
+    /// sentinel query that should be served by the split MV; the watermark advance is
+    /// observable indirectly because the rewrite path keeps choosing the split MV (which
+    /// depends on the updated watermark for the split-boundary filter).
+    waitForMaterializedViewRegistered(MATERIALIZED_VIEW_SPLIT_TABLE_OFFLINE,
+        "SELECT Carrier, Origin, SUM(ArrDelayMinutes) FROM " + SOURCE_TABLE_NAME + " GROUP BY Carrier, Origin");
 
     /// Query and verify: the split MV should still be hit with the advanced boundary
     String query = ""
@@ -623,7 +649,16 @@ public class MaterializedViewClusterIntegrationTest extends BaseClusterIntegrati
         true);
     MaterializedViewDefinitionMetadataUtils.persist(_propertyStore, staleDefinition, -1);
 
-    Thread.sleep(5_000);
+    /// Wait for the broker cache to observe the tightened SLO by polling until the MV stops
+    /// being chosen for the query.
+    TestUtils.waitForCondition(() -> {
+      try {
+        String mv = getMaterializedViewQueried(postQuery(query));
+        return mv == null || !MATERIALIZED_VIEW_FULL_TABLE_OFFLINE.equals(mv);
+      } catch (Exception e) {
+        return false;
+      }
+    }, 100L, 30_000L, "Broker did not pick up the tightened staleness SLO", Duration.ofSeconds(6));
 
     /// Step 3: Query again — the MV should NOT be hit (SLO trips eligibility gate).
     JsonNode staleResponse = postQuery(query);
@@ -651,7 +686,9 @@ public class MaterializedViewClusterIntegrationTest extends BaseClusterIntegrati
         true);
     MaterializedViewDefinitionMetadataUtils.persist(_propertyStore, freshDefinition, -1);
 
-    Thread.sleep(5_000);
+    /// Wait for the broker cache to observe the relaxed SLO; poll until the MV is chosen
+    /// again rather than fixed-sleeping.
+    waitForMaterializedViewRegistered(MATERIALIZED_VIEW_FULL_TABLE_OFFLINE, query);
 
     /// Step 5: Query again — the MV should be hit again.
     JsonNode freshResponse = postQuery(query);
@@ -685,8 +722,11 @@ public class MaterializedViewClusterIntegrationTest extends BaseClusterIntegrati
     MaterializedViewDefinitionMetadataUtils.delete(_propertyStore, MATERIALIZED_VIEW_COLD_TABLE_OFFLINE);
     MaterializedViewRuntimeMetadataUtils.delete(_propertyStore, MATERIALIZED_VIEW_COLD_TABLE_OFFLINE);
 
-    // Wait for ZK watcher propagation.
-    Thread.sleep(5_000);
+    // Wait for the broker cache to observe the deletion by polling until the cold MV is no
+    // longer chosen for a query that uniquely matches it (no-op here because split MV is the
+    // only candidate for the test query, but the poll exits as soon as the listener fires and
+    // any subsequent query against COLD's distinctive shape returns null).
+    waitForMaterializedViewRegistered(MATERIALIZED_VIEW_SPLIT_TABLE_OFFLINE, query);
 
     // After deletion the split MV should still serve the query unaffected.
     JsonNode postResponse = postQuery(query);

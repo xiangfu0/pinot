@@ -20,6 +20,7 @@ package org.apache.pinot.materializedview.rewrite;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -79,7 +80,11 @@ public class MaterializedViewMetadataCache {
   /// runtime update on the floor would leave the MV in a cold-start state until the next
   /// scheduler tick re-publishes the runtime znode.  Pending entries are consumed (and removed)
   /// when [#putDefinitionEntry] eventually constructs the cache entry.
-  private final Map<String, MaterializedViewRuntimeMetadata> _pendingRuntimeStates = new ConcurrentHashMap<>();
+  ///
+  /// All reads and writes of this map happen inside `synchronized (_cacheLock)`, so a plain
+  /// HashMap is sufficient — using ConcurrentHashMap here would imply lock-free reads which the
+  /// rest of the code does not rely on.
+  private final Map<String, MaterializedViewRuntimeMetadata> _pendingRuntimeStates = new HashMap<>();
   private final Map<String, List<MaterializedViewCacheEntry>> _baseTableToMaterializedViewMap =
       new ConcurrentHashMap<>();
 

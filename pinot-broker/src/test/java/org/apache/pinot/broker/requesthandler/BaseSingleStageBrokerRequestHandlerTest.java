@@ -858,4 +858,96 @@ public class BaseSingleStageBrokerRequestHandlerTest {
   // The split-mode time-boundary filter attach helpers moved to
   // org.apache.pinot.materializedview.handler.DefaultMaterializedViewHandler#attachFilter; their
   // regression coverage lives in DefaultMaterializedViewHandlerTest in pinot-materialized-view.
+
+  /**
+   * Pins the security-style defense that a user-supplied `materializedViewRewrite=true` query
+   * option (e.g. via `SET materializedViewRewrite='true'`) is stripped at the broker entry
+   * before any compile work. Without the strip, a hostile client could stamp the
+   * broker-internal marker themselves and bypass `BrokerReduceService`'s "Nested query is not
+   * supported without gapfill" safety net on any path where `brokerRequest != serverBrokerRequest`.
+   */
+  @Test
+  public void testMaterializedViewMarkerStrippedFromUserSuppliedOptions()
+      throws Exception {
+    String baseOfflineTable = "baseTable_OFFLINE";
+    String baseRawTable = "baseTable";
+
+    // User attempts to set the internal MV-rewrite marker via the SQL SET-options syntax.
+    // The strip in handleRequest must remove it before the marker can reach the server query.
+    String userSql = "SET materializedViewRewrite='true';"
+        + "SELECT ts, SUM(revenue) FROM baseTable GROUP BY ts LIMIT 100";
+
+    Schema baseSchema = new Schema.SchemaBuilder()
+        .setSchemaName(baseRawTable)
+        .addSingleValueDimension("ts", DataType.STRING)
+        .addMetric("revenue", DataType.DOUBLE)
+        .build();
+
+    TableCache tableCache = mock(TableCache.class);
+    when(tableCache.getActualTableName(baseRawTable)).thenReturn(baseRawTable);
+    when(tableCache.getSchema(baseRawTable)).thenReturn(baseSchema);
+    when(tableCache.getColumnNameMap(anyString())).thenReturn(Map.of("ts", "ts", "revenue", "revenue"));
+    TableConfig tableCfg = mock(TableConfig.class);
+    TenantConfig tenant = new TenantConfig("t_BROKER", "t_SERVER", null);
+    when(tableCfg.getTenantConfig()).thenReturn(tenant);
+    when(tableCache.getTableConfig(baseOfflineTable)).thenReturn(tableCfg);
+
+    BrokerRoutingManager routingManager = mock(BrokerRoutingManager.class);
+    when(routingManager.routingExists(baseOfflineTable)).thenReturn(true);
+    when(routingManager.getQueryTimeoutMs(anyString())).thenReturn(10000L);
+    RoutingTable rt = mock(RoutingTable.class);
+    when(rt.getServerInstanceToSegmentsMap()).thenReturn(
+        Map.of(new ServerInstance(new InstanceConfig("server01_9000")),
+            new SegmentsToQuery(List.of("seg01"), List.of())));
+    when(routingManager.getRoutingTable(any(), Mockito.anyLong())).thenReturn(rt);
+
+    QueryQuotaManager quotaManager = mock(QueryQuotaManager.class);
+    when(quotaManager.acquireDatabase(anyString())).thenReturn(true);
+    when(quotaManager.acquireApplication(anyString())).thenReturn(true);
+    when(quotaManager.acquire(anyString())).thenReturn(true);
+
+    BrokerMetrics.register(mock(BrokerMetrics.class));
+    PinotConfiguration config = new PinotConfiguration();
+    BrokerQueryEventListenerFactory.init(config);
+
+    AtomicReference<Map<String, String>> capturedServerOptions = new AtomicReference<>();
+    BaseSingleStageBrokerRequestHandler handler =
+        new BaseSingleStageBrokerRequestHandler(config, "broker1", new BrokerRequestIdGenerator(),
+            routingManager, new AllowAllAccessControlFactory(), quotaManager, tableCache,
+            ThreadAccountantUtils.getNoOpAccountant(), null, /*materializedViewHandler*/ null) {
+          @Override
+          public void start() {
+          }
+
+          @Override
+          public void shutDown() {
+          }
+
+          @Override
+          protected BrokerResponseNative processBrokerRequest(long requestId,
+              BrokerRequest originalBrokerRequest, BrokerRequest serverBrokerRequest,
+              TableRouteInfo route, long timeoutMs, ServerStats serverStats,
+              RequestContext requestContext) {
+            Map<String, String> options = serverBrokerRequest.getPinotQuery().getQueryOptions();
+            capturedServerOptions.set(options == null ? Map.of() : Map.copyOf(options));
+            return BrokerResponseNative.empty();
+          }
+
+          @Override
+          protected BrokerResponseNative processMaterializedViewSplitBrokerRequest(long requestId,
+              long materializedViewRequestId, BrokerRequest originalBrokerRequest, TableRouteInfo baseRoute,
+              TableRouteInfo materializedViewRoute, long timeoutMs, ServerStats serverStats,
+              RequestContext requestContext) {
+            return BrokerResponseNative.empty();
+          }
+        };
+
+    handler.handleRequest(userSql);
+    Map<String, String> serverOptions = capturedServerOptions.get();
+    Assert.assertNotNull(serverOptions, "processBrokerRequest should have been reached and captured server options");
+    Assert.assertFalse(serverOptions.containsKey(
+        CommonConstants.Broker.Request.QueryOptionKey.MATERIALIZED_VIEW_REWRITE),
+        "User-supplied materializedViewRewrite option must be stripped before compile but options were: "
+            + serverOptions);
+  }
 }
