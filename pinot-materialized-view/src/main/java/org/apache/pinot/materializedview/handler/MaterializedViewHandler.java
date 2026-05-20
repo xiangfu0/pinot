@@ -91,6 +91,15 @@ public interface MaterializedViewHandler {
   default void refreshTable(String rawTableName) {
   }
 
+  /// Number of MV entries currently held by this handler's metadata cache, or `-1` if the
+  /// implementation does not track a cache (in which case the broker will not surface a
+  /// gauge).  The broker polls this on a fixed interval to expose
+  /// `BrokerGauge.MATERIALIZED_VIEW_CACHE_ENTRY_COUNT` so operators can monitor for unbounded
+  /// growth that would otherwise indicate a leak in the ZK listener / drop path.
+  default int getCacheEntryCount() {
+    return -1;
+  }
+
   /// Whether this handler supports split-rewrite execution (dual scatter-gather to base + MV with
   /// a merged reduce). Broker variants that cannot perform the merge (e.g. gRPC streaming) should
   /// be configured with a handler that returns `false`; the broker will then suppress split-rewrite

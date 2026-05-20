@@ -275,6 +275,16 @@ public class SingleConnectionBrokerRequestHandler extends BaseSingleStageBrokerR
           "Materialized view split: all " + viewFinalResponses.size()
               + " MV server(s) failed to return a DataTable; refusing to return partial result");
     }
+    // Symmetric guard for the base side: if base servers were dispatched but every one of them
+    // failed to return a DataTable, the response would cover only `ts < boundary` (the MV half),
+    // again silently undercounting. Refusing here lets the outer try/catch fall back to the
+    // unsplit base-table query path, which will surface the same server failure through normal
+    // error reporting rather than embedded in a misleadingly-complete-looking response.
+    if (!baseFinalResponses.isEmpty() && countSuccessfulDataTables(baseFinalResponses) == 0) {
+      throw new QueryException(QueryErrorCode.SERVER_NOT_RESPONDING,
+          "Materialized view split: all " + baseFinalResponses.size()
+              + " base-table server(s) failed to return a DataTable; refusing to return partial result");
+    }
 
     // Reduce using the original user query so that the correct reducer (selection, aggregation,
     // group-by) is selected and intermediate results are merged properly.

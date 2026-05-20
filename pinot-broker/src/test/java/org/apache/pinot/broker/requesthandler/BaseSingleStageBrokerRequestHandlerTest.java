@@ -599,7 +599,7 @@ public class BaseSingleStageBrokerRequestHandlerTest {
         "SELECT ts, SUM(revenue) FROM mv_baseTable_OFFLINE GROUP BY ts LIMIT 100");
 
     MaterializedViewRewritePlan plan = new MaterializedViewRewritePlan(
-        materializedViewOfflineTable, MatchType.EXACT, ExecutionMode.FULL_REWRITE, materializedViewQuery, null, 1.0);
+        materializedViewOfflineTable, MatchType.EXACT, ExecutionMode.FULL_REWRITE, materializedViewQuery, 1.0);
     MaterializedViewRewriteResult viewResult =
         new MaterializedViewRewriteResult(List.of(materializedViewOfflineTable), plan);
 
@@ -721,7 +721,7 @@ public class BaseSingleStageBrokerRequestHandlerTest {
         "SELECT ts, SUM(revenue) FROM mv_baseTable_OFFLINE GROUP BY ts LIMIT 100");
 
     MaterializedViewRewritePlan plan = new MaterializedViewRewritePlan(
-        materializedViewOfflineTable, MatchType.EXACT, ExecutionMode.FULL_REWRITE, materializedViewQuery, null, 1.0);
+        materializedViewOfflineTable, MatchType.EXACT, ExecutionMode.FULL_REWRITE, materializedViewQuery, 1.0);
     MaterializedViewRewriteResult viewResult =
         new MaterializedViewRewriteResult(List.of(materializedViewOfflineTable), plan);
 

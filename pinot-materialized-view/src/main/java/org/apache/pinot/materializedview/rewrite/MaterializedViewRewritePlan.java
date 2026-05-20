@@ -26,10 +26,10 @@ import org.apache.pinot.materializedview.metadata.MaterializedViewDefinitionMeta
 /// Structured output of the MV rewrite layer, separating static matching
 /// ([MatchType]) from runtime execution decisions ([ExecutionMode]).
 ///
-/// Strategies produce plan fragments with `execMode = null` and
-/// `baseQueryTemplate = null`. The [MaterializedViewQueryRewriteEngine] then
-/// resolves execution mode and populates these fields via
-/// [PinotQuery, MaterializedViewSplitSpec, long)][#withExecMode(ExecutionMode,].
+/// Strategies produce plan fragments with `execMode = null`. The
+/// [MaterializedViewQueryRewriteEngine] then resolves execution mode and
+/// populates the split-mode runtime fields via
+/// [#withExecMode(ExecutionMode, MaterializedViewSplitSpec, long)].
 ///
 /// Lower cost is better. The rewrite engine picks the plan with the lowest
 /// cost when multiple MVs match a single user query.
@@ -40,8 +40,6 @@ public class MaterializedViewRewritePlan implements Comparable<MaterializedViewR
   @Nullable
   private final ExecutionMode _execMode;
   private final PinotQuery _materializedViewQuery;
-  @Nullable
-  private final PinotQuery _baseQueryTemplate;
   private final double _cost;
 
   // Split-mode runtime fields — populated by the engine during plan resolution,
@@ -57,38 +55,37 @@ public class MaterializedViewRewritePlan implements Comparable<MaterializedViewR
   private final boolean _splitSafe;
 
   public MaterializedViewRewritePlan(String viewTableNameWithType, MatchType matchType,
-      @Nullable ExecutionMode execMode, PinotQuery viewQuery,
-      @Nullable PinotQuery baseQueryTemplate, double cost) {
-    this(viewTableNameWithType, matchType, execMode, viewQuery, baseQueryTemplate, cost, null, 0, true);
+      @Nullable ExecutionMode execMode, PinotQuery viewQuery, double cost) {
+    this(viewTableNameWithType, matchType, execMode, viewQuery, cost, null, 0, true);
   }
 
   public MaterializedViewRewritePlan(String viewTableNameWithType, MatchType matchType,
-      @Nullable ExecutionMode execMode, PinotQuery viewQuery,
-      @Nullable PinotQuery baseQueryTemplate, double cost, boolean splitSafe) {
-    this(viewTableNameWithType, matchType, execMode, viewQuery, baseQueryTemplate, cost, null, 0, splitSafe);
+      @Nullable ExecutionMode execMode, PinotQuery viewQuery, double cost, boolean splitSafe) {
+    this(viewTableNameWithType, matchType, execMode, viewQuery, cost, null, 0, splitSafe);
   }
 
   public MaterializedViewRewritePlan(String viewTableNameWithType, MatchType matchType,
-      @Nullable ExecutionMode execMode, PinotQuery viewQuery,
-      @Nullable PinotQuery baseQueryTemplate, double cost,
+      @Nullable ExecutionMode execMode, PinotQuery viewQuery, double cost,
       @Nullable MaterializedViewSplitSpec splitSpec, long watermarkMs, boolean splitSafe) {
     _materializedViewTableNameWithType = viewTableNameWithType;
     _matchType = matchType;
     _execMode = execMode;
     _materializedViewQuery = viewQuery;
-    _baseQueryTemplate = baseQueryTemplate;
     _cost = cost;
     _splitSpec = splitSpec;
     _watermarkMs = watermarkMs;
     _splitSafe = splitSafe;
   }
 
-  /// Returns a new plan with execution mode, base query template, and split
-  /// runtime parameters set, preserving all other fields from this plan.
-  public MaterializedViewRewritePlan withExecMode(ExecutionMode execMode, @Nullable PinotQuery baseQueryTemplate,
+  /// Returns a new plan with execution mode + split runtime parameters set, preserving all other
+  /// fields from this plan.  The broker's split execution path uses
+  /// [#getMaterializedViewQuery()] as the MV-side template and the pre-rewrite
+  /// `compileResult._serverPinotQuery` as the base-side template — no separate base-query copy is
+  /// retained on the plan to avoid an O(query-size) `deepCopy()` per candidate.
+  public MaterializedViewRewritePlan withExecMode(ExecutionMode execMode,
       @Nullable MaterializedViewSplitSpec splitSpec, long watermarkMs) {
     return new MaterializedViewRewritePlan(_materializedViewTableNameWithType, _matchType, execMode,
-        _materializedViewQuery, baseQueryTemplate, _cost, splitSpec, watermarkMs, _splitSafe);
+        _materializedViewQuery, _cost, splitSpec, watermarkMs, _splitSafe);
   }
 
   public String getMaterializedViewTableNameWithType() {
@@ -106,11 +103,6 @@ public class MaterializedViewRewritePlan implements Comparable<MaterializedViewR
 
   public PinotQuery getMaterializedViewQuery() {
     return _materializedViewQuery;
-  }
-
-  @Nullable
-  public PinotQuery getBaseQueryTemplate() {
-    return _baseQueryTemplate;
   }
 
   public double getCost() {

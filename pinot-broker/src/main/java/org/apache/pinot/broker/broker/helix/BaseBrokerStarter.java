@@ -494,6 +494,15 @@ public abstract class BaseBrokerStarter implements ServiceStartable {
       PinotConfiguration mvHandlerConf = _brokerConf.subset(Broker.MATERIALIZED_VIEW_HANDLER_CONFIG_PREFIX);
       materializedViewHandler =
           MaterializedViewHandler.loadHandler(mvHandlerConf, _propertyStore, !isGrpcBroker);
+      // Expose the MV metadata cache size as a global gauge so operators can monitor
+      // unbounded growth — a cluster with K MVs should plateau near K; sustained growth would
+      // indicate a leak in the ZK listener / drop path. Handlers that don't track a cache
+      // return -1 from getCacheEntryCount() and we skip the gauge for those.
+      final MaterializedViewHandler handlerForGauge = materializedViewHandler;
+      if (handlerForGauge.getCacheEntryCount() >= 0) {
+        _brokerMetrics.setOrUpdateGlobalGauge(BrokerGauge.MATERIALIZED_VIEW_CACHE_ENTRY_COUNT,
+            () -> (long) handlerForGauge.getCacheEntryCount());
+      }
     }
     BaseSingleStageBrokerRequestHandler singleStageBrokerRequestHandler;
     if (isGrpcBroker) {

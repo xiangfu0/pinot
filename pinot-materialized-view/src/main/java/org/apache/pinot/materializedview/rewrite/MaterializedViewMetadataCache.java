@@ -162,6 +162,13 @@ public class MaterializedViewMetadataCache {
     }
   }
 
+  /// Number of MV entries currently held in the cache.  Surfaced so the broker can expose this
+  /// as a gauge for unbounded-growth detection — a cluster with K MVs should plateau near K;
+  /// sustained growth signals a leak in the ZK listener / drop path.
+  public int size() {
+    return _materializedViewEntryMap.size();
+  }
+
   /// Rebuilds the cache entry for `rawTableName` if its definition znode exists in ZK but is
   /// not currently in the cache.  Called from the broker resource state model on OFFLINE→ONLINE
   /// transitions so an MV whose broker resource was toggled (without deleting the definition

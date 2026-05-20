@@ -316,7 +316,7 @@ public class AggregationSubsumptionStrategy extends AbstractSubsumptionStrategy 
 
     double cost = filtersEqual ? COST_REAGG : COST_REAGG_WITH_RESIDUAL;
     return new MaterializedViewRewritePlan(candidateEntry.getMaterializedViewTableNameWithType(),
-        MatchType.AGG_REAGG, null, rewritten, null, cost, splitSafe);
+        MatchType.AGG_REAGG, null, rewritten, cost, splitSafe);
   }
 
   /// Returns true if all aggregation expressions in the SELECT list use split-safe

@@ -83,6 +83,12 @@ public class MaterializedViewQueryRewriteEngine {
     _materializedViewMetadataCache.refreshTable(rawTableName);
   }
 
+  /// Number of MV entries currently held in the underlying metadata cache.  Exposed so the
+  /// broker can wire a gauge on this value.
+  public int getCacheEntryCount() {
+    return _materializedViewMetadataCache.size();
+  }
+
   /// Attempts to rewrite the given query to use a materialized view.
   ///
   /// @param pinotQuery       the compiled user query
@@ -249,7 +255,7 @@ public class MaterializedViewQueryRewriteEngine {
       if (isQueryFullyCoveredByMaterializedView(userQuery, splitSpec, watermarkMs)) {
         LOGGER.info("MV full rewrite [{}]: user time filter is fully covered by watermarkMs={}, matchType={}",
             candidate.getMaterializedViewTableNameWithType(), watermarkMs, plan.getMatchType());
-        return plan.withExecMode(ExecutionMode.FULL_REWRITE, null, null, 0);
+        return plan.withExecMode(ExecutionMode.FULL_REWRITE, null, 0);
       }
 
       // EXACT match replaces aggregation functions (e.g. SUM(col)) with plain
@@ -291,12 +297,10 @@ public class MaterializedViewQueryRewriteEngine {
         return null;
       }
 
-      PinotQuery baseQueryTemplate = userQuery.deepCopy();
-      return plan.withExecMode(ExecutionMode.SPLIT_REWRITE, baseQueryTemplate,
-          splitSpec, watermarkMs);
+      return plan.withExecMode(ExecutionMode.SPLIT_REWRITE, splitSpec, watermarkMs);
     }
 
-    return plan.withExecMode(ExecutionMode.FULL_REWRITE, null, null, 0);
+    return plan.withExecMode(ExecutionMode.FULL_REWRITE, null, 0);
   }
 
   private static boolean isQueryFullyCoveredByMaterializedView(PinotQuery userQuery,

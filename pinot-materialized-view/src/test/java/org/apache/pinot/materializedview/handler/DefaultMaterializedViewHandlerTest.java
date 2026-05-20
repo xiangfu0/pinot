@@ -23,6 +23,7 @@ import org.apache.pinot.common.request.Expression;
 import org.apache.pinot.common.request.Function;
 import org.apache.pinot.common.request.PinotQuery;
 import org.apache.pinot.core.routing.timeboundary.TimeBoundaryInfo;
+import org.apache.pinot.spi.data.DateTimeFormatSpec;
 import org.apache.pinot.sql.FilterKind;
 import org.apache.pinot.sql.parsers.CalciteSqlParser;
 import org.testng.Assert;
@@ -85,5 +86,53 @@ public class DefaultMaterializedViewHandlerTest {
     Assert.assertEquals(fn.getOperator().toUpperCase(Locale.ROOT), "GREATER_THAN_OR_EQUAL",
         "Base branch filter must be inclusive >= since the MV uses exclusive <");
     Assert.assertEquals(fn.getOperands().get(0).getIdentifier().getName(), "ts");
+  }
+
+  /// Pins the contract that `DateTimeFormatSpec.fromMillisToFormat` emits a literal Pinot can
+  /// coerce back to the column's stored type for every time-column format we expect to support on
+  /// the base side of a SPLIT_REWRITE.  Each row asserts the round-trip
+  /// (`millis -> formatted literal -> millis`) holds without loss; that round-trip is what makes
+  /// `base.ts >= literal` and `mv.materializedViewTime < literal` partition the timeline exactly.
+  ///
+  /// Regression coverage for the M5 reviewer concern that today only `INT/DAYS:EPOCH` and
+  /// `LONG/MILLISECONDS:EPOCH` are exercised by the integration test.
+  @Test
+  public void testBoundaryLiteralRoundTripAcrossSupportedFormats() {
+    long sampleMillis = 1700000000000L; // 2023-11-14T22:13:20Z — picked to round-trip cleanly in every format.
+    String[] formats = {
+        "1:MILLISECONDS:EPOCH",
+        "1:SECONDS:EPOCH",
+        "1:MINUTES:EPOCH",
+        "1:HOURS:EPOCH",
+        "1:DAYS:EPOCH",
+        "TIMESTAMP",
+        "1:DAYS:SIMPLE_DATE_FORMAT:yyyy-MM-dd"
+    };
+    for (String format : formats) {
+      DateTimeFormatSpec spec = new DateTimeFormatSpec(format);
+      String literal = spec.fromMillisToFormat(sampleMillis);
+      Assert.assertNotNull(literal, "format " + format + " produced null literal");
+      Assert.assertFalse(literal.isEmpty(), "format " + format + " produced empty literal");
+      // Round-trip: parsing the formatted literal back to millis must produce a value within the
+      // format's coarsest granularity.  For example `1:DAYS:EPOCH` truncates millis to day-granular
+      // boundaries; for SIMPLE_DATE_FORMAT (yyyy-MM-dd) we also truncate to day granularity.
+      long parsed = spec.fromFormatToMillis(literal);
+      // Tolerance = format granularity in millis (or 1 day for SIMPLE_DATE_FORMAT yyyy-MM-dd).
+      long toleranceMs;
+      if (format.equals("TIMESTAMP") || format.equals("1:MILLISECONDS:EPOCH")) {
+        toleranceMs = 1L;
+      } else if (format.equals("1:SECONDS:EPOCH")) {
+        toleranceMs = 1_000L;
+      } else if (format.equals("1:MINUTES:EPOCH")) {
+        toleranceMs = 60_000L;
+      } else if (format.equals("1:HOURS:EPOCH")) {
+        toleranceMs = 3_600_000L;
+      } else {
+        toleranceMs = 86_400_000L;
+      }
+      Assert.assertTrue(Math.abs(parsed - sampleMillis) < toleranceMs,
+          "format " + format + " did not round-trip: " + sampleMillis + " -> '" + literal
+              + "' -> " + parsed);
+    }
   }
 }

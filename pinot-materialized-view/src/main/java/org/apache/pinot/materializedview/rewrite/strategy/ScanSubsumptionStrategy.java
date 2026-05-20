@@ -129,6 +129,6 @@ public class ScanSubsumptionStrategy extends AbstractSubsumptionStrategy {
 
     double cost = filtersEqual ? COST_SCAN_SUBSUMPTION : COST_SCAN_WITH_RESIDUAL;
     return new MaterializedViewRewritePlan(candidateEntry.getMaterializedViewTableNameWithType(),
-        MatchType.SCAN_SUBSUME, null, rewritten, null, cost);
+        MatchType.SCAN_SUBSUME, null, rewritten, cost);
   }
 }

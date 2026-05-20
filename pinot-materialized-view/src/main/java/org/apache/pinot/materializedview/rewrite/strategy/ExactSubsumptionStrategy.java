@@ -183,6 +183,6 @@ public class ExactSubsumptionStrategy extends AbstractSubsumptionStrategy {
           MaterializedViewMatchUtils.remapExpression(userQuery.getHavingExpression(), viewProjectionMap));
     }
     return new MaterializedViewRewritePlan(candidateEntry.getMaterializedViewTableNameWithType(),
-        MatchType.EXACT, null, rewritten, null, COST_EXACT);
+        MatchType.EXACT, null, rewritten, COST_EXACT);
   }
 }

@@ -639,7 +639,6 @@ public class BrokerResponseNative implements BrokerResponse {
   }
 
   @JsonProperty("materializedViewQueried")
-  @Override
   public void setMaterializedViewQueried(@Nullable String materializedViewQueried) {
     _materializedViewQueried = materializedViewQueried;
   }

@@ -329,6 +329,15 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
       JsonNode request, @Nullable RequesterIdentity requesterIdentity, RequestContext requestContext,
       @Nullable HttpHeaders httpHeaders, AccessControl accessControl)
       throws Exception {
+    // The MATERIALIZED_VIEW_REWRITE query option is a broker-internal marker stamped during a
+    // committed FULL_REWRITE swap; it is read by BrokerReduceService to opt out of the "Nested
+    // query is not supported without gapfill" safety net.  A user-supplied option of the same
+    // name would otherwise let a hostile or buggy client bypass that safety net for any
+    // brokerRequest != serverBrokerRequest path the broker may grow in the future.  Strip it
+    // before any compile work so the marker is only ever present when the broker itself sets it.
+    if (sqlNodeAndOptions.getOptions() != null) {
+      sqlNodeAndOptions.getOptions().remove(QueryOptionKey.MATERIALIZED_VIEW_REWRITE);
+    }
     boolean queryWasLogged = _queryLogger.logQueryReceived(requestId, query);
 
     String queryHash = CommonConstants.Broker.DEFAULT_QUERY_HASH;
@@ -1208,6 +1217,25 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
             + "falling back to base-table query path", requestId, rawTableName, e);
         _brokerMetrics.addMeteredTableValue(rawTableName, BrokerMeter.QUERY_REWRITE_EXCEPTIONS, 1);
         materializedViewContext = MaterializedViewContext.empty();
+      }
+      if (materializedViewContext.isFullRewrite()) {
+        // FULL_REWRITE replaces the base-table query with the MV-OFFLINE query. If the base table
+        // is hybrid (has both OFFLINE and REALTIME variants), the MV covers only the offline half
+        // and a FULL_REWRITE swap would silently drop every row that has been ingested through
+        // the realtime stream since the MV last refreshed.  Reject the rewrite at this layer
+        // rather than at the engine (which does not have access to the broker's table cache) so
+        // the broker emits the matching observability signal and continues against the base
+        // table unchanged.
+        String baseRawTableName = TableNameBuilder.extractRawTableName(tableName);
+        boolean baseHasRealtime = _tableCache.getTableConfig(
+            TableNameBuilder.REALTIME.tableNameWithType(baseRawTableName)) != null;
+        if (baseHasRealtime) {
+          LOGGER.warn("FULL_REWRITE skipped for request {} on hybrid base table {}: MV would drop "
+                  + "realtime data; falling back to base-table query path",
+              requestId, baseRawTableName);
+          _brokerMetrics.addMeteredTableValue(baseRawTableName, BrokerMeter.QUERY_REWRITE_EXCEPTIONS, 1);
+          materializedViewContext = MaterializedViewContext.empty();
+        }
       }
       if (materializedViewContext.isFullRewrite()) {
         // Swap server-side query/table/schema to the MV. The pre-rewrite query/table is preserved
