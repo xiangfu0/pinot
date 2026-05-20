@@ -299,7 +299,7 @@ public class ScanSubsumptionStrategyTest {
   }
 
   @Test
-  public void testRewrittenSelectNoAliasWhenUserHasNoAlias() {
+  public void testRewrittenSelectImplicitAliasPreservesUserColumnName() {
     String viewSql = "SELECT a, b AS col_b FROM orders";
     MaterializedViewCacheEntry entry = createEntry("mv_orders_OFFLINE", "orders", viewSql);
 
@@ -311,7 +311,31 @@ public class ScanSubsumptionStrategyTest {
         result.getMaterializedViewQuery().getSelectList();
     assertEquals(selectList.size(), 1);
 
-    // "b" (no user alias) -> simple identifier "col_b" (MV column name, no alias wrapper)
-    assertEquals(selectList.get(0).getIdentifier().getName(), "col_b");
+    // "b" (no user alias) -> "col_b AS b" so the client sees the original column name "b" in
+    // the result schema rather than the MV-side "col_b".  Without the implicit alias, clients
+    // reading the result by column name would silently break.
+    org.apache.pinot.common.request.Function aliasFunc = selectList.get(0).getFunctionCall();
+    assertNotNull(aliasFunc);
+    assertEquals(aliasFunc.getOperator(), "as");
+    assertEquals(aliasFunc.getOperands().get(0).getIdentifier().getName(), "col_b");
+    assertEquals(aliasFunc.getOperands().get(1).getIdentifier().getName(), "b");
+  }
+
+  @Test
+  public void testRewrittenSelectNoAliasWhenUserNameMatchesViewName() {
+    String viewSql = "SELECT a, b FROM orders";
+    MaterializedViewCacheEntry entry = createEntry("mv_orders_OFFLINE", "orders", viewSql);
+
+    PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery("SELECT b FROM orders");
+    MaterializedViewRewritePlan result = _strategy.match(userQuery, entry);
+
+    assertNotNull(result);
+    List<org.apache.pinot.common.request.Expression> selectList =
+        result.getMaterializedViewQuery().getSelectList();
+    assertEquals(selectList.size(), 1);
+
+    // User's identifier "b" exactly matches the MV column name "b", so no alias wrapping is
+    // needed — the natural result column name already matches the user's expectation.
+    assertEquals(selectList.get(0).getIdentifier().getName(), "b");
   }
 }

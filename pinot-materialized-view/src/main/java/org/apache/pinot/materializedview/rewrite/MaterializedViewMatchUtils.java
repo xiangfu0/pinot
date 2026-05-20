@@ -154,13 +154,32 @@ public final class MaterializedViewMatchUtils {
       Expression materializedViewColExpr = RequestUtils.getIdentifierExpression(materializedViewColumnName);
 
       String userAlias = extractUserAlias(expr);
-      if (userAlias != null) {
+      String resultAlias = userAlias != null ? userAlias
+          : implicitAliasForUserExpression(stripped, materializedViewColumnName);
+      if (resultAlias != null) {
         materializedViewColExpr = RequestUtils.getFunctionExpression("as", materializedViewColExpr,
-            RequestUtils.getIdentifierExpression(userAlias));
+            RequestUtils.getIdentifierExpression(resultAlias));
       }
       rewritten.add(materializedViewColExpr);
     }
     return rewritten;
+  }
+
+  /// Computes an implicit alias so the rewritten result column carries the same name the user
+  /// would have seen against the base table. Without this, a user query like
+  /// `SELECT SUM(revenue) FROM orders` rewritten against an MV column `sum_rev` would surface
+  /// `sum_rev` to the client (silently breaking any consumer reading results by column name).
+  ///
+  /// Returns `null` (no alias needed) when the user expression is already a bare identifier whose
+  /// name matches the MV column name &mdash; in that case the natural result column name already
+  /// matches the user's expectation.
+  @Nullable
+  private static String implicitAliasForUserExpression(Expression strippedUserExpr, String materializedViewColumnName) {
+    if (strippedUserExpr.getType() == ExpressionType.IDENTIFIER
+        && strippedUserExpr.getIdentifier().getName().equals(materializedViewColumnName)) {
+      return null;
+    }
+    return RequestUtils.prettyPrint(strippedUserExpr);
   }
 
   // -----------------------------------------------------------------------

@@ -259,8 +259,14 @@ public class ExactSubsumptionStrategyTest {
     List<org.apache.pinot.common.request.Expression> selectList = rewritten.getSelectList();
     assertEquals(selectList.size(), 2);
 
+    // "city" identifier matches MV column name "city" — no alias wrapping required.
     assertEquals(selectList.get(0).getIdentifier().getName(), "city");
-    // SUM(revenue) without user alias -> simple identifier "sum_rev" (MV column name, no alias wrapper)
-    assertEquals(selectList.get(1).getIdentifier().getName(), "sum_rev");
+    // SUM(revenue) (no explicit AS) -> "sum_rev AS sum(revenue)"; the implicit alias preserves the
+    // user's expected result-column name so clients reading by column name aren't silently broken.
+    org.apache.pinot.common.request.Function aliasFunc = selectList.get(1).getFunctionCall();
+    assertNotNull(aliasFunc);
+    assertEquals(aliasFunc.getOperator(), "as");
+    assertEquals(aliasFunc.getOperands().get(0).getIdentifier().getName(), "sum_rev");
+    assertEquals(aliasFunc.getOperands().get(1).getIdentifier().getName(), "sum(revenue)");
   }
 }

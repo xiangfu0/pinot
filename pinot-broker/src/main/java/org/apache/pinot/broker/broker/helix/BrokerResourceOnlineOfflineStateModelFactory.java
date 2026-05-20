@@ -101,6 +101,11 @@ public class BrokerResourceOnlineOfflineStateModelFactory extends StateModelFact
               _helixDataAccessor.getProperty(_helixDataAccessor.keyBuilder().externalView(BROKER_RESOURCE_INSTANCE)));
           _queryQuotaManager.createDatabaseRateLimiter(
               DatabaseUtils.extractDatabaseFromFullyQualifiedTableName(physicalOrLogicalTable));
+          // Rebuild the MV cache entry in case its broker resource was previously cycled
+          // OFFLINE without the definition znode being deleted (e.g. an operator-driven
+          // OFFLINE/ONLINE toggle for maintenance). Symmetric counterpart to the
+          // invalidate-on-OFFLINE call below.
+          refreshMaterializedViewCacheForTable(physicalOrLogicalTable);
         }
       } catch (Exception e) {
         LOGGER.error("Caught exception while processing transition from OFFLINE to ONLINE for table: {}",
@@ -162,6 +167,12 @@ public class BrokerResourceOnlineOfflineStateModelFactory extends StateModelFact
     private void invalidateMaterializedViewCacheForTable(String tableNameWithType) {
       if (_materializedViewHandler != null) {
         _materializedViewHandler.invalidateBaseTable(TableNameBuilder.extractRawTableName(tableNameWithType));
+      }
+    }
+
+    private void refreshMaterializedViewCacheForTable(String tableNameWithType) {
+      if (_materializedViewHandler != null) {
+        _materializedViewHandler.refreshTable(TableNameBuilder.extractRawTableName(tableNameWithType));
       }
     }
 

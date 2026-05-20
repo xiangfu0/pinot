@@ -75,6 +75,14 @@ public class MaterializedViewQueryRewriteEngine {
     _materializedViewMetadataCache.invalidateBaseTable(rawBaseTableName);
   }
 
+  /// Rebuilds the MV cache entry for the given table name from ZK if the cache is currently
+  /// missing it.  Called from the broker's OFFLINE→ONLINE state transition so an MV whose
+  /// broker resource was cycled (without deleting the definition znode) becomes queryable
+  /// again without requiring a broker restart or a definition-znode republish.
+  public void refreshTable(String rawTableName) {
+    _materializedViewMetadataCache.refreshTable(rawTableName);
+  }
+
   /// Attempts to rewrite the given query to use a materialized view.
   ///
   /// @param pinotQuery       the compiled user query

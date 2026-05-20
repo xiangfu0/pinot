@@ -83,6 +83,14 @@ public interface MaterializedViewHandler {
   /// @param rawTableName raw base-table name without type suffix
   void invalidateBaseTable(String rawTableName);
 
+  /// Refreshes any cached state for the given table. Called from the broker's resource state
+  /// model on OFFLINE→ONLINE transitions so a previously-evicted MV cache entry is rebuilt
+  /// even when the underlying definition znode was not deleted (operator toggled the broker
+  /// resource OFFLINE/ONLINE for maintenance).  Default no-op preserves backward compatibility
+  /// for implementations that don't track per-table cache state.
+  default void refreshTable(String rawTableName) {
+  }
+
   /// Whether this handler supports split-rewrite execution (dual scatter-gather to base + MV with
   /// a merged reduce). Broker variants that cannot perform the merge (e.g. gRPC streaming) should
   /// be configured with a handler that returns `false`; the broker will then suppress split-rewrite

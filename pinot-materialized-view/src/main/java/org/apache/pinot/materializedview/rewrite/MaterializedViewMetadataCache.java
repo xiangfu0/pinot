@@ -162,6 +162,32 @@ public class MaterializedViewMetadataCache {
     }
   }
 
+  /// Rebuilds the cache entry for `rawTableName` if its definition znode exists in ZK but is
+  /// not currently in the cache.  Called from the broker resource state model on OFFLINE→ONLINE
+  /// transitions so an MV whose broker resource was toggled (without deleting the definition
+  /// znode) becomes queryable again without a broker restart or znode republish.
+  ///
+  /// Idempotent: if the entry is already present this is a no-op; if the znode is absent (MV
+  /// was actually dropped) this is also a no-op.  Subscribes the matching runtime listener +
+  /// rebuilds runtime state alongside the definition.
+  public void refreshTable(String rawTableName) {
+    String offlineMvName = rawTableName + "_OFFLINE";
+    String defPath = MATERIALIZED_VIEW_DEFINITION_PATH_PREFIX + offlineMvName;
+    synchronized (_cacheLock) {
+      if (_materializedViewEntryMap.containsKey(offlineMvName)) {
+        return;
+      }
+      if (!_propertyStore.exists(defPath, AccessOption.PERSISTENT)) {
+        return;
+      }
+      addDefinitions(List.of(defPath));
+      String rtPath = MATERIALIZED_VIEW_RUNTIME_PATH_PREFIX + offlineMvName;
+      if (_propertyStore.exists(rtPath, AccessOption.PERSISTENT)) {
+        loadRuntimeStates(List.of(rtPath));
+      }
+    }
+  }
+
   // -----------------------------------------------------------------------
   //  Definition path handling (low frequency — triggers SQL recompilation)
   // -----------------------------------------------------------------------

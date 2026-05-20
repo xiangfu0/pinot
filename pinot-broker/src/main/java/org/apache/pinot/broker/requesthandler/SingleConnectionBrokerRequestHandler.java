@@ -265,6 +265,17 @@ public class SingleConnectionBrokerRequestHandler extends BaseSingleStageBrokerR
     long totalResponseSize = totalResponseSizeHolder[0];
     int numServersResponded = dataTableMap.size();
 
+    // Zero MV-side DataTables when MV servers WERE dispatched would silently undercount
+    // the historical half of the timeline (base ⊕ MV are disjoint, so a missing MV side
+    // produces results that look complete but cover only `ts >= boundary`). Throw a hard
+    // error here so the outer try/catch in BaseSingleStageBrokerRequestHandler bumps
+    // QUERY_REWRITE_EXCEPTIONS and falls back to the unsplit base-table query path.
+    if (!viewFinalResponses.isEmpty() && countSuccessfulDataTables(viewFinalResponses) == 0) {
+      throw new QueryException(QueryErrorCode.SERVER_NOT_RESPONDING,
+          "Materialized view split: all " + viewFinalResponses.size()
+              + " MV server(s) failed to return a DataTable; refusing to return partial result");
+    }
+
     // Reduce using the original user query so that the correct reducer (selection, aggregation,
     // group-by) is selected and intermediate results are merged properly.
     long reduceStartTimeNs = System.nanoTime();
@@ -426,6 +437,16 @@ public class SingleConnectionBrokerRequestHandler extends BaseSingleStageBrokerR
   ///
   /// Package-private so the test suite can pin this contract without spinning up a broker.
   @VisibleForTesting
+  private static int countSuccessfulDataTables(Map<ServerRoutingInstance, ServerResponse> responses) {
+    int count = 0;
+    for (ServerResponse r : responses.values()) {
+      if (r.getDataTable() != null) {
+        count++;
+      }
+    }
+    return count;
+  }
+
   static Map<ServerRoutingInstance, DataTable> mergeDataTablesByIdentity(
       Map<ServerRoutingInstance, ServerResponse> baseResponses,
       Map<ServerRoutingInstance, ServerResponse> viewResponses,

@@ -354,9 +354,23 @@ public class AggregationSubsumptionStrategy extends AbstractSubsumptionStrategy 
         rewritten = rewriteAggregationExpression(stripped, viewProjectionMap);
       }
 
+      // Preserve the user's expected result-column name. Bare-identifier dimensions that map 1:1
+      // to an identically-named MV column need no alias wrap (e.g. city -> city); but when the
+      // user expression was an aggregation (or a renamed dimension), the rewritten form would
+      // otherwise surface the MV-side name and silently break clients reading by column name.
+      String resultAlias;
       if (userAlias != null) {
+        resultAlias = userAlias;
+      } else if (stripped.getType() == ExpressionType.IDENTIFIER
+          && rewritten.getType() == ExpressionType.IDENTIFIER
+          && stripped.getIdentifier().getName().equals(rewritten.getIdentifier().getName())) {
+        resultAlias = null;
+      } else {
+        resultAlias = RequestUtils.prettyPrint(stripped);
+      }
+      if (resultAlias != null) {
         rewritten = RequestUtils.getFunctionExpression("as", rewritten,
-            RequestUtils.getIdentifierExpression(userAlias));
+            RequestUtils.getIdentifierExpression(resultAlias));
       }
       result.add(rewritten);
     }

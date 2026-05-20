@@ -166,11 +166,16 @@ public class AggregationSubsumptionStrategyTest {
     assertEquals(selectList.size(), 2);
 
     assertEquals(selectList.get(0).getIdentifier().getName(), "city");
-    // SUM(revenue) → SUM(sum_rev) (no alias)
-    Function reAgg = selectList.get(1).getFunctionCall();
+    // SUM(revenue) → SUM(sum_rev) AS sum(revenue) — implicit alias preserves the user's
+    // expected result column name when there is no explicit AS clause.
+    Function aliasFunc = selectList.get(1).getFunctionCall();
+    assertNotNull(aliasFunc);
+    assertEquals(aliasFunc.getOperator(), "as");
+    Function reAgg = aliasFunc.getOperands().get(0).getFunctionCall();
     assertNotNull(reAgg);
     assertEquals(reAgg.getOperator(), "sum");
     assertEquals(reAgg.getOperands().get(0).getIdentifier().getName(), "sum_rev");
+    assertEquals(aliasFunc.getOperands().get(1).getIdentifier().getName(), "sum(revenue)");
   }
 
   // -----------------------------------------------------------------------
@@ -210,11 +215,15 @@ public class AggregationSubsumptionStrategyTest {
     List<Expression> selectList = rewritten.getSelectList();
     assertEquals(selectList.size(), 2);
     assertEquals(selectList.get(0).getIdentifier().getName(), "city");
-    // SUM(revenue) → SUM(sum_rev)
-    Function reAgg = selectList.get(1).getFunctionCall();
+    // SUM(revenue) → SUM(sum_rev) AS sum(revenue) — implicit alias preserves result column name.
+    Function aliasFunc = selectList.get(1).getFunctionCall();
+    assertNotNull(aliasFunc);
+    assertEquals(aliasFunc.getOperator(), "as");
+    Function reAgg = aliasFunc.getOperands().get(0).getFunctionCall();
     assertNotNull(reAgg);
     assertEquals(reAgg.getOperator(), "sum");
     assertEquals(reAgg.getOperands().get(0).getIdentifier().getName(), "sum_rev");
+    assertEquals(aliasFunc.getOperands().get(1).getIdentifier().getName(), "sum(revenue)");
   }
 
   @Test
@@ -235,10 +244,15 @@ public class AggregationSubsumptionStrategyTest {
         "Rewritten query must not have GROUP BY (whole-table re-aggregation)");
     List<Expression> selectList = rewritten.getSelectList();
     assertEquals(selectList.size(), 1);
-    Function reAgg = selectList.get(0).getFunctionCall();
+    // SUM(revenue) → SUM(sum_rev) AS sum(revenue) — implicit alias preserves result column name.
+    Function aliasFunc = selectList.get(0).getFunctionCall();
+    assertNotNull(aliasFunc);
+    assertEquals(aliasFunc.getOperator(), "as");
+    Function reAgg = aliasFunc.getOperands().get(0).getFunctionCall();
     assertNotNull(reAgg);
     assertEquals(reAgg.getOperator(), "sum");
     assertEquals(reAgg.getOperands().get(0).getIdentifier().getName(), "sum_rev");
+    assertEquals(aliasFunc.getOperands().get(1).getIdentifier().getName(), "sum(revenue)");
   }
 
   @Test
@@ -544,11 +558,15 @@ public class AggregationSubsumptionStrategyTest {
     assertEquals(selectList.size(), 2);
     assertEquals(selectList.get(0).getIdentifier().getName(), "city");
 
-    // DISTINCTCOUNTHLL(user_id) → DISTINCTCOUNTHLL(raw_hll)
-    Function reAgg = selectList.get(1).getFunctionCall();
+    // DISTINCTCOUNTHLL(user_id) → DISTINCTCOUNTHLL(raw_hll) AS distinctcounthll(user_id)
+    Function aliasFunc = selectList.get(1).getFunctionCall();
+    assertNotNull(aliasFunc);
+    assertEquals(aliasFunc.getOperator(), "as");
+    Function reAgg = aliasFunc.getOperands().get(0).getFunctionCall();
     assertNotNull(reAgg);
     assertEquals(reAgg.getOperator(), "distinctcounthll");
     assertEquals(reAgg.getOperands().get(0).getIdentifier().getName(), "raw_hll");
+    assertEquals(aliasFunc.getOperands().get(1).getIdentifier().getName(), "distinctcounthll(user_id)");
   }
 
   /// Simulates the broker's `handleHLLLog2mOverride` injecting a
@@ -585,14 +603,18 @@ public class AggregationSubsumptionStrategyTest {
     List<Expression> selectList = rewritten.getSelectList();
     assertEquals(selectList.size(), 2);
 
-    // DISTINCTCOUNTHLL(user_id, 8) → DISTINCTCOUNTHLL(raw_hll, 8)
-    Function reAgg = selectList.get(1).getFunctionCall();
+    // DISTINCTCOUNTHLL(user_id, 8) → DISTINCTCOUNTHLL(raw_hll, 8) AS distinctcounthll(user_id, 8)
+    Function aliasFunc = selectList.get(1).getFunctionCall();
+    assertNotNull(aliasFunc);
+    assertEquals(aliasFunc.getOperator(), "as");
+    Function reAgg = aliasFunc.getOperands().get(0).getFunctionCall();
     assertNotNull(reAgg);
     assertEquals(reAgg.getOperator(), "distinctcounthll");
     assertEquals(reAgg.getOperandsSize(), 2, "Rewritten expression must retain trailing literal");
     assertEquals(reAgg.getOperands().get(0).getIdentifier().getName(), "raw_hll");
     assertTrue(reAgg.getOperands().get(1).getLiteral() != null,
         "Second operand must be the preserved log2m literal");
+    assertEquals(aliasFunc.getOperands().get(1).getIdentifier().getName(), "distinctcounthll(user_id, 8)");
   }
 
   // =======================================================================
@@ -614,11 +636,15 @@ public class AggregationSubsumptionStrategyTest {
 
     PinotQuery rewritten = result.getMaterializedViewQuery();
     List<Expression> selectList = rewritten.getSelectList();
-    // COUNT(revenue) → SUM(cnt)
-    Function reAgg = selectList.get(1).getFunctionCall();
+    // COUNT(revenue) → SUM(cnt) AS count(revenue)
+    Function aliasFunc = selectList.get(1).getFunctionCall();
+    assertNotNull(aliasFunc);
+    assertEquals(aliasFunc.getOperator(), "as");
+    Function reAgg = aliasFunc.getOperands().get(0).getFunctionCall();
     assertNotNull(reAgg);
     assertEquals(reAgg.getOperator(), "sum");
     assertEquals(reAgg.getOperands().get(0).getIdentifier().getName(), "cnt");
+    assertEquals(aliasFunc.getOperands().get(1).getIdentifier().getName(), "count(revenue)");
   }
 
   @Test
@@ -637,11 +663,15 @@ public class AggregationSubsumptionStrategyTest {
 
     PinotQuery rewritten = result.getMaterializedViewQuery();
     List<Expression> selectList = rewritten.getSelectList();
-    // DISTINCTCOUNTHLL(user_id) → DISTINCTCOUNTHLL(raw_hll)
-    Function reAgg = selectList.get(1).getFunctionCall();
+    // DISTINCTCOUNTHLL(user_id) → DISTINCTCOUNTHLL(raw_hll) AS distinctcounthll(user_id)
+    Function aliasFunc = selectList.get(1).getFunctionCall();
+    assertNotNull(aliasFunc);
+    assertEquals(aliasFunc.getOperator(), "as");
+    Function reAgg = aliasFunc.getOperands().get(0).getFunctionCall();
     assertNotNull(reAgg);
     assertEquals(reAgg.getOperator(), "distinctcounthll");
     assertEquals(reAgg.getOperands().get(0).getIdentifier().getName(), "raw_hll");
+    assertEquals(aliasFunc.getOperands().get(1).getIdentifier().getName(), "distinctcounthll(user_id)");
   }
 
   @Test
@@ -662,17 +692,29 @@ public class AggregationSubsumptionStrategyTest {
     List<Expression> selectList = rewritten.getSelectList();
     assertEquals(selectList.size(), 4);
 
-    // city -> city (dimension)
+    // city -> city (dimension, no alias wrap since name matches MV column)
     assertEquals(selectList.get(0).getIdentifier().getName(), "city");
-    // SUM(revenue) → SUM(sum_rev)
-    assertEquals(selectList.get(1).getFunctionCall().getOperator(), "sum");
-    assertEquals(selectList.get(1).getFunctionCall().getOperands().get(0).getIdentifier().getName(), "sum_rev");
-    // COUNT(revenue) → SUM(cnt)
-    assertEquals(selectList.get(2).getFunctionCall().getOperator(), "sum");
-    assertEquals(selectList.get(2).getFunctionCall().getOperands().get(0).getIdentifier().getName(), "cnt");
-    // MAX(revenue) → MAX(max_rev)
-    assertEquals(selectList.get(3).getFunctionCall().getOperator(), "max");
-    assertEquals(selectList.get(3).getFunctionCall().getOperands().get(0).getIdentifier().getName(), "max_rev");
+    // SUM(revenue) → SUM(sum_rev) AS sum(revenue)
+    Function sumAlias = selectList.get(1).getFunctionCall();
+    assertEquals(sumAlias.getOperator(), "as");
+    assertEquals(sumAlias.getOperands().get(0).getFunctionCall().getOperator(), "sum");
+    assertEquals(sumAlias.getOperands().get(0).getFunctionCall().getOperands().get(0).getIdentifier().getName(),
+        "sum_rev");
+    assertEquals(sumAlias.getOperands().get(1).getIdentifier().getName(), "sum(revenue)");
+    // COUNT(revenue) → SUM(cnt) AS count(revenue)
+    Function countAlias = selectList.get(2).getFunctionCall();
+    assertEquals(countAlias.getOperator(), "as");
+    assertEquals(countAlias.getOperands().get(0).getFunctionCall().getOperator(), "sum");
+    assertEquals(countAlias.getOperands().get(0).getFunctionCall().getOperands().get(0).getIdentifier().getName(),
+        "cnt");
+    assertEquals(countAlias.getOperands().get(1).getIdentifier().getName(), "count(revenue)");
+    // MAX(revenue) → MAX(max_rev) AS max(revenue)
+    Function maxAlias = selectList.get(3).getFunctionCall();
+    assertEquals(maxAlias.getOperator(), "as");
+    assertEquals(maxAlias.getOperands().get(0).getFunctionCall().getOperator(), "max");
+    assertEquals(maxAlias.getOperands().get(0).getFunctionCall().getOperands().get(0).getIdentifier().getName(),
+        "max_rev");
+    assertEquals(maxAlias.getOperands().get(1).getIdentifier().getName(), "max(revenue)");
   }
 
   @Test
