@@ -917,6 +917,18 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
       }
       routeProvider.calculateRoutes(routeInfo, selectedRoutingManager, offlineBrokerRequest,
           realtimeBrokerRequest, requestId);
+      // After the fallback recomputes the route, refresh the execution-server and pruned-segment
+      // locals captured pre-split.  Without this, the cancel hook (QueryServers built below)
+      // would track the pre-split server set — a cancel during fallback would target the wrong
+      // instances if rebalancing changed the route between compile and the post-split refresh.
+      // Per-table pool tags and pruned-segment counts would also reflect the stale snapshot.
+      // Note: the unavailable-segments error message in errorMsgs was assembled from the
+      // pre-split list and is left as-is; the metric for that path was already recorded at
+      // pre-split time, so re-adding the message here would double-count.
+      offlineExecutionServers = routeInfo.getOfflineExecutionServers();
+      realtimeExecutionServers = routeInfo.getRealtimeExecutionServers();
+      unavailableSegments = routeInfo.getUnavailableSegments();
+      numPrunedSegmentsTotal = routeInfo.getNumPrunedSegmentsTotal();
     }
 
     // TODO: Handle broker specific operations for explain plan queries such as:
