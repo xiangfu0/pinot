@@ -223,7 +223,7 @@ public class BrokerReduceService extends BaseReduceService {
         || serverBrokerRequest.getPinotQuery().getQueryOptions() == null) {
       return false;
     }
-    return "true".equalsIgnoreCase(
+    return Boolean.parseBoolean(
         serverBrokerRequest.getPinotQuery().getQueryOptions().get(QueryOptionKey.MATERIALIZED_VIEW_REWRITE));
   }
 
