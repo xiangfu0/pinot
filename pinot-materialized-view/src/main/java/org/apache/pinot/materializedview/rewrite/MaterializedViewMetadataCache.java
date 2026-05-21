@@ -175,6 +175,26 @@ public class MaterializedViewMetadataCache {
     return _materializedViewEntryMap.size();
   }
 
+  /// Unsubscribe every ZK listener this cache installed (parent-path child watchers + per-MV
+  /// definition + runtime data watchers).  Called from the broker's shutdown path so a hot
+  /// reload or test teardown doesn't leak Helix watcher slots.  After close the cache must
+  /// not be reused.
+  public void close() {
+    synchronized (_cacheLock) {
+      _propertyStore.unsubscribeChildChanges(MATERIALIZED_VIEW_DEFINITION_PARENT_PATH, _definitionListener);
+      _propertyStore.unsubscribeChildChanges(MATERIALIZED_VIEW_RUNTIME_PARENT_PATH, _runtimeListener);
+      for (String viewTableNameWithType : _materializedViewEntryMap.keySet()) {
+        _propertyStore.unsubscribeDataChanges(MATERIALIZED_VIEW_DEFINITION_PATH_PREFIX + viewTableNameWithType,
+            _definitionListener);
+        _propertyStore.unsubscribeDataChanges(MATERIALIZED_VIEW_RUNTIME_PATH_PREFIX + viewTableNameWithType,
+            _runtimeListener);
+      }
+      _materializedViewEntryMap.clear();
+      _baseTableToMaterializedViewMap.clear();
+      _pendingRuntimeStates.clear();
+    }
+  }
+
   /// Rebuilds cache entries that were evicted during an earlier ONLINE→OFFLINE transition for the
   /// given table.  Called from the broker resource state model on OFFLINE→ONLINE transitions so a
   /// previous cycle (or a transient broker-resource rebalance) does not leave this broker

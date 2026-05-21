@@ -254,6 +254,11 @@ public class DefaultMaterializedViewHandler implements MaterializedViewHandler {
     return _rewriteEngine.getCacheEntryCount();
   }
 
+  @Override
+  public void close() {
+    _rewriteEngine.close();
+  }
+
   /// Attaches a `col <op> value` filter to `pinotQuery`, AND-ing it onto any existing filter
   /// expression. Single helper used for both the base-side `>=` and the MV-side `<` boundary
   /// filters.

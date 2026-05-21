@@ -89,6 +89,12 @@ public class MaterializedViewQueryRewriteEngine {
     return _materializedViewMetadataCache.size();
   }
 
+  /// Release any resources held by this engine.  Delegates to the underlying metadata cache so
+  /// its ZK listener subscriptions are unwound.
+  public void close() {
+    _materializedViewMetadataCache.close();
+  }
+
   /// Attempts to rewrite the given query to use a materialized view.
   ///
   /// @param pinotQuery       the compiled user query

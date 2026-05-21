@@ -100,6 +100,13 @@ public interface MaterializedViewHandler {
     return -1;
   }
 
+  /// Release any resources held by this handler (ZK listener subscriptions, executor pools,
+  /// open connections).  Called from the broker's `shutDown()` so a hot-reload or test
+  /// teardown does not leak listener slots.  Default no-op for handlers that hold no
+  /// reclaimable state.
+  default void close() {
+  }
+
   /// Whether this handler supports split-rewrite execution (dual scatter-gather to base + MV with
   /// a merged reduce). Broker variants that cannot perform the merge (e.g. gRPC streaming) should
   /// be configured with a handler that returns `false`; the broker will then suppress split-rewrite

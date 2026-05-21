@@ -249,6 +249,9 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
     if (_enableMultistageMigrationMetric) {
       _multistageCompileExecutor.shutdownNow();
     }
+    if (_materializedViewHandler != null) {
+      _materializedViewHandler.close();
+    }
   }
 
   @VisibleForTesting
@@ -2392,9 +2395,17 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
     /// `MaterializedViewTaskScheduler.generateTasks` only generates for OFFLINE tables, so the
     /// MV route MUST be OFFLINE-only.  Fail loud rather than silently misroute against a
     /// HYBRID/REALTIME table that operators may have created by mistake.
-    Preconditions.checkState(viewRouteInfo.isOffline(),
-        "MV split routing requires an OFFLINE materialized-view table, got route type for %s: hybrid=%s, offline=%s",
-        viewTableNameWithType, viewRouteInfo.isHybrid(), viewRouteInfo.isOffline());
+    if (!viewRouteInfo.isOffline()) {
+      /// Throw a typed `QueryException` (caught at WARN by `tryExecuteMaterializedViewSplit`)
+      /// rather than `IllegalStateException` (which would log at ERROR with stack), since a
+      /// HYBRID/REALTIME MV route is an operator misconfiguration the broker can recover from
+      /// by falling back to the base-table path — same recovery model as the missing-route
+      /// case above.
+      throw new QueryException(QueryErrorCode.BROKER_RESOURCE_MISSING,
+          "MV split routing requires an OFFLINE materialized-view table, got route type for "
+              + viewTableNameWithType + ": hybrid=" + viewRouteInfo.isHybrid()
+              + ", offline=" + viewRouteInfo.isOffline());
+    }
     routeProvider.calculateRoutes(viewRouteInfo, routingManager, viewBrokerRequest, null, requestId);
 
     /// 3. Build the reduce-time broker request (strip `SERVER_RETURN_FINAL_RESULT`).
