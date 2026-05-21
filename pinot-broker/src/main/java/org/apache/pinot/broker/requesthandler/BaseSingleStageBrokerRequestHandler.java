@@ -425,16 +425,13 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
       JsonNode request, @Nullable RequesterIdentity requesterIdentity, RequestContext requestContext,
       @Nullable HttpHeaders httpHeaders, AccessControl accessControl, boolean queryWasLogged)
       throws Exception {
-    /// The `MATERIALIZED_VIEW_REWRITE` query option is a broker-internal marker stamped during a
-    /// committed `FULL_REWRITE` swap; `BrokerReduceService` reads it to opt out of the "Nested
-    /// query is not supported without gapfill" safety net.  A user-supplied option of the same
-    /// name would otherwise let a hostile or buggy client bypass that safety net for any
-    /// `brokerRequest != serverBrokerRequest` path the broker may grow in the future.  Strip it
-    /// here so the marker is only ever present when the broker itself sets it during the
-    /// `FULL_REWRITE` swap below.  `doHandleRequest` is the choke point that both the top-level
-    /// `handleRequest` entry and the `IN_SUBQUERY` recursion go through, so a single strip here
-    /// covers both paths.
-    if (sqlNodeAndOptions.getOptions() != null) {
+    /// MV deployments only: strip any user-supplied `MATERIALIZED_VIEW_REWRITE` query option so
+    /// the broker-internal marker stamped during a committed `FULL_REWRITE` swap is the only
+    /// path that can produce it.  Without this guard a hostile client could spoof the marker and
+    /// bypass `BrokerReduceService`'s "Nested query is not supported without gapfill" safety
+    /// net.  `doHandleRequest` is the choke point both the top-level `handleRequest` entry and
+    /// the `IN_SUBQUERY` recursion go through, so a single strip covers both paths.
+    if (_materializedViewHandler != null && sqlNodeAndOptions.getOptions() != null) {
       sqlNodeAndOptions.getOptions().remove(QueryOptionKey.MATERIALIZED_VIEW_REWRITE);
     }
     // Compile the request into PinotQuery
@@ -850,68 +847,23 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
     // TODO: Replace ServerStats with ServerRoutingStatsEntry.
     ServerStats serverStats = new ServerStats();
 
-    // ---------- MV Split: issue parallel base + materialized view queries and merge results ----------
+    // MV Split: attempt parallel base + materialized view queries; on success return early, on
+    // failure fall through to the standard non-split path with the route restored.
     if (compileResult.isMaterializedViewSplit()) {
-      String clientRequestId = extractClientRequestId(sqlNodeAndOptions);
-      MaterializedViewSplitDispatcher dispatcher =
-          (originalReq, baseQ, baseRoute, baseSch, viewQ, viewTable, viewSch, timeoutMs) ->
-              dispatchMaterializedViewSplit(requestId, originalReq, baseQ, baseRoute, baseSch, viewQ, viewTable,
-                  viewSch, timeoutMs, serverStats, requestContext, selectedRoutingManager, routeProvider,
-                  clientRequestId, query);
-      MaterializedViewSplitExecutionContext splitCtx = MaterializedViewSplitExecutionContext.builder()
-          .originalBrokerRequest(brokerRequest)
-          .baseServerPinotQuery(compileResult._serverPinotQuery)
-          .baseSchema(compileResult._schema)
-          .materializedViewContext(materializedViewContext)
-          .baseRouteInfo(routeInfo)
-          .remainingTimeMs(remainingTimeMs)
-          .dispatcher(dispatcher)
-          .build();
-      /// Execute-time MV failures (route gone mid-query, malformed time-format from a pre-V2
-      /// rolling-upgrade znode, NPE inside a strategy plan) must fall back to the base-table
-      /// path with a metric bump — never surface as HTTP 500.  The compile-time path has the
-      /// matching wrapper at the `_materializedViewHandler.compile` call site.  Demote
-      /// `BROKER_RESOURCE_MISSING` (an expected operational event — MV dropped mid-query) to
-      /// WARN so the operator's error-log signal isn't drowned in routine MV churn.
-      BrokerResponseNative viewSplitResponse;
-      try {
-        viewSplitResponse = _materializedViewHandler.executeSplit(splitCtx);
-      } catch (QueryException qe) {
-        LOGGER.warn("Materialized view split execution skipped for request {} on table {}: {}; "
-            + "falling back to base-table query path", requestId, userRawTableName, qe.getMessage());
-        _brokerMetrics.addMeteredTableValue(userRawTableName, BrokerMeter.QUERY_REWRITE_EXCEPTIONS, 1);
-        viewSplitResponse = null;
-      } catch (Exception e) {
-        LOGGER.error("Materialized view split execution failed for request {} on table {}; "
-            + "falling back to base-table query path", requestId, userRawTableName, e);
-        _brokerMetrics.addMeteredTableValue(userRawTableName, BrokerMeter.QUERY_REWRITE_EXCEPTIONS, 1);
-        viewSplitResponse = null;
-      }
+      BrokerResponseNative viewSplitResponse = tryExecuteMaterializedViewSplit(requestId, query, sqlNodeAndOptions,
+          requesterIdentity, requestContext, brokerRequest, compileResult, materializedViewContext, routeInfo,
+          remainingTimeMs, errorMsgs, numPrunedSegmentsTotal, schema, database, tableName, userRawTableName,
+          rlsFiltersApplied, serverStats, selectedRoutingManager, routeProvider, queryWasLogged);
       if (viewSplitResponse != null) {
-        viewSplitResponse.setTablesQueried(Set.of(userRawTableName));
-        _materializedViewHandler.annotateResponse(viewSplitResponse, materializedViewContext);
-        for (QueryProcessingException errorMsg : errorMsgs) {
-          viewSplitResponse.addException(errorMsg);
-        }
-        viewSplitResponse.setNumSegmentsPrunedByBroker(numPrunedSegmentsTotal);
-        fillEmptyResponseSchema(pinotQuery, viewSplitResponse, schema, database, query);
-        long totalTimeMs = System.currentTimeMillis() - requestContext.getRequestArrivalTimeMillis();
-        viewSplitResponse.setTimeUsedMs(totalTimeMs);
-        augmentStatistics(requestContext, viewSplitResponse);
-        viewSplitResponse.setRLSFiltersApplied(rlsFiltersApplied);
-        _queryLogger.logQueryCompleted(
-            new QueryLogger.QueryLogParams(requestContext, tableName, viewSplitResponse,
-                QueryLogger.QueryLogParams.QueryEngine.SINGLE_STAGE, requesterIdentity, serverStats),
-            queryWasLogged);
         return viewSplitResponse;
       }
-      /// Fallback: the MV split dispatcher mutated `routeInfo` in place — it stored
-      /// SPLIT-side broker requests (carrying `ts >= boundary` filters) via
+      /// Fallback: the MV split dispatcher mutated `routeInfo` in place — it stored SPLIT-side
+      /// broker requests (carrying `ts >= boundary` filters) via
       /// `setOfflineBrokerRequest`/`setRealtimeBrokerRequest` and overwrote its routing tables.
-      /// To safely fall through to the standard non-split path below, we MUST restore the
-      /// route to its pre-split state.  Easiest: re-acquire a fresh route and recompute its
-      /// routing tables using the original (unmutated) base-table broker requests.  Without
-      /// this, `processBrokerRequest` would dispatch the user's "base table" query with
+      /// To safely fall through to the standard non-split path below, we MUST restore the route
+      /// to its pre-split state.  Easiest: re-acquire a fresh route and recompute its routing
+      /// tables using the original (unmutated) base-table broker requests.  Without this,
+      /// `processBrokerRequest` would dispatch the user's "base table" query with
       /// `ts >= boundary` baked in, silently dropping the historical half of the timeline.
       materializedViewContext = MaterializedViewContext.empty();
       routeInfo = routeProvider.getTableRouteInfo(tableName, _tableCache, selectedRoutingManager);
@@ -926,11 +878,8 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
       /// built below) would track the pre-split server set — a cancel during fallback would
       /// target the wrong instances if rebalancing changed the route between compile and the
       /// post-split refresh.  Per-table pool tags and pruned-segment counts would also reflect
-      /// the stale snapshot.
-      ///
-      /// Note: the unavailable-segments error message in `errorMsgs` was assembled from the
-      /// pre-split list and is left as-is; the metric for that path was already recorded at
-      /// pre-split time, so re-adding the message here would double-count.
+      /// the stale snapshot.  The unavailable-segments error message in `errorMsgs` is left
+      /// as-is — its metric was already recorded at pre-split time.
       offlineExecutionServers = routeInfo.getOfflineExecutionServers();
       realtimeExecutionServers = routeInfo.getRealtimeExecutionServers();
       unavailableSegments = routeInfo.getUnavailableSegments();
@@ -1216,97 +1165,126 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
     /// happened to route through.
     String userRawTableName = rawTableName;
 
-    /// MV rewrite is per-MV-table opt-in (controlled by `rewriteEnabled` on the MV definition).
-    /// The broker always runs the handler when configured; the handler/cache filters out MVs
-    /// that are not eligible for rewrite (no watermark yet, rewrite disabled, staleness SLO
-    /// exceeded).
     MaterializedViewContext materializedViewContext = MaterializedViewContext.empty();
     if (_materializedViewHandler != null) {
-      /// Defense-in-depth wrapper around the MV rewrite path.  The rewrite engine deliberately
-      /// propagates strategy bugs (no silent swallow), but a broken strategy must never kill the
-      /// query — fall back to the base-table path and surface the failure via the meter so
-      /// operators see the regression.  Any exception observed here is a contract violation
-      /// inside a subsumption strategy, the projection map cache, or one of the `Preconditions`
-      /// guards; logging at ERROR with the request id makes the bad MV identifiable.
-      try {
-        materializedViewContext = _materializedViewHandler.compile(new MaterializedViewCompileContext(
-            serverPinotQuery, tableName, rawTableName, _tableCache));
-      } catch (Exception e) {
-        LOGGER.error("Materialized view rewrite failed for request {} on table {}; "
-            + "falling back to base-table query path", requestId, rawTableName, e);
-        _brokerMetrics.addMeteredTableValue(rawTableName, BrokerMeter.QUERY_REWRITE_EXCEPTIONS, 1);
-        materializedViewContext = MaterializedViewContext.empty();
-      }
-      if (materializedViewContext.isFullRewrite()) {
-        /// `FULL_REWRITE` replaces the base-table query with the MV-OFFLINE query.  If the base
-        /// table is hybrid (has both OFFLINE and REALTIME variants), the MV covers only the
-        /// offline half and the swap would silently drop every row ingested through the realtime
-        /// stream since the MV last refreshed.  Reject the rewrite at this broker-handler layer
-        /// (the rewrite engine does not have access to the table cache) so the broker emits the
-        /// matching observability signal and continues against the base table unchanged.
-        String baseRawTableName = TableNameBuilder.extractRawTableName(tableName);
-        boolean baseHasRealtime = _tableCache.getTableConfig(
-            TableNameBuilder.REALTIME.tableNameWithType(baseRawTableName)) != null;
-        if (baseHasRealtime) {
-          LOGGER.warn("FULL_REWRITE skipped for request {} on hybrid base table {}: MV would drop "
-                  + "realtime data; falling back to base-table query path",
-              requestId, baseRawTableName);
-          _brokerMetrics.addMeteredTableValue(baseRawTableName, BrokerMeter.QUERY_REWRITE_EXCEPTIONS, 1);
-          materializedViewContext = MaterializedViewContext.empty();
-        }
-      }
-      if (materializedViewContext.isFullRewrite()) {
-        // Swap server-side query/table/schema to the MV. The pre-rewrite query/table is preserved
-        /// inside `materializedViewContext` so ACL/quota/RLS authorize against the base table.
-        /// `pinotQuery` (user-facing) stays pointing at the original so `fillEmptyResponseSchema`
-        /// and query logging use the base table schema/name rather than the materialized view's.
-        MaterializedViewRewritePlan plan = Preconditions.checkNotNull(materializedViewContext.getPlan(),
-            "FULL_REWRITE context must carry a plan");
-        serverPinotQuery = plan.getMaterializedViewQuery();
-        /// Mark the server query so `BrokerReduceService` can distinguish MV-rewritten queries
-        /// from gapfill / future federated paths via an explicit signal instead of a structural
-        /// heuristic.  Stamped on the swap rather than at plan-construction time so the marker
-        /// is present iff the rewrite was committed to.
-        Map<String, String> serverQueryOptions = serverPinotQuery.getQueryOptions();
-        if (serverQueryOptions == null) {
-          serverQueryOptions = new HashMap<>();
-          serverPinotQuery.setQueryOptions(serverQueryOptions);
-        }
-        serverQueryOptions.put(QueryOptionKey.MATERIALIZED_VIEW_REWRITE, "true");
-        tableName = plan.getMaterializedViewTableNameWithType();
-        rawTableName = TableNameBuilder.extractRawTableName(tableName);
-        schema = _tableCache.getSchema(rawTableName);
-        /// Re-canonicalize column identifiers against the MV table's own column name map.  The
-        /// earlier `updateColumnNames` call (above) ran against the base table; the rewritten MV
-        /// query may reference columns whose case differs from the MV schema's canonical case.
-        /// Wrap in try/catch so a case-sensitive cluster with a case-different MV column name
-        /// falls back to the base-table path instead of failing the query.
-        Map<String, String> mvColumnNameMap = _tableCache.getColumnNameMap(rawTableName);
-        if (mvColumnNameMap != null) {
-          try {
-            updateColumnNames(rawTableName, serverPinotQuery, ignoreCase, mvColumnNameMap);
-          } catch (Exception e) {
-            LOGGER.warn("FULL_REWRITE column re-canonicalization failed for request {} on MV {}; "
-                + "reverting to base-table query path", requestId, rawTableName, e);
-            _brokerMetrics.addMeteredTableValue(rawTableName, BrokerMeter.QUERY_REWRITE_EXCEPTIONS, 1);
-            /// Revert all four `FULL_REWRITE` swap targets back to the pre-rewrite values so the
-            /// caller continues against the base table.  `MaterializedViewContext` preserves
-            /// both the pre-rewrite `serverPinotQuery` and `tableName` on its
-            /// `FullRewriteContext`.
-            serverPinotQuery = materializedViewContext.getPreRewriteServerPinotQueryOrDefault(serverPinotQuery);
-            tableName = materializedViewContext.getPreRewriteTableNameOrDefault(tableName);
-            rawTableName = TableNameBuilder.extractRawTableName(tableName);
-            schema = _tableCache.getSchema(rawTableName);
-            materializedViewContext = MaterializedViewContext.empty();
-          }
-        }
-      }
+      MaterializedViewCompileOutcome outcome = applyMaterializedViewRewriteAtCompile(
+          requestId, serverPinotQuery, tableName, rawTableName, schema, ignoreCase);
+      serverPinotQuery = outcome._serverPinotQuery;
+      tableName = outcome._tableName;
+      rawTableName = outcome._rawTableName;
+      schema = outcome._schema;
+      materializedViewContext = outcome._materializedViewContext;
     }
 
     _queryOptimizer.optimize(serverPinotQuery, schema);
 
     return new CompileResult(pinotQuery, serverPinotQuery, schema, tableName, rawTableName,
         userRawTableName, materializedViewContext, rlsFiltersApplied);
+  }
+
+  /// Mutable holder returned from [#applyMaterializedViewRewriteAtCompile] — Java has no out
+  /// parameters, so the helper returns the (possibly swapped) compile state plus the resulting
+  /// [MaterializedViewContext] in a small bundle.
+  private static final class MaterializedViewCompileOutcome {
+    final PinotQuery _serverPinotQuery;
+    final String _tableName;
+    final String _rawTableName;
+    final Schema _schema;
+    final MaterializedViewContext _materializedViewContext;
+
+    MaterializedViewCompileOutcome(PinotQuery serverPinotQuery, String tableName, String rawTableName,
+        Schema schema, MaterializedViewContext materializedViewContext) {
+      _serverPinotQuery = serverPinotQuery;
+      _tableName = tableName;
+      _rawTableName = rawTableName;
+      _schema = schema;
+      _materializedViewContext = materializedViewContext;
+    }
+  }
+
+  /// MV rewrite is per-MV-table opt-in (controlled by `rewriteEnabled` on the MV definition).
+  /// The broker always runs the handler when configured; the handler/cache filters out MVs that
+  /// are not eligible for rewrite (no watermark yet, rewrite disabled, staleness SLO exceeded).
+  ///
+  /// Returns the (possibly FULL_REWRITE-swapped) compile state and the resulting MV context.
+  /// Any exception inside the rewrite engine is caught here so a broken strategy never kills the
+  /// query — fall back to the base-table path and surface the failure via
+  /// `QUERY_REWRITE_EXCEPTIONS`.
+  private MaterializedViewCompileOutcome applyMaterializedViewRewriteAtCompile(long requestId,
+      PinotQuery serverPinotQuery, String tableName, String rawTableName, Schema schema, boolean ignoreCase) {
+    MaterializedViewContext materializedViewContext;
+    try {
+      materializedViewContext = _materializedViewHandler.compile(new MaterializedViewCompileContext(
+          serverPinotQuery, tableName, rawTableName, _tableCache));
+    } catch (Exception e) {
+      LOGGER.error("Materialized view rewrite failed for request {} on table {}; "
+          + "falling back to base-table query path", requestId, rawTableName, e);
+      _brokerMetrics.addMeteredTableValue(rawTableName, BrokerMeter.QUERY_REWRITE_EXCEPTIONS, 1);
+      return new MaterializedViewCompileOutcome(
+          serverPinotQuery, tableName, rawTableName, schema, MaterializedViewContext.empty());
+    }
+
+    if (!materializedViewContext.isFullRewrite()) {
+      return new MaterializedViewCompileOutcome(
+          serverPinotQuery, tableName, rawTableName, schema, materializedViewContext);
+    }
+
+    /// `FULL_REWRITE` replaces the base-table query with the MV-OFFLINE query.  If the base
+    /// table is hybrid (has both OFFLINE and REALTIME variants), the MV covers only the offline
+    /// half and the swap would silently drop every row ingested through the realtime stream
+    /// since the MV last refreshed.  Reject the rewrite at this broker-handler layer (the
+    /// rewrite engine does not have access to the table cache) so the broker emits the matching
+    /// observability signal and continues against the base table unchanged.
+    String baseRawTableName = TableNameBuilder.extractRawTableName(tableName);
+    if (_tableCache.getTableConfig(TableNameBuilder.REALTIME.tableNameWithType(baseRawTableName)) != null) {
+      LOGGER.warn("FULL_REWRITE skipped for request {} on hybrid base table {}: MV would drop "
+              + "realtime data; falling back to base-table query path", requestId, baseRawTableName);
+      _brokerMetrics.addMeteredTableValue(baseRawTableName, BrokerMeter.QUERY_REWRITE_EXCEPTIONS, 1);
+      return new MaterializedViewCompileOutcome(
+          serverPinotQuery, tableName, rawTableName, schema, MaterializedViewContext.empty());
+    }
+
+    /// Swap server-side query/table/schema to the MV.  The pre-rewrite query/table is preserved
+    /// inside `materializedViewContext` so ACL/quota/RLS authorize against the base table.
+    /// `pinotQuery` (user-facing) stays pointing at the original so `fillEmptyResponseSchema`
+    /// and query logging use the base table schema/name rather than the materialized view's.
+    MaterializedViewRewritePlan plan = Preconditions.checkNotNull(materializedViewContext.getPlan(),
+        "FULL_REWRITE context must carry a plan");
+    PinotQuery rewrittenServerQuery = plan.getMaterializedViewQuery();
+    /// Mark the server query so `BrokerReduceService` can distinguish MV-rewritten queries from
+    /// gapfill / future federated paths via an explicit signal instead of a structural heuristic.
+    /// Stamped on the swap rather than at plan-construction time so the marker is present iff
+    /// the rewrite was committed to.
+    Map<String, String> serverQueryOptions = rewrittenServerQuery.getQueryOptions();
+    if (serverQueryOptions == null) {
+      serverQueryOptions = new HashMap<>();
+      rewrittenServerQuery.setQueryOptions(serverQueryOptions);
+    }
+    serverQueryOptions.put(QueryOptionKey.MATERIALIZED_VIEW_REWRITE, "true");
+    String rewrittenTableName = plan.getMaterializedViewTableNameWithType();
+    String rewrittenRawTableName = TableNameBuilder.extractRawTableName(rewrittenTableName);
+    Schema rewrittenSchema = _tableCache.getSchema(rewrittenRawTableName);
+
+    /// Re-canonicalize column identifiers against the MV table's own column name map.  The
+    /// earlier `updateColumnNames` call (in `compileRequest`) ran against the base table; the
+    /// rewritten MV query may reference columns whose case differs from the MV schema's
+    /// canonical case.  Wrap in try/catch so a case-sensitive cluster with a case-different MV
+    /// column name falls back to the base-table path instead of failing the query.
+    Map<String, String> mvColumnNameMap = _tableCache.getColumnNameMap(rewrittenRawTableName);
+    if (mvColumnNameMap != null) {
+      try {
+        updateColumnNames(rewrittenRawTableName, rewrittenServerQuery, ignoreCase, mvColumnNameMap);
+      } catch (Exception e) {
+        LOGGER.warn("FULL_REWRITE column re-canonicalization failed for request {} on MV {}; "
+            + "reverting to base-table query path", requestId, rewrittenRawTableName, e);
+        _brokerMetrics.addMeteredTableValue(rewrittenRawTableName, BrokerMeter.QUERY_REWRITE_EXCEPTIONS, 1);
+        return new MaterializedViewCompileOutcome(
+            serverPinotQuery, tableName, rawTableName, schema, MaterializedViewContext.empty());
+      }
+    }
+
+    return new MaterializedViewCompileOutcome(
+        rewrittenServerQuery, rewrittenTableName, rewrittenRawTableName, rewrittenSchema, materializedViewContext);
   }
 
   private boolean applyRlsFilters(long requestId, String query, PinotQuery serverPinotQuery, String rawTableName,
@@ -2309,6 +2287,68 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
   }
 
   /// Broker-side helper invoked by the MV handler's split-dispatcher callback. Owns the generic
+  /// Execute a SPLIT_REWRITE plan via the configured MV handler.  Returns a finalized
+  /// `BrokerResponseNative` on success, or `null` to signal the caller should fall through to
+  /// the non-split base-table path.  Execute-time MV failures (route gone mid-query, malformed
+  /// time-format from a pre-V2 rolling-upgrade znode, NPE inside a strategy plan) must never
+  /// surface as HTTP 500 — they bump `QUERY_REWRITE_EXCEPTIONS` and return null.
+  /// `BROKER_RESOURCE_MISSING` (MV dropped mid-query) is demoted to WARN so the operator's
+  /// error-log signal isn't drowned in routine MV churn.
+  @Nullable
+  private BrokerResponseNative tryExecuteMaterializedViewSplit(long requestId, String query,
+      SqlNodeAndOptions sqlNodeAndOptions, @Nullable RequesterIdentity requesterIdentity,
+      RequestContext requestContext, BrokerRequest brokerRequest, CompileResult compileResult,
+      MaterializedViewContext materializedViewContext, TableRouteInfo routeInfo, long remainingTimeMs,
+      List<QueryProcessingException> errorMsgs, int numPrunedSegmentsTotal, Schema schema, String database,
+      String tableName, String userRawTableName, boolean rlsFiltersApplied, ServerStats serverStats,
+      RoutingManager selectedRoutingManager, TableRouteProvider routeProvider, boolean queryWasLogged) {
+    String clientRequestId = extractClientRequestId(sqlNodeAndOptions);
+    MaterializedViewSplitDispatcher dispatcher =
+        (originalReq, baseQ, baseRoute, baseSch, viewQ, viewTable, viewSch, timeoutMs) ->
+            dispatchMaterializedViewSplit(requestId, originalReq, baseQ, baseRoute, baseSch, viewQ, viewTable,
+                viewSch, timeoutMs, serverStats, requestContext, selectedRoutingManager, routeProvider,
+                clientRequestId, query);
+    MaterializedViewSplitExecutionContext splitCtx = MaterializedViewSplitExecutionContext.builder()
+        .originalBrokerRequest(brokerRequest)
+        .baseServerPinotQuery(compileResult._serverPinotQuery)
+        .baseSchema(compileResult._schema)
+        .materializedViewContext(materializedViewContext)
+        .baseRouteInfo(routeInfo)
+        .remainingTimeMs(remainingTimeMs)
+        .dispatcher(dispatcher)
+        .build();
+    BrokerResponseNative viewSplitResponse;
+    try {
+      viewSplitResponse = _materializedViewHandler.executeSplit(splitCtx);
+    } catch (QueryException qe) {
+      LOGGER.warn("Materialized view split execution skipped for request {} on table {}: {}; "
+          + "falling back to base-table query path", requestId, userRawTableName, qe.getMessage());
+      _brokerMetrics.addMeteredTableValue(userRawTableName, BrokerMeter.QUERY_REWRITE_EXCEPTIONS, 1);
+      return null;
+    } catch (Exception e) {
+      LOGGER.error("Materialized view split execution failed for request {} on table {}; "
+          + "falling back to base-table query path", requestId, userRawTableName, e);
+      _brokerMetrics.addMeteredTableValue(userRawTableName, BrokerMeter.QUERY_REWRITE_EXCEPTIONS, 1);
+      return null;
+    }
+    viewSplitResponse.setTablesQueried(Set.of(userRawTableName));
+    _materializedViewHandler.annotateResponse(viewSplitResponse, materializedViewContext);
+    for (QueryProcessingException errorMsg : errorMsgs) {
+      viewSplitResponse.addException(errorMsg);
+    }
+    viewSplitResponse.setNumSegmentsPrunedByBroker(numPrunedSegmentsTotal);
+    fillEmptyResponseSchema(compileResult._pinotQuery, viewSplitResponse, schema, database, query);
+    long totalTimeMs = System.currentTimeMillis() - requestContext.getRequestArrivalTimeMillis();
+    viewSplitResponse.setTimeUsedMs(totalTimeMs);
+    augmentStatistics(requestContext, viewSplitResponse);
+    viewSplitResponse.setRLSFiltersApplied(rlsFiltersApplied);
+    _queryLogger.logQueryCompleted(
+        new QueryLogger.QueryLogParams(requestContext, tableName, viewSplitResponse,
+            QueryLogger.QueryLogParams.QueryEngine.SINGLE_STAGE, requesterIdentity, serverStats),
+        queryWasLogged);
+    return viewSplitResponse;
+  }
+
   /// route-build + scatter-gather + reduce work (hybrid offline/realtime split, always-false-filter
   /// pruning, MV-side route, deep-copy of the reduce request to strip `SERVER_RETURN_FINAL_RESULT`).
   /// MV-specific concerns (time-boundary computation and per-branch filter attachment) live in the
