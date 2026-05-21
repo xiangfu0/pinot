@@ -18,11 +18,9 @@
  */
 package org.apache.pinot.materializedview.context;
 
-import com.google.common.base.Preconditions;
 import javax.annotation.Nullable;
 import org.apache.pinot.common.request.PinotQuery;
 import org.apache.pinot.materializedview.rewrite.MaterializedViewRewritePlan;
-import org.apache.pinot.materializedview.rewrite.MaterializedViewRewriteResult;
 import org.apache.pinot.spi.data.Schema;
 
 
@@ -35,17 +33,21 @@ import org.apache.pinot.spi.data.Schema;
 public final class MaterializedViewContext {
   private static final MaterializedViewContext EMPTY = new MaterializedViewContext(null, null, null);
 
+  /// Non-null exactly when a swap was committed (either `forFullRewrite` or `forSplitRewrite`).
+  /// `empty()` carries a null plan — `annotateResponse` keys on the matching
+  /// [#isFullRewrite()] / [#isSplitRewrite()] flag rather than plan-presence so the response
+  /// field is stamped only when the broker actually swapped to an MV.
   @Nullable
-  private final MaterializedViewRewriteResult _rewriteResult;
+  private final MaterializedViewRewritePlan _plan;
   @Nullable
   private final SplitRewriteContext _splitRewriteContext;
   @Nullable
   private final FullRewriteContext _fullRewriteContext;
 
-  private MaterializedViewContext(@Nullable MaterializedViewRewriteResult rewriteResult,
+  private MaterializedViewContext(@Nullable MaterializedViewRewritePlan plan,
       @Nullable SplitRewriteContext splitRewriteContext,
       @Nullable FullRewriteContext fullRewriteContext) {
-    _rewriteResult = rewriteResult;
+    _plan = plan;
     _splitRewriteContext = splitRewriteContext;
     _fullRewriteContext = fullRewriteContext;
   }
@@ -54,28 +56,18 @@ public final class MaterializedViewContext {
     return EMPTY;
   }
 
-  public static MaterializedViewContext fromRewriteResult(@Nullable MaterializedViewRewriteResult rewriteResult) {
-    return rewriteResult != null ? new MaterializedViewContext(rewriteResult, null, null) : EMPTY;
-  }
-
-  public static MaterializedViewContext forSplitRewrite(MaterializedViewRewriteResult rewriteResult,
+  public static MaterializedViewContext forSplitRewrite(MaterializedViewRewritePlan plan,
       PinotQuery viewServerPinotQuery, String viewTableNameWithType, Schema viewSchema) {
-    Preconditions.checkState(rewriteResult.isHit(), "Split rewrite context requires an MV hit");
     SplitRewriteContext splitRewriteContext =
         new SplitRewriteContext(viewServerPinotQuery, viewTableNameWithType, viewSchema);
-    return new MaterializedViewContext(rewriteResult, splitRewriteContext, null);
+    return new MaterializedViewContext(plan, splitRewriteContext, null);
   }
 
-  public static MaterializedViewContext forFullRewrite(MaterializedViewRewriteResult rewriteResult,
+  public static MaterializedViewContext forFullRewrite(MaterializedViewRewritePlan plan,
       PinotQuery preRewriteServerPinotQuery, String preRewriteTableName) {
-    Preconditions.checkState(rewriteResult.isHit(), "Full rewrite context requires an MV hit");
     FullRewriteContext fullRewriteContext =
         new FullRewriteContext(preRewriteServerPinotQuery, preRewriteTableName);
-    return new MaterializedViewContext(rewriteResult, null, fullRewriteContext);
-  }
-
-  public boolean hasRewriteResult() {
-    return _rewriteResult != null;
+    return new MaterializedViewContext(plan, null, fullRewriteContext);
   }
 
   public boolean isSplitRewrite() {
@@ -88,12 +80,12 @@ public final class MaterializedViewContext {
 
   @Nullable
   public String getMaterializedViewQueriedName() {
-    return _rewriteResult != null ? _rewriteResult.getMaterializedViewQueriedName() : null;
+    return _plan != null ? _plan.getMaterializedViewTableNameWithType() : null;
   }
 
   @Nullable
   public MaterializedViewRewritePlan getPlan() {
-    return _rewriteResult != null ? _rewriteResult.getPlan() : null;
+    return _plan;
   }
 
   @Nullable

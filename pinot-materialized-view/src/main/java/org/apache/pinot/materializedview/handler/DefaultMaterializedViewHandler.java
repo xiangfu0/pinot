@@ -34,7 +34,6 @@ import org.apache.pinot.materializedview.rewrite.ExecutionMode;
 import org.apache.pinot.materializedview.rewrite.MaterializedViewQueryRewriteEngine;
 import org.apache.pinot.materializedview.rewrite.MaterializedViewQueryRewriteEngineFactory;
 import org.apache.pinot.materializedview.rewrite.MaterializedViewRewritePlan;
-import org.apache.pinot.materializedview.rewrite.MaterializedViewRewriteResult;
 import org.apache.pinot.spi.data.DateTimeFormatSpec;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.env.PinotConfiguration;
@@ -92,21 +91,18 @@ public class DefaultMaterializedViewHandler implements MaterializedViewHandler {
 
   @Override
   public MaterializedViewContext compile(MaterializedViewCompileContext ctx) {
-    MaterializedViewRewriteResult rewriteResult =
+    MaterializedViewRewritePlan plan =
         _rewriteEngine.tryRewrite(ctx.getServerPinotQuery(), ctx.getRawTableName());
-    if (rewriteResult == null || !rewriteResult.isHit()) {
-      // Carry the rewrite result (which records candidates considered) so the response can still
-      // surface evaluation metadata even when no MV applied.
-      return MaterializedViewContext.fromRewriteResult(rewriteResult);
+    if (plan == null) {
+      return MaterializedViewContext.empty();
     }
 
-    MaterializedViewRewritePlan plan = rewriteResult.getPlan();
     String mvTableNameWithType = plan.getMaterializedViewTableNameWithType();
     String mvRawTableName = TableNameBuilder.extractRawTableName(mvTableNameWithType);
     Schema mvSchema = ctx.getTableCache().getSchema(mvRawTableName);
     if (mvSchema == null) {
       LOGGER.warn("MV schema not found for {}; skipping rewrite", mvTableNameWithType);
-      return MaterializedViewContext.fromRewriteResult(rewriteResult);
+      return MaterializedViewContext.empty();
     }
 
     /// Cold-start defense-in-depth: an MV with `watermarkMs <= 0` has no committed coverage yet
@@ -120,22 +116,22 @@ public class DefaultMaterializedViewHandler implements MaterializedViewHandler {
     if (plan.getExecMode() == ExecutionMode.SPLIT_REWRITE && plan.getWatermarkMs() <= 0) {
       LOGGER.debug("MV {} has watermarkMs={} <= 0; skipping SPLIT_REWRITE for request",
           mvTableNameWithType, plan.getWatermarkMs());
-      return MaterializedViewContext.fromRewriteResult(rewriteResult);
+      return MaterializedViewContext.empty();
     }
 
     if (plan.getExecMode() == ExecutionMode.SPLIT_REWRITE) {
       if (!_supportsSplitRewrite) {
         LOGGER.debug("Handler does not support SPLIT_REWRITE; skipping for MV {}", mvTableNameWithType);
-        return MaterializedViewContext.fromRewriteResult(rewriteResult);
+        return MaterializedViewContext.empty();
       }
-      return MaterializedViewContext.forSplitRewrite(rewriteResult, plan.getMaterializedViewQuery(),
+      return MaterializedViewContext.forSplitRewrite(plan, plan.getMaterializedViewQuery(),
           mvTableNameWithType, mvSchema);
     }
 
-    // FULL_REWRITE: caller swaps serverQuery/tableName/schema to point at the MV. The
-    // pre-rewrite values are preserved in the returned context so ACL/quota/RLS authorize against
-    // the original base table, not the MV that replaced it.
-    return MaterializedViewContext.forFullRewrite(rewriteResult, ctx.getServerPinotQuery(),
+    /// `FULL_REWRITE`: caller swaps serverQuery/tableName/schema to point at the MV.  The
+    /// pre-rewrite values are preserved in the returned context so ACL/quota/RLS authorize
+    /// against the original base table, not the MV that replaced it.
+    return MaterializedViewContext.forFullRewrite(plan, ctx.getServerPinotQuery(),
         ctx.getTableNameWithType());
   }
 

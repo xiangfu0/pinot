@@ -50,7 +50,6 @@ import org.apache.pinot.materializedview.rewrite.ExecutionMode;
 import org.apache.pinot.materializedview.rewrite.MatchType;
 import org.apache.pinot.materializedview.rewrite.MaterializedViewQueryRewriteEngine;
 import org.apache.pinot.materializedview.rewrite.MaterializedViewRewritePlan;
-import org.apache.pinot.materializedview.rewrite.MaterializedViewRewriteResult;
 import org.apache.pinot.spi.accounting.ThreadAccountantUtils;
 import org.apache.pinot.spi.auth.TableAuthorizationResult;
 import org.apache.pinot.spi.auth.TableRowColAccessResultImpl;
@@ -601,14 +600,12 @@ public class BaseSingleStageBrokerRequestHandlerTest {
 
     MaterializedViewRewritePlan plan = new MaterializedViewRewritePlan(
         materializedViewOfflineTable, MatchType.EXACT, ExecutionMode.FULL_REWRITE, materializedViewQuery, 1.0);
-    MaterializedViewRewriteResult viewResult =
-        new MaterializedViewRewriteResult(List.of(materializedViewOfflineTable), plan);
 
     AtomicReference<PinotQuery> querySeenByMaterializedViewRewrite = new AtomicReference<>();
     MaterializedViewQueryRewriteEngine materializedViewEngine = mock(MaterializedViewQueryRewriteEngine.class);
     when(materializedViewEngine.tryRewrite(any(PinotQuery.class), anyString())).thenAnswer(invocation -> {
       querySeenByMaterializedViewRewrite.set(((PinotQuery) invocation.getArgument(0)).deepCopy());
-      return viewResult;
+      return plan;
     });
     MaterializedViewHandler materializedViewHandler = new DefaultMaterializedViewHandler(materializedViewEngine);
 
@@ -723,14 +720,12 @@ public class BaseSingleStageBrokerRequestHandlerTest {
 
     MaterializedViewRewritePlan plan = new MaterializedViewRewritePlan(
         materializedViewOfflineTable, MatchType.EXACT, ExecutionMode.FULL_REWRITE, materializedViewQuery, 1.0);
-    MaterializedViewRewriteResult viewResult =
-        new MaterializedViewRewriteResult(List.of(materializedViewOfflineTable), plan);
 
     AtomicReference<PinotQuery> querySeenByMaterializedViewRewrite = new AtomicReference<>();
     MaterializedViewQueryRewriteEngine materializedViewEngine = mock(MaterializedViewQueryRewriteEngine.class);
     when(materializedViewEngine.tryRewrite(any(PinotQuery.class), anyString())).thenAnswer(invocation -> {
       querySeenByMaterializedViewRewrite.set(((PinotQuery) invocation.getArgument(0)).deepCopy());
-      return viewResult;
+      return plan;
     });
     MaterializedViewHandler materializedViewHandler = new DefaultMaterializedViewHandler(materializedViewEngine);
 
@@ -973,11 +968,9 @@ public class BaseSingleStageBrokerRequestHandlerTest {
 
     MaterializedViewRewritePlan plan = new MaterializedViewRewritePlan(
         materializedViewOfflineTable, MatchType.EXACT, ExecutionMode.FULL_REWRITE, materializedViewQuery, 1.0);
-    MaterializedViewRewriteResult viewResult =
-        new MaterializedViewRewriteResult(List.of(materializedViewOfflineTable), plan);
 
     MaterializedViewQueryRewriteEngine materializedViewEngine = mock(MaterializedViewQueryRewriteEngine.class);
-    when(materializedViewEngine.tryRewrite(any(PinotQuery.class), anyString())).thenReturn(viewResult);
+    when(materializedViewEngine.tryRewrite(any(PinotQuery.class), anyString())).thenReturn(plan);
     MaterializedViewHandler materializedViewHandler = new DefaultMaterializedViewHandler(materializedViewEngine);
 
     Schema baseSchema = new Schema.SchemaBuilder()
@@ -1105,11 +1098,9 @@ public class BaseSingleStageBrokerRequestHandlerTest {
     // while the response still claimed the MV was used.
     MaterializedViewRewritePlan plan = new MaterializedViewRewritePlan(
         materializedViewOfflineTable, MatchType.EXACT, ExecutionMode.FULL_REWRITE, materializedViewQuery, 1.0);
-    MaterializedViewRewriteResult viewResult =
-        new MaterializedViewRewriteResult(List.of(materializedViewOfflineTable), plan);
 
     MaterializedViewQueryRewriteEngine materializedViewEngine = mock(MaterializedViewQueryRewriteEngine.class);
-    when(materializedViewEngine.tryRewrite(any(PinotQuery.class), anyString())).thenReturn(viewResult);
+    when(materializedViewEngine.tryRewrite(any(PinotQuery.class), anyString())).thenReturn(plan);
     MaterializedViewHandler materializedViewHandler = new DefaultMaterializedViewHandler(materializedViewEngine);
 
     Schema baseSchema = new Schema.SchemaBuilder()

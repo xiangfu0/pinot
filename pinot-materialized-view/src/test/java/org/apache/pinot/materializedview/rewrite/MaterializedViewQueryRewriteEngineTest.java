@@ -97,7 +97,7 @@ public class MaterializedViewQueryRewriteEngineTest {
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(
         "SELECT city, SUM(revenue) FROM orders GROUP BY city");
 
-    MaterializedViewRewriteResult result = engine.tryRewrite(userQuery, "orders");
+    MaterializedViewRewritePlan result = engine.tryRewrite(userQuery, "orders");
     assertNull(result);
   }
 
@@ -110,7 +110,7 @@ public class MaterializedViewQueryRewriteEngineTest {
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(
         "SELECT city, SUM(revenue) FROM orders GROUP BY city");
 
-    MaterializedViewRewriteResult result = engine.tryRewrite(userQuery, "orders");
+    MaterializedViewRewritePlan result = engine.tryRewrite(userQuery, "orders");
     assertNull(result);
   }
 
@@ -130,13 +130,11 @@ public class MaterializedViewQueryRewriteEngineTest {
     MaterializedViewQueryRewriteEngine engine = exactEngine(cache);
 
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(userSql);
-    MaterializedViewRewriteResult result = engine.tryRewrite(userQuery, "orders");
+    MaterializedViewRewritePlan result = engine.tryRewrite(userQuery, "orders");
 
     assertNotNull(result);
-    assertTrue(result.isHit());
-    assertEquals(result.getMaterializedViewQueriedName(), "mv_all_OFFLINE");
-    assertEquals(result.getPlan().getCost(), 0.0);
-    assertEquals(result.getCandidateNames(), List.of("mv_all_OFFLINE", "mv_us_OFFLINE"));
+    assertEquals(result.getMaterializedViewTableNameWithType(), "mv_all_OFFLINE");
+    assertEquals(result.getCost(), 0.0);
   }
 
   @Test
@@ -151,11 +149,8 @@ public class MaterializedViewQueryRewriteEngineTest {
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(
         "SELECT state, MAX(revenue) FROM orders GROUP BY state");
 
-    MaterializedViewRewriteResult result = engine.tryRewrite(userQuery, "orders");
-    assertNotNull(result);
-    assertFalse(result.isHit());
-    assertNull(result.getMaterializedViewQueriedName());
-    assertEquals(result.getCandidateNames(), List.of("mv_orders_OFFLINE"));
+    MaterializedViewRewritePlan result = engine.tryRewrite(userQuery, "orders");
+    assertNull(result);
   }
 
   @Test
@@ -202,11 +197,10 @@ public class MaterializedViewQueryRewriteEngineTest {
         List.of(noOpStrategy, new ExactSubsumptionStrategy()));
 
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(userSql);
-    MaterializedViewRewriteResult result = engine.tryRewrite(userQuery, "orders");
+    MaterializedViewRewritePlan result = engine.tryRewrite(userQuery, "orders");
 
     assertNotNull(result);
-    assertTrue(result.isHit());
-    assertEquals(result.getMaterializedViewQueriedName(), "mv_orders_OFFLINE");
+    assertEquals(result.getMaterializedViewTableNameWithType(), "mv_orders_OFFLINE");
   }
 
   @Test
@@ -223,10 +217,8 @@ public class MaterializedViewQueryRewriteEngineTest {
     MaterializedViewQueryRewriteEngine engine = exactEngine(cache);
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(userSql);
 
-    MaterializedViewRewriteResult result = engine.tryRewrite(userQuery, "orders");
-    assertNotNull(result);
-    assertFalse(result.isHit());
-    assertEquals(result.getCandidateNames(), List.of("mv_stale_OFFLINE"));
+    MaterializedViewRewritePlan result = engine.tryRewrite(userQuery, "orders");
+    assertNull(result);
   }
 
   @Test
@@ -243,10 +235,8 @@ public class MaterializedViewQueryRewriteEngineTest {
     MaterializedViewQueryRewriteEngine engine = exactEngine(cache);
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(userSql);
 
-    MaterializedViewRewriteResult result = engine.tryRewrite(userQuery, "orders");
-    assertNotNull(result);
-    assertFalse(result.isHit());
-    assertEquals(result.getCandidateNames(), List.of("mv_degraded_OFFLINE"));
+    MaterializedViewRewritePlan result = engine.tryRewrite(userQuery, "orders");
+    assertNull(result);
   }
 
   @Test
@@ -264,11 +254,9 @@ public class MaterializedViewQueryRewriteEngineTest {
     MaterializedViewQueryRewriteEngine engine = exactEngine(cache);
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(userSql);
 
-    MaterializedViewRewriteResult result = engine.tryRewrite(userQuery, "orders");
+    MaterializedViewRewritePlan result = engine.tryRewrite(userQuery, "orders");
     assertNotNull(result);
-    assertTrue(result.isHit());
-    assertEquals(result.getMaterializedViewQueriedName(), "mv_fresh_OFFLINE");
-    assertEquals(result.getCandidateNames(), List.of("mv_stale_OFFLINE", "mv_fresh_OFFLINE"));
+    assertEquals(result.getMaterializedViewTableNameWithType(), "mv_fresh_OFFLINE");
   }
 
   // ---------------------------------------------------------------------------
@@ -298,12 +286,10 @@ public class MaterializedViewQueryRewriteEngineTest {
     MaterializedViewQueryRewriteEngine engine = exactEngine(cache);
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(userSql);
 
-    MaterializedViewRewriteResult result = engine.tryRewrite(userQuery, "orders");
-    assertNotNull(result);
-    assertFalse(result.isHit(),
+    MaterializedViewRewritePlan result = engine.tryRewrite(userQuery, "orders");
+    assertNull(result,
         "SPLIT_REWRITE must be skipped when viewTimeColumn is null; otherwise the MV branch "
             + "would run without an upper-bound filter and double-count with the base branch.");
-    assertEquals(result.getCandidateNames(), List.of("mv_split_OFFLINE"));
   }
 
   @Test
@@ -322,12 +308,10 @@ public class MaterializedViewQueryRewriteEngineTest {
     MaterializedViewQueryRewriteEngine engine = aggregationEngine(cache);
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(userSql);
 
-    MaterializedViewRewriteResult result = engine.tryRewrite(userQuery, "orders");
-    assertNotNull(result);
-    assertFalse(result.isHit(),
+    MaterializedViewRewritePlan result = engine.tryRewrite(userQuery, "orders");
+    assertNull(result,
         "COUNT->SUM re-aggregation is not split-safe. The engine must skip a partially covered MV "
             + "instead of falling back to FULL_REWRITE and dropping newer base-table rows.");
-    assertEquals(result.getCandidateNames(), List.of("mv_split_OFFLINE"));
   }
 
   @Test
@@ -347,11 +331,10 @@ public class MaterializedViewQueryRewriteEngineTest {
     MaterializedViewQueryRewriteEngine engine = aggregationEngine(cache);
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(userSql);
 
-    MaterializedViewRewriteResult result = engine.tryRewrite(userQuery, "orders");
-    assertNotNull(result);
-    assertTrue(result.isHit(), "A source-time upper bound before watermarkMs is safe for FULL_REWRITE");
-    assertEquals(result.getPlan().getExecMode(), ExecutionMode.FULL_REWRITE);
-    assertEquals(result.getMaterializedViewQueriedName(), "mv_split_OFFLINE");
+    MaterializedViewRewritePlan result = engine.tryRewrite(userQuery, "orders");
+    assertNotNull(result, "A source-time upper bound before watermarkMs is safe for FULL_REWRITE");
+    assertEquals(result.getExecMode(), ExecutionMode.FULL_REWRITE);
+    assertEquals(result.getMaterializedViewTableNameWithType(), "mv_split_OFFLINE");
   }
 
   @Test
@@ -373,9 +356,8 @@ public class MaterializedViewQueryRewriteEngineTest {
     MaterializedViewQueryRewriteEngine engine = aggregationEngine(cache);
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(userSql);
 
-    MaterializedViewRewriteResult result = engine.tryRewrite(userQuery, "orders");
-    assertNotNull(result);
-    assertFalse(result.isHit(),
+    MaterializedViewRewritePlan result = engine.tryRewrite(userQuery, "orders");
+    assertNull(result,
         "eventDay <= boundary includes rows at the split boundary, so FULL_REWRITE would drop base rows");
   }
 
@@ -401,9 +383,8 @@ public class MaterializedViewQueryRewriteEngineTest {
     MaterializedViewQueryRewriteEngine engine = exactEngine(cache);
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(userSql);
 
-    MaterializedViewRewriteResult result = engine.tryRewrite(userQuery, "orders");
-    assertNotNull(result);
-    assertFalse(result.isHit(),
+    MaterializedViewRewritePlan result = engine.tryRewrite(userQuery, "orders");
+    assertNull(result,
         "EXACT match for aggregation MV in split mode must be rejected, even without GROUP BY — "
             + "the base/MV merge would otherwise see incompatible schemas (aggregation intermediate "
             + "vs plain materialized column).");
@@ -431,9 +412,8 @@ public class MaterializedViewQueryRewriteEngineTest {
     // a downstream strategy masking the rejection.
     MaterializedViewQueryRewriteEngine exactOnly = exactEngine(cache);
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(userSql);
-    MaterializedViewRewriteResult exactResult = exactOnly.tryRewrite(userQuery, "orders");
-    assertNotNull(exactResult);
-    assertFalse(exactResult.isHit(),
+    MaterializedViewRewritePlan exactResult = exactOnly.tryRewrite(userQuery, "orders");
+    assertNull(exactResult,
         "EXACT match for aggregation MV in split mode with GROUP BY must be rejected.");
 
     // With AggregationSubsumptionStrategy available the engine should fall through to AGG_REAGG
@@ -441,12 +421,11 @@ public class MaterializedViewQueryRewriteEngineTest {
     MaterializedViewQueryRewriteEngine fullEngine = new MaterializedViewQueryRewriteEngine(cache,
         List.of(new ExactSubsumptionStrategy(), new AggregationSubsumptionStrategy()));
     PinotQuery userQuery2 = CalciteSqlParser.compileToPinotQuery(userSql);
-    MaterializedViewRewriteResult fallthroughResult = fullEngine.tryRewrite(userQuery2, "orders");
-    assertNotNull(fallthroughResult);
-    assertTrue(fallthroughResult.isHit(),
+    MaterializedViewRewritePlan fallthroughResult = fullEngine.tryRewrite(userQuery2, "orders");
+    assertNotNull(fallthroughResult,
         "Engine should fall through from EXACT to AGG_REAGG in split mode for aggregation MV.");
-    assertEquals(fallthroughResult.getPlan().getMatchType(), MatchType.AGG_REAGG);
-    assertEquals(fallthroughResult.getPlan().getExecMode(), ExecutionMode.SPLIT_REWRITE);
+    assertEquals(fallthroughResult.getMatchType(), MatchType.AGG_REAGG);
+    assertEquals(fallthroughResult.getExecMode(), ExecutionMode.SPLIT_REWRITE);
   }
 
   @Test
@@ -467,10 +446,9 @@ public class MaterializedViewQueryRewriteEngineTest {
     MaterializedViewQueryRewriteEngine engine = aggregationEngine(cache);
     PinotQuery userQuery = CalciteSqlParser.compileToPinotQuery(userSql);
 
-    MaterializedViewRewriteResult result = engine.tryRewrite(userQuery, "orders");
-    assertNotNull(result);
-    assertTrue(result.isHit(), "Sketch re-aggregation produces the same intermediate type on both split branches");
-    assertEquals(result.getPlan().getExecMode(), ExecutionMode.SPLIT_REWRITE);
-    assertEquals(result.getMaterializedViewQueriedName(), "mv_split_OFFLINE");
+    MaterializedViewRewritePlan result = engine.tryRewrite(userQuery, "orders");
+    assertNotNull(result, "Sketch re-aggregation produces the same intermediate type on both split branches");
+    assertEquals(result.getExecMode(), ExecutionMode.SPLIT_REWRITE);
+    assertEquals(result.getMaterializedViewTableNameWithType(), "mv_split_OFFLINE");
   }
 }

@@ -93,19 +93,14 @@ public class MaterializedViewQueryRewriteEngine {
   ///
   /// @param pinotQuery       the compiled user query
   /// @param rawBaseTableName the raw (no type suffix) name of the base table being queried
-  /// @return the rewrite result containing candidate names and optional plan,
-  ///         or `null` if no candidate MVs exist for the base table
+  /// @return the best rewrite plan for the user query, or `null` if no candidate MVs exist for
+  ///         the base table or none matched
   @Nullable
-  public MaterializedViewRewriteResult tryRewrite(PinotQuery pinotQuery, String rawBaseTableName) {
+  public MaterializedViewRewritePlan tryRewrite(PinotQuery pinotQuery, String rawBaseTableName) {
     List<MaterializedViewCacheEntry> candidates =
         _materializedViewMetadataCache.getMaterializedViewEntriesForBaseTable(rawBaseTableName);
     if (candidates == null || candidates.isEmpty()) {
       return null;
-    }
-
-    List<String> candidateNames = new ArrayList<>(candidates.size());
-    for (MaterializedViewCacheEntry candidate : candidates) {
-      candidateNames.add(candidate.getMaterializedViewTableNameWithType());
     }
 
     MaterializedViewRewritePlan bestPlan = null;
@@ -117,13 +112,13 @@ public class MaterializedViewQueryRewriteEngine {
       }
 
       for (MaterializedViewMatchStrategy strategy : _strategies) {
-        // Strategies signal "no structural match" by returning null and "fully resolved plan" by
-        // returning non-null; any thrown exception is a strategy bug or contract violation and is
-        // surfaced here rather than silently swallowed.  Swallowing would mask a bug behind a
-        // less-precise strategy match (or a base-only fallback) without operator visibility on a
-        // hot path.  The caller (`BaseSingleStageBrokerRequestHandler`) wraps the whole rewrite
-        // in its own try/catch so a thrown exception still falls back to the base query, but
-        // surfaces the stack via the standard query-error path.
+        /// Strategies signal "no structural match" by returning null and "fully resolved plan"
+        /// by returning non-null; any thrown exception is a strategy bug or contract violation
+        /// and is surfaced here rather than silently swallowed.  Swallowing would mask a bug
+        /// behind a less-precise strategy match (or a base-only fallback) without operator
+        /// visibility on a hot path.  The caller (`BaseSingleStageBrokerRequestHandler`) wraps
+        /// the whole rewrite in its own try/catch so a thrown exception still falls back to the
+        /// base query, but surfaces the stack via the standard query-error path.
         MaterializedViewRewritePlan plan = strategy.match(pinotQuery, candidate);
         if (plan == null) {
           continue;
@@ -131,9 +126,9 @@ public class MaterializedViewQueryRewriteEngine {
 
         plan = resolvePlan(plan, candidate, pinotQuery);
         if (plan == null) {
-          // Strategy matched structurally but the plan is incompatible with
-          // the required execution mode (e.g. EXACT + split + GROUP BY).
-          // Try lower-precision strategies for this candidate.
+          /// Strategy matched structurally but the plan is incompatible with the required
+          /// execution mode (e.g. EXACT + split + GROUP BY).  Try lower-precision strategies for
+          /// this candidate.
           continue;
         }
 
@@ -141,7 +136,7 @@ public class MaterializedViewQueryRewriteEngine {
           bestPlan = plan;
           bestStrategyName = strategy.getClass().getSimpleName();
         }
-        // A fully resolved plan was found; skip lower-precision strategies.
+        /// A fully resolved plan was found; skip lower-precision strategies.
         break;
       }
     }
@@ -152,14 +147,18 @@ public class MaterializedViewQueryRewriteEngine {
           rawBaseTableName, bestStrategyName, bestPlan.getMaterializedViewTableNameWithType(),
           bestPlan.getMatchType(), bestPlan.getExecMode(), bestPlan.getCost(),
           pinotQuery, bestPlan.getMaterializedViewQuery());
-    } else {
+    } else if (LOGGER.isDebugEnabled()) {
+      List<String> candidateNames = new ArrayList<>(candidates.size());
+      for (MaterializedViewCacheEntry candidate : candidates) {
+        candidateNames.add(candidate.getMaterializedViewTableNameWithType());
+      }
       LOGGER.debug("MV rewrite miss for table [{}]: evaluated {} candidate(s)={}, "
               + "queryShape={}, userQuery=[{}]",
           rawBaseTableName, candidates.size(), candidateNames,
           MaterializedViewQueryShape.classify(pinotQuery), pinotQuery);
     }
 
-    return new MaterializedViewRewriteResult(candidateNames, bestPlan);
+    return bestPlan;
   }
 
   // -----------------------------------------------------------------------
