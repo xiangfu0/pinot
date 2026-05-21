@@ -275,16 +275,14 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
       return false;
     }
 
+    // TODO: Use different global query id for OFFLINE and REALTIME table after releasing 0.12.0. See QueryIdUtils for
+    //       details
+    String globalQueryId = getGlobalQueryId(queryId);
     List<Pair<String, String>> serverUrls = new ArrayList<>();
-    for (Map.Entry<Long, Set<ServerInstance>> entry : queryServers.getServersByRequestId(queryId).entrySet()) {
-      // TODO: Use different global query id for OFFLINE and REALTIME table after releasing 0.12.0. See QueryIdUtils
-      //       for details.
-      String globalQueryId = getGlobalQueryId(entry.getKey());
-      for (ServerInstance serverInstance : entry.getValue()) {
-        // TODO: how should we add the cid here? Maybe as a query param?
-        //  we can get the cid from QueryThreadContext
-        serverUrls.add(Pair.of(String.format("%s/query/%s", serverInstance.getAdminEndpoint(), globalQueryId), null));
-      }
+    for (ServerInstance serverInstance : queryServers._servers) {
+      // TODO: how should we add the cid here? Maybe as a query param?
+      //  we can get the cid from QueryThreadContext
+      serverUrls.add(Pair.of(String.format("%s/query/%s", serverInstance.getAdminEndpoint(), globalQueryId), null));
     }
     LOGGER.debug("Cancelling the query: {} via server urls: {}", queryServers._query, serverUrls);
     CompletionService<MultiHttpRequestResponse> completionService =
@@ -425,13 +423,14 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
       JsonNode request, @Nullable RequesterIdentity requesterIdentity, RequestContext requestContext,
       @Nullable HttpHeaders httpHeaders, AccessControl accessControl, boolean queryWasLogged)
       throws Exception {
-    /// MV deployments only: strip any user-supplied `MATERIALIZED_VIEW_REWRITE` query option so
-    /// the broker-internal marker stamped during a committed `FULL_REWRITE` swap is the only
-    /// path that can produce it.  Without this guard a hostile client could spoof the marker and
-    /// bypass `BrokerReduceService`'s "Nested query is not supported without gapfill" safety
-    /// net.  `doHandleRequest` is the choke point both the top-level `handleRequest` entry and
-    /// the `IN_SUBQUERY` recursion go through, so a single strip covers both paths.
-    if (_materializedViewHandler != null && sqlNodeAndOptions.getOptions() != null) {
+    /// Strip any user-supplied `MATERIALIZED_VIEW_REWRITE` query option so the broker-internal
+    /// marker stamped during a committed `FULL_REWRITE` swap is the only path that can produce
+    /// it.  Without this guard a hostile client could spoof the marker and bypass
+    /// `BrokerReduceService`'s "Nested query is not supported without gapfill" safety net on
+    /// any `brokerRequest != serverBrokerRequest` path (current or future).  `doHandleRequest`
+    /// is the choke point both the top-level `handleRequest` entry and the `IN_SUBQUERY`
+    /// recursion go through, so a single strip covers both paths.
+    if (sqlNodeAndOptions.getOptions() != null) {
       sqlNodeAndOptions.getOptions().remove(QueryOptionKey.MATERIALIZED_VIEW_REWRITE);
     }
     // Compile the request into PinotQuery
@@ -2416,10 +2415,16 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
 
     long materializedViewRequestId = _requestIdGenerator.get();
     if (isQueryCancellationEnabled()) {
-      onQueryStart(requestId, clientRequestId, query,
-          new QueryServers(query, requestId, hybridBaseRoute.getOfflineExecutionServers(),
-              hybridBaseRoute.getRealtimeExecutionServers(), materializedViewRequestId,
-              viewRouteInfo.getOfflineExecutionServers(), viewRouteInfo.getRealtimeExecutionServers()));
+      /// Track the union of base + MV server sets against the user's `requestId`.  Cancel will
+      /// be sent under the user's global query id; the MV-side servers may already have
+      /// finished by the time cancel fires, but they would not be reached by global-id cancel
+      /// anyway (they ran under `materializedViewRequestId`).  Improving per-sub-request cancel
+      /// is out of scope for this PR — see the TODO in `handleCancel` for the eventual fix.
+      Set<ServerInstance> offlineUnion =
+          unionServers(hybridBaseRoute.getOfflineExecutionServers(), viewRouteInfo.getOfflineExecutionServers());
+      Set<ServerInstance> realtimeUnion =
+          unionServers(hybridBaseRoute.getRealtimeExecutionServers(), viewRouteInfo.getRealtimeExecutionServers());
+      onQueryStart(requestId, clientRequestId, query, new QueryServers(query, offlineUnion, realtimeUnion));
       try {
         return processMaterializedViewSplitBrokerRequest(requestId, materializedViewRequestId, reduceBrokerRequest,
             hybridBaseRoute, viewRouteInfo, timeoutMs, serverStats, requestContext);
@@ -2431,6 +2436,20 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
 
     return processMaterializedViewSplitBrokerRequest(requestId, materializedViewRequestId, reduceBrokerRequest,
         hybridBaseRoute, viewRouteInfo, timeoutMs, serverStats, requestContext);
+  }
+
+  @Nullable
+  private static Set<ServerInstance> unionServers(@Nullable Set<ServerInstance> a, @Nullable Set<ServerInstance> b) {
+    if (a == null) {
+      return b;
+    }
+    if (b == null) {
+      return a;
+    }
+    Set<ServerInstance> union = new HashSet<>(a.size() + b.size());
+    union.addAll(a);
+    union.addAll(b);
+    return union;
   }
 
   /**
@@ -2564,44 +2583,16 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
   private static class QueryServers {
     final String _query;
     final Set<ServerInstance> _servers = new HashSet<>();
-    final Map<Long, Set<ServerInstance>> _serversByRequestId = new HashMap<>();
 
     QueryServers(String query, @Nullable Set<ServerInstance> offlineExecutionServers,
         @Nullable Set<ServerInstance> realtimeExecutionServers) {
       _query = query;
-      addServers(-1L, offlineExecutionServers, realtimeExecutionServers);
-    }
-
-    QueryServers(String query, long baseRequestId, @Nullable Set<ServerInstance> baseOfflineExecutionServers,
-        @Nullable Set<ServerInstance> baseRealtimeExecutionServers, long materializedViewRequestId,
-        @Nullable Set<ServerInstance> materializedViewOfflineExecutionServers,
-        @Nullable Set<ServerInstance> materializedViewRealtimeExecutionServers) {
-      _query = query;
-      addServers(baseRequestId, baseOfflineExecutionServers, baseRealtimeExecutionServers);
-      addServers(materializedViewRequestId, materializedViewOfflineExecutionServers,
-          materializedViewRealtimeExecutionServers);
-    }
-
-    private void addServers(long requestId, @Nullable Set<ServerInstance> offlineExecutionServers,
-        @Nullable Set<ServerInstance> realtimeExecutionServers) {
-      Set<ServerInstance> servers = new HashSet<>();
       if (offlineExecutionServers != null) {
-        servers.addAll(offlineExecutionServers);
+        _servers.addAll(offlineExecutionServers);
       }
       if (realtimeExecutionServers != null) {
-        servers.addAll(realtimeExecutionServers);
+        _servers.addAll(realtimeExecutionServers);
       }
-      _servers.addAll(servers);
-      if (requestId >= 0) {
-        _serversByRequestId.put(requestId, servers);
-      }
-    }
-
-    Map<Long, Set<ServerInstance>> getServersByRequestId(long defaultRequestId) {
-      if (_serversByRequestId.isEmpty()) {
-        return Map.of(defaultRequestId, _servers);
-      }
-      return _serversByRequestId;
     }
   }
 }
