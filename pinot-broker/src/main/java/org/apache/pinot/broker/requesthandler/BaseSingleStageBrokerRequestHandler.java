@@ -859,11 +859,9 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
                   viewSch, timeoutMs, serverStats, requestContext, selectedRoutingManager, routeProvider,
                   clientRequestId, query);
       MaterializedViewSplitExecutionContext splitCtx = MaterializedViewSplitExecutionContext.builder()
-          .requestId(requestId)
           .originalBrokerRequest(brokerRequest)
           .baseServerPinotQuery(compileResult._serverPinotQuery)
           .baseSchema(compileResult._schema)
-          .baseTableNameWithType(compileResult._tableName)
           .materializedViewContext(materializedViewContext)
           .baseRouteInfo(routeInfo)
           .remainingTimeMs(remainingTimeMs)
@@ -1232,7 +1230,7 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
       /// guards; logging at ERROR with the request id makes the bad MV identifiable.
       try {
         materializedViewContext = _materializedViewHandler.compile(new MaterializedViewCompileContext(
-            requestId, serverPinotQuery, tableName, rawTableName, schema, _tableCache));
+            serverPinotQuery, tableName, rawTableName, _tableCache));
       } catch (Exception e) {
         LOGGER.error("Materialized view rewrite failed for request {} on table {}; "
             + "falling back to base-table query path", requestId, rawTableName, e);

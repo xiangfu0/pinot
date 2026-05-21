@@ -20,35 +20,27 @@ package org.apache.pinot.materializedview.handler;
 
 import org.apache.pinot.common.config.provider.TableCache;
 import org.apache.pinot.common.request.PinotQuery;
-import org.apache.pinot.spi.data.Schema;
 
 
 /// Inputs the broker passes to [MaterializedViewHandler#compile] at query compile time.
 ///
 /// Carries the post-base-rewrite server query (after standard broker rewrites such as HLL log2m
-/// and approximate-function override have run) plus the schemas / table names the handler needs
-/// to (a) decide whether an MV applies and (b) construct any rewritten server query / split
-/// context.
+/// and approximate-function override have run) plus the table names and table cache the handler
+/// needs to (a) decide whether an MV applies and (b) construct any rewritten server query /
+/// split context.  The MV-side schema is fetched on demand via [#getTableCache()]; the base
+/// table schema is reachable the same way if a custom handler ever needs it.
 public final class MaterializedViewCompileContext {
-  private final long _requestId;
   private final PinotQuery _serverPinotQuery;
   private final String _tableNameWithType;
   private final String _rawTableName;
-  private final Schema _baseTableSchema;
   private final TableCache _tableCache;
 
-  public MaterializedViewCompileContext(long requestId, PinotQuery serverPinotQuery,
-      String tableNameWithType, String rawTableName, Schema baseTableSchema, TableCache tableCache) {
-    _requestId = requestId;
+  public MaterializedViewCompileContext(PinotQuery serverPinotQuery, String tableNameWithType,
+      String rawTableName, TableCache tableCache) {
     _serverPinotQuery = serverPinotQuery;
     _tableNameWithType = tableNameWithType;
     _rawTableName = rawTableName;
-    _baseTableSchema = baseTableSchema;
     _tableCache = tableCache;
-  }
-
-  public long getRequestId() {
-    return _requestId;
   }
 
   public PinotQuery getServerPinotQuery() {
@@ -61,10 +53,6 @@ public final class MaterializedViewCompileContext {
 
   public String getRawTableName() {
     return _rawTableName;
-  }
-
-  public Schema getBaseTableSchema() {
-    return _baseTableSchema;
   }
 
   public TableCache getTableCache() {

@@ -212,9 +212,9 @@ public class DefaultMaterializedViewHandler implements MaterializedViewHandler {
     }
     attachFilter(viewPinotQuery, viewBoundary, FilterKind.LESS_THAN);
 
-    LOGGER.info("MV split execution for request {}: baseTable={}, materializedViewTable={}, "
+    LOGGER.info("MV split execution: baseTable={}, materializedViewTable={}, "
             + "boundaryTimeMs={}, baseColumn={}, viewColumn={}",
-        ctx.getRequestId(), ctx.getBaseTableNameWithType(),
+        ctx.getOriginalBrokerRequest().getQuerySource().getTableName(),
         splitRewriteContext.getMaterializedViewTableNameWithType(), boundaryTimeMs,
         baseTimeColumn, viewTimeColumn);
 
