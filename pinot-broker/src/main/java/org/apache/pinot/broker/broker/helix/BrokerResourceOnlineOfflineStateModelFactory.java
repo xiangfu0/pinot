@@ -101,10 +101,10 @@ public class BrokerResourceOnlineOfflineStateModelFactory extends StateModelFact
               _helixDataAccessor.getProperty(_helixDataAccessor.keyBuilder().externalView(BROKER_RESOURCE_INSTANCE)));
           _queryQuotaManager.createDatabaseRateLimiter(
               DatabaseUtils.extractDatabaseFromFullyQualifiedTableName(physicalOrLogicalTable));
-          // Rebuild the MV cache entry in case its broker resource was previously cycled
-          // OFFLINE without the definition znode being deleted (e.g. an operator-driven
-          // OFFLINE/ONLINE toggle for maintenance). Symmetric counterpart to the
-          // invalidate-on-OFFLINE call below.
+          /// Rebuild the MV cache entry in case its broker resource was previously cycled
+          /// OFFLINE without the definition znode being deleted (e.g. an operator-driven
+          /// OFFLINE/ONLINE toggle for maintenance).  Symmetric counterpart to the
+          /// invalidate-on-OFFLINE call below.
           refreshMaterializedViewCacheForTable(physicalOrLogicalTable);
         }
       } catch (Exception e) {
@@ -123,10 +123,10 @@ public class BrokerResourceOnlineOfflineStateModelFactory extends StateModelFact
           _routingManager.removeRoutingForLogicalTable(physicalOrLogicalTable);
           _queryQuotaManager.dropTableQueryQuota(physicalOrLogicalTable);
         } else {
-          // Invalidate MV cache BEFORE routing so an in-flight query that has not yet
-          // passed compile cannot pick up a stale MV candidate after routing has gone
-          // away — the worst-case window then yields a successful non-MV plan rather
-          // than a "no servers found" failure on a now-routeless MV table.
+          /// Invalidate MV cache BEFORE routing so an in-flight query that has not yet
+          /// passed compile cannot pick up a stale MV candidate after routing has gone
+          /// away — the worst-case window then yields a successful non-MV plan rather
+          /// than a "no servers found" failure on a now-routeless MV table.
           invalidateMaterializedViewCacheForTable(physicalOrLogicalTable);
           _routingManager.removeRouting(physicalOrLogicalTable);
           _queryQuotaManager.dropTableQueryQuota(physicalOrLogicalTable);
@@ -152,7 +152,7 @@ public class BrokerResourceOnlineOfflineStateModelFactory extends StateModelFact
           _routingManager.removeRoutingForLogicalTable(physicalOrLogicalTable);
           _queryQuotaManager.dropTableQueryQuota(physicalOrLogicalTable);
         } else {
-          // See onBecomeOfflineFromOnline — invalidate MV cache BEFORE routing.
+          /// See `onBecomeOfflineFromOnline` — invalidate MV cache BEFORE routing.
           invalidateMaterializedViewCacheForTable(physicalOrLogicalTable);
           _routingManager.removeRouting(physicalOrLogicalTable);
           _queryQuotaManager.dropTableQueryQuota(physicalOrLogicalTable);

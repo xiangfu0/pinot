@@ -109,13 +109,14 @@ public class DefaultMaterializedViewHandler implements MaterializedViewHandler {
       return MaterializedViewContext.fromRewriteResult(rewriteResult);
     }
 
-    // Cold-start defense-in-depth: an MV with watermarkMs <= 0 has no committed coverage yet
-    // (no APPEND has completed). The rewrite engine's resolvePlan already filters cold-start
-    // candidates for split-spec MVs (which carry watermarkMs on the plan) — this guard re-checks
-    // them here in case a future engine change loses that filter. ONLY applies to SPLIT_REWRITE
-    // because FULL_REWRITE plans intentionally carry watermarkMs=0 (no boundary literal is
-    // attached at execute time, so the watermark is irrelevant) and a blanket `<= 0` check would
-    // wrongly drop every FULL_REWRITE attempt.
+    /// Cold-start defense-in-depth: an MV with `watermarkMs <= 0` has no committed coverage yet
+    /// (no APPEND has completed). The rewrite engine's `resolvePlan` already filters cold-start
+    /// candidates for split-spec MVs (which carry `watermarkMs` on the plan) — this guard
+    /// re-checks them in case a future engine change loses that filter.
+    ///
+    /// ONLY applies to `SPLIT_REWRITE`: `FULL_REWRITE` plans intentionally carry `watermarkMs=0`
+    /// (no boundary literal is attached at execute time, so the watermark is irrelevant), and a
+    /// blanket `<= 0` check would wrongly drop every `FULL_REWRITE` attempt.
     if (plan.getExecMode() == ExecutionMode.SPLIT_REWRITE && plan.getWatermarkMs() <= 0) {
       LOGGER.debug("MV {} has watermarkMs={} <= 0; skipping SPLIT_REWRITE for request",
           mvTableNameWithType, plan.getWatermarkMs());
@@ -128,7 +129,7 @@ public class DefaultMaterializedViewHandler implements MaterializedViewHandler {
         return MaterializedViewContext.fromRewriteResult(rewriteResult);
       }
       return MaterializedViewContext.forSplitRewrite(rewriteResult, plan.getMaterializedViewQuery(),
-          mvTableNameWithType, mvRawTableName, mvSchema);
+          mvTableNameWithType, mvSchema);
     }
 
     // FULL_REWRITE: caller swaps serverQuery/tableName/schema to point at the MV. The
@@ -230,12 +231,12 @@ public class DefaultMaterializedViewHandler implements MaterializedViewHandler {
 
   @Override
   public void annotateResponse(BrokerResponseNative response, MaterializedViewContext mvContext) {
-    // The response field is the operator's signal that an MV actually served the query. Gate on
-    // the committed execution mode so a `fromRewriteResult` path (rewrite matched structurally
-    // but the handler skipped the swap, e.g. SPLIT_REWRITE on a cold-start MV or an MV-schema
-    // miss) does not produce a false-positive annotation. Without this guard, the broker would
-    // report `materializedViewQueried=mv_orders_OFFLINE` even when the server query stayed
-    // against the base table.
+    /// The response field is the operator's signal that an MV actually served the query.
+    /// Gate on the committed execution mode so a `fromRewriteResult` path (rewrite matched
+    /// structurally but the handler skipped the swap — e.g. `SPLIT_REWRITE` on a cold-start MV
+    /// or an MV-schema miss) does not produce a false-positive annotation.  Without this guard
+    /// the broker would report `materializedViewQueried=mv_orders_OFFLINE` even when the server
+    /// query stayed against the base table.
     if (mvContext == null || (!mvContext.isFullRewrite() && !mvContext.isSplitRewrite())) {
       return;
     }

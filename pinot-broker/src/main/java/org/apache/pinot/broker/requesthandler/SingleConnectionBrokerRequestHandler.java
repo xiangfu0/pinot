@@ -212,17 +212,17 @@ public class SingleConnectionBrokerRequestHandler extends BaseSingleStageBrokerR
     String rawTableName =
         TableNameBuilder.extractRawTableName(originalBrokerRequest.getQuerySource().getTableName());
 
-    // Capture a single wall-clock deadline up front and derive every downstream timeout from it.
-    // The split path submits two scatter-gathers AND a reduce; passing `timeoutMs` to each of
-    // them would let two sub-queries individually consume the full budget, leaving the reduce
-    // with a negative remaining and producing silently-truncated results.
+    /// Capture a single wall-clock deadline up front and derive every downstream timeout from it.
+    /// The split path submits two scatter-gathers AND a reduce; passing `timeoutMs` to each of
+    /// them would let two sub-queries individually consume the full budget, leaving the reduce
+    /// with a negative remaining and producing silently-truncated results.
     long deadlineNs = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
     long scatterGatherStartTimeNs = System.nanoTime();
 
-    // Submit base-table and materialized view queries in parallel through the QueryRouter.
-    // Each route may fan out to multiple servers (especially if the base table is hybrid).
-    // The MV sub-query uses its own request id so it cannot collide with the base sub-query on
-    // servers that receive both requests.
+    /// Submit base-table and materialized-view queries in parallel through the `QueryRouter`.
+    /// Each route may fan out to multiple servers (especially if the base table is hybrid).
+    /// The MV sub-query uses its own request id so it cannot collide with the base sub-query on
+    /// servers that receive both requests.
     long submitTimeoutMs = Math.max(1L, TimeUnit.NANOSECONDS.toMillis(deadlineNs - System.nanoTime()));
     AsyncQueryResponse baseAsyncResponse =
         _queryRouter.submitQuery(requestId, rawTableName, baseRoute, submitTimeoutMs);
@@ -251,11 +251,11 @@ public class SingleConnectionBrokerRequestHandler extends BaseSingleStageBrokerR
     _brokerMetrics.addPhaseTiming(rawTableName, BrokerQueryPhase.SCATTER_GATHER,
         System.nanoTime() - scatterGatherStartTimeNs);
 
-    // Merge DataTables from both base and MV responses into a single map using identity
-    // equality so that ServerRoutingInstance objects from different sub-queries never collide.
-    // ServerRoutingInstance.equals() keyed on (hostname, port, tableType) can produce the
-    // same hash for base and MV rows on a shared server, causing silent overwrites with a
-    // regular HashMap.
+    /// Merge `DataTable`s from both base and MV responses into a single map using identity
+    /// equality so that `ServerRoutingInstance` objects from different sub-queries never collide.
+    /// `ServerRoutingInstance.equals()` keyed on (hostname, port, tableType) can produce the
+    /// same hash for base and MV rows on a shared server, causing silent overwrites with a
+    /// regular `HashMap`.
     int totalServersQueried = baseFinalResponses.size() + viewFinalResponses.size();
     List<ServerRoutingInstance> serversNotResponded = new ArrayList<>();
     long[] totalResponseSizeHolder = {0L};
@@ -265,29 +265,30 @@ public class SingleConnectionBrokerRequestHandler extends BaseSingleStageBrokerR
     long totalResponseSize = totalResponseSizeHolder[0];
     int numServersResponded = dataTableMap.size();
 
-    // Zero MV-side DataTables when MV servers WERE dispatched would silently undercount
-    // the historical half of the timeline (base ⊕ MV are disjoint, so a missing MV side
-    // produces results that look complete but cover only `ts >= boundary`). Throw a hard
-    // error here so the outer try/catch in BaseSingleStageBrokerRequestHandler bumps
-    // QUERY_REWRITE_EXCEPTIONS and falls back to the unsplit base-table query path.
+    /// Zero MV-side DataTables when MV servers WERE dispatched would silently undercount the
+    /// historical half of the timeline (base ⊕ MV are disjoint, so a missing MV side produces
+    /// results that look complete but cover only `ts >= boundary`).  Throw a hard error here
+    /// so the outer try/catch in `BaseSingleStageBrokerRequestHandler` bumps
+    /// `QUERY_REWRITE_EXCEPTIONS` and falls back to the unsplit base-table query path.
     if (!viewFinalResponses.isEmpty() && countSuccessfulDataTables(viewFinalResponses) == 0) {
       throw new QueryException(QueryErrorCode.SERVER_NOT_RESPONDING,
           "Materialized view split: all " + viewFinalResponses.size()
               + " MV server(s) failed to return a DataTable; refusing to return partial result");
     }
-    // Symmetric guard for the base side: if base servers were dispatched but every one of them
-    // failed to return a DataTable, the response would cover only `ts < boundary` (the MV half),
-    // again silently undercounting. Refusing here lets the outer try/catch fall back to the
-    // unsplit base-table query path, which will surface the same server failure through normal
-    // error reporting rather than embedded in a misleadingly-complete-looking response.
+    /// Symmetric guard for the base side: if base servers were dispatched but every one of
+    /// them failed to return a DataTable, the response would cover only `ts < boundary` (the
+    /// MV half), again silently undercounting.  Refusing here lets the outer try/catch fall
+    /// back to the unsplit base-table query path, which will surface the same server failure
+    /// through normal error reporting rather than embedded in a misleadingly-complete-looking
+    /// response.
     if (!baseFinalResponses.isEmpty() && countSuccessfulDataTables(baseFinalResponses) == 0) {
       throw new QueryException(QueryErrorCode.SERVER_NOT_RESPONDING,
           "Materialized view split: all " + baseFinalResponses.size()
               + " base-table server(s) failed to return a DataTable; refusing to return partial result");
     }
 
-    // Reduce using the original user query so that the correct reducer (selection, aggregation,
-    // group-by) is selected and intermediate results are merged properly.
+    /// Reduce using the original user query so that the correct reducer (selection,
+    /// aggregation, group-by) is selected and intermediate results are merged properly.
     long reduceStartTimeNs = System.nanoTime();
     long reduceTimeoutMs = TimeUnit.NANOSECONDS.toMillis(deadlineNs - reduceStartTimeNs);
     if (reduceTimeoutMs <= 0) {

@@ -59,10 +59,10 @@ public final class MaterializedViewContext {
   }
 
   public static MaterializedViewContext forSplitRewrite(MaterializedViewRewriteResult rewriteResult,
-      PinotQuery viewServerPinotQuery, String viewTableNameWithType, String viewRawTableName, Schema viewSchema) {
+      PinotQuery viewServerPinotQuery, String viewTableNameWithType, Schema viewSchema) {
     Preconditions.checkState(rewriteResult.isHit(), "Split rewrite context requires an MV hit");
     SplitRewriteContext splitRewriteContext =
-        new SplitRewriteContext(viewServerPinotQuery, viewTableNameWithType, viewRawTableName, viewSchema);
+        new SplitRewriteContext(viewServerPinotQuery, viewTableNameWithType, viewSchema);
     return new MaterializedViewContext(rewriteResult, splitRewriteContext, null);
   }
 
@@ -109,18 +109,18 @@ public final class MaterializedViewContext {
     return _fullRewriteContext != null ? _fullRewriteContext.getPreRewriteTableName() : defaultTableName;
   }
 
-  /// MV branch state for split execution.
+  /// MV branch state for split execution.  Callers that need the raw table name derive it
+  /// via [TableNameBuilder#extractRawTableName(String)] from
+  /// [#getMaterializedViewTableNameWithType()]; storing a separate raw-name field would just
+  /// duplicate that single string operation.
   public static final class SplitRewriteContext {
     private final PinotQuery _materializedViewServerPinotQuery;
     private final String _materializedViewTableNameWithType;
-    private final String _materializedViewRawTableName;
     private final Schema _materializedViewSchema;
 
-    private SplitRewriteContext(PinotQuery viewServerPinotQuery, String viewTableNameWithType,
-        String viewRawTableName, Schema viewSchema) {
+    private SplitRewriteContext(PinotQuery viewServerPinotQuery, String viewTableNameWithType, Schema viewSchema) {
       _materializedViewServerPinotQuery = viewServerPinotQuery;
       _materializedViewTableNameWithType = viewTableNameWithType;
-      _materializedViewRawTableName = viewRawTableName;
       _materializedViewSchema = viewSchema;
     }
 
@@ -130,10 +130,6 @@ public final class MaterializedViewContext {
 
     public String getMaterializedViewTableNameWithType() {
       return _materializedViewTableNameWithType;
-    }
-
-    public String getMaterializedViewRawTableName() {
-      return _materializedViewRawTableName;
     }
 
     public Schema getMaterializedViewSchema() {

@@ -199,7 +199,7 @@ public class MaterializedViewMetadataCache {
     String offlineMvName = TableNameBuilder.OFFLINE.tableNameWithType(rawTableName);
     String offlineMvDefPath = MATERIALIZED_VIEW_DEFINITION_PATH_PREFIX + offlineMvName;
     synchronized (_cacheLock) {
-      // Case 1: the transitioning table is an MV — direct rehydrate of its own entry.
+      /// Case 1: the transitioning table is an MV — direct rehydrate of its own entry.
       if (!_materializedViewEntryMap.containsKey(offlineMvName)
           && _propertyStore.exists(offlineMvDefPath, AccessOption.PERSISTENT)) {
         addDefinitions(List.of(offlineMvDefPath));
@@ -209,19 +209,20 @@ public class MaterializedViewMetadataCache {
         }
       }
 
-      // Case 2: the transitioning table may be a BASE table referenced by other MVs whose
-      // entries were evicted during the matching OFFLINE invalidate.  Walk every MV definition
-      // child znode (a low-frequency operation, only on resource state transitions) and reload
-      // any whose base-table list mentions this table and whose in-memory entry is gone.
+      /// Case 2: the transitioning table may be a BASE table referenced by other MVs whose
+      /// entries were evicted during the matching `invalidateBaseTable`.  Walk every MV
+      /// definition child znode (a low-frequency operation — only on resource state transitions)
+      /// and reload any whose base-table list mentions this table and whose in-memory entry is
+      /// gone.
       List<String> defChildren =
           _propertyStore.getChildNames(MATERIALIZED_VIEW_DEFINITION_PARENT_PATH, AccessOption.PERSISTENT);
       if (CollectionUtils.isEmpty(defChildren)) {
         return;
       }
-      // baseTables list stores the raw base-table name (no type suffix); compare against the raw
-      // form of the transitioning table. We also accept typed siblings ("<raw>_OFFLINE" /
-      // "<raw>_REALTIME") so a definition that was created with a typed name (e.g. older format
-      // or operator typo) is still picked up by the refresh.
+      /// `baseTables` stores the raw base-table name (no type suffix); compare against the raw
+      /// form of the transitioning table.  We also accept typed siblings (`<raw>_OFFLINE` /
+      /// `<raw>_REALTIME`) so a definition created with a typed name (older format or operator
+      /// typo) is still picked up.
       String rawSibling = TableNameBuilder.extractRawTableName(rawTableName);
       String offlineSibling = TableNameBuilder.OFFLINE.tableNameWithType(rawSibling);
       String realtimeSibling = TableNameBuilder.REALTIME.tableNameWithType(rawSibling);
