@@ -40,6 +40,7 @@ import org.apache.pinot.materializedview.metadata.MaterializedViewDefinitionMeta
 import org.apache.pinot.materializedview.metadata.MaterializedViewDefinitionMetadata.MaterializedViewSplitSpec;
 import org.apache.pinot.materializedview.metadata.MaterializedViewRuntimeMetadata;
 import org.apache.pinot.materializedview.metadata.PartitionInfo;
+import org.apache.pinot.spi.utils.builder.TableNameBuilder;
 import org.apache.pinot.sql.parsers.CalciteSqlParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -160,7 +161,7 @@ public class MaterializedViewMetadataCache {
       // that's required to detect new MV creations and is correct.  Operator guidance: drop
       // the MV definition znode before taking the MV table OFFLINE in Helix to avoid the brief
       // QUERY_REWRITE_EXCEPTIONS noise between the OFFLINE transition and the znode delete.
-      String offlineMvName = rawBaseTableName + "_OFFLINE";
+      String offlineMvName = TableNameBuilder.OFFLINE.tableNameWithType(rawBaseTableName);
       if (_materializedViewEntryMap.containsKey(offlineMvName)) {
         removeDefinitionEntry(MATERIALIZED_VIEW_DEFINITION_PATH_PREFIX + offlineMvName);
       }
@@ -174,28 +175,84 @@ public class MaterializedViewMetadataCache {
     return _materializedViewEntryMap.size();
   }
 
-  /// Rebuilds the cache entry for `rawTableName` if its definition znode exists in ZK but is
-  /// not currently in the cache.  Called from the broker resource state model on OFFLINE→ONLINE
-  /// transitions so an MV whose broker resource was toggled (without deleting the definition
-  /// znode) becomes queryable again without a broker restart or znode republish.
+  /// Rebuilds cache entries that were evicted during an earlier ONLINE→OFFLINE transition for the
+  /// given table.  Called from the broker resource state model on OFFLINE→ONLINE transitions so a
+  /// previous cycle (or a transient broker-resource rebalance) does not leave this broker
+  /// permanently unable to consider an MV until the definition znode is republished.
   ///
-  /// Idempotent: if the entry is already present this is a no-op; if the znode is absent (MV
-  /// was actually dropped) this is also a no-op.  Subscribes the matching runtime listener +
-  /// rebuilds runtime state alongside the definition.
+  /// Two complementary scenarios are handled because the broker resource state model fires for
+  /// BOTH base tables and MV tables — and `invalidateBaseTable` evicts cache entries in both
+  /// cases (an MV evicted because its base table cycled is the more common one):
+  ///
+  ///   1. **MV table cycled** — the transitioning table IS the MV. Look up its own definition
+  ///      znode under `<rawTableName>_OFFLINE` and reload it.
+  ///   2. **Base table cycled** — the transitioning table is a base referenced by one or more
+  ///      MVs.  Walk every MV definition znode currently in ZK, decode its base-table list, and
+  ///      reload any whose base tables include either `rawTableName_OFFLINE` or
+  ///      `rawTableName_REALTIME` and that are missing from the in-memory cache.  Without this
+  ///      path, a base-table OFFLINE→ONLINE bounce permanently silences MV rewrite on this broker.
+  ///
+  /// Idempotent: entries already in the cache are skipped; absent definition znodes (genuine
+  /// drop) are also skipped.  Subscribes the matching runtime listener + rebuilds runtime state
+  /// alongside the definition.
   public void refreshTable(String rawTableName) {
-    String offlineMvName = rawTableName + "_OFFLINE";
-    String defPath = MATERIALIZED_VIEW_DEFINITION_PATH_PREFIX + offlineMvName;
+    String offlineMvName = TableNameBuilder.OFFLINE.tableNameWithType(rawTableName);
+    String offlineMvDefPath = MATERIALIZED_VIEW_DEFINITION_PATH_PREFIX + offlineMvName;
     synchronized (_cacheLock) {
-      if (_materializedViewEntryMap.containsKey(offlineMvName)) {
+      // Case 1: the transitioning table is an MV — direct rehydrate of its own entry.
+      if (!_materializedViewEntryMap.containsKey(offlineMvName)
+          && _propertyStore.exists(offlineMvDefPath, AccessOption.PERSISTENT)) {
+        addDefinitions(List.of(offlineMvDefPath));
+        String offlineMvRuntimePath = MATERIALIZED_VIEW_RUNTIME_PATH_PREFIX + offlineMvName;
+        if (_propertyStore.exists(offlineMvRuntimePath, AccessOption.PERSISTENT)) {
+          loadRuntimeStates(List.of(offlineMvRuntimePath));
+        }
+      }
+
+      // Case 2: the transitioning table may be a BASE table referenced by other MVs whose
+      // entries were evicted during the matching OFFLINE invalidate.  Walk every MV definition
+      // child znode (a low-frequency operation, only on resource state transitions) and reload
+      // any whose base-table list mentions this table and whose in-memory entry is gone.
+      List<String> defChildren =
+          _propertyStore.getChildNames(MATERIALIZED_VIEW_DEFINITION_PARENT_PATH, AccessOption.PERSISTENT);
+      if (CollectionUtils.isEmpty(defChildren)) {
         return;
       }
-      if (!_propertyStore.exists(defPath, AccessOption.PERSISTENT)) {
-        return;
+      // baseTables list stores the raw base-table name (no type suffix); compare against the raw
+      // form of the transitioning table. We also accept typed siblings ("<raw>_OFFLINE" /
+      // "<raw>_REALTIME") so a definition that was created with a typed name (e.g. older format
+      // or operator typo) is still picked up by the refresh.
+      String rawSibling = TableNameBuilder.extractRawTableName(rawTableName);
+      String offlineSibling = TableNameBuilder.OFFLINE.tableNameWithType(rawSibling);
+      String realtimeSibling = TableNameBuilder.REALTIME.tableNameWithType(rawSibling);
+      List<String> defPathsToReload = new ArrayList<>();
+      List<String> runtimePathsToReload = new ArrayList<>();
+      for (String mvViewTableName : defChildren) {
+        if (_materializedViewEntryMap.containsKey(mvViewTableName)) {
+          continue;
+        }
+        String defPath = MATERIALIZED_VIEW_DEFINITION_PATH_PREFIX + mvViewTableName;
+        ZNRecord znRecord = _propertyStore.get(defPath, null, AccessOption.PERSISTENT);
+        if (znRecord == null) {
+          continue;
+        }
+        MaterializedViewDefinitionMetadata definition = MaterializedViewDefinitionMetadata.fromZNRecord(znRecord);
+        List<String> baseTables = definition.getBaseTables();
+        if (baseTables == null) {
+          continue;
+        }
+        if (baseTables.contains(rawSibling)
+            || baseTables.contains(offlineSibling)
+            || baseTables.contains(realtimeSibling)) {
+          defPathsToReload.add(defPath);
+          runtimePathsToReload.add(MATERIALIZED_VIEW_RUNTIME_PATH_PREFIX + mvViewTableName);
+        }
       }
-      addDefinitions(List.of(defPath));
-      String rtPath = MATERIALIZED_VIEW_RUNTIME_PATH_PREFIX + offlineMvName;
-      if (_propertyStore.exists(rtPath, AccessOption.PERSISTENT)) {
-        loadRuntimeStates(List.of(rtPath));
+      if (!defPathsToReload.isEmpty()) {
+        addDefinitions(defPathsToReload);
+        // loadRuntimeStates already tolerates missing znodes (the get returns null and the entry
+        // stays at cold-start until the runtime listener fires the first update).
+        loadRuntimeStates(runtimePathsToReload);
       }
     }
   }

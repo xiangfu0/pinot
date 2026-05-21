@@ -109,14 +109,15 @@ public class DefaultMaterializedViewHandler implements MaterializedViewHandler {
       return MaterializedViewContext.fromRewriteResult(rewriteResult);
     }
 
-    // Eligibility gate: an MV with watermarkMs <= 0 has no committed coverage yet (cold-start
-    // before the first APPEND task completes). Routing the user query through it would either
-    // return zero rows from the MV side (SPLIT_REWRITE) or — worse — return an empty FULL_REWRITE
-    // result that violates the user's intent. Fall back to the base table by returning the
-    // empty rewrite context. The rewrite engine's eligibility check is best-effort; this gate is
-    // the defense-in-depth.
-    if (plan.getWatermarkMs() <= 0) {
-      LOGGER.debug("MV {} has watermarkMs={} <= 0; skipping rewrite for request",
+    // Cold-start defense-in-depth: an MV with watermarkMs <= 0 has no committed coverage yet
+    // (no APPEND has completed). The rewrite engine's resolvePlan already filters cold-start
+    // candidates for split-spec MVs (which carry watermarkMs on the plan) — this guard re-checks
+    // them here in case a future engine change loses that filter. ONLY applies to SPLIT_REWRITE
+    // because FULL_REWRITE plans intentionally carry watermarkMs=0 (no boundary literal is
+    // attached at execute time, so the watermark is irrelevant) and a blanket `<= 0` check would
+    // wrongly drop every FULL_REWRITE attempt.
+    if (plan.getExecMode() == ExecutionMode.SPLIT_REWRITE && plan.getWatermarkMs() <= 0) {
+      LOGGER.debug("MV {} has watermarkMs={} <= 0; skipping SPLIT_REWRITE for request",
           mvTableNameWithType, plan.getWatermarkMs());
       return MaterializedViewContext.fromRewriteResult(rewriteResult);
     }
@@ -229,7 +230,13 @@ public class DefaultMaterializedViewHandler implements MaterializedViewHandler {
 
   @Override
   public void annotateResponse(BrokerResponseNative response, MaterializedViewContext mvContext) {
-    if (mvContext == null || !mvContext.hasRewriteResult()) {
+    // The response field is the operator's signal that an MV actually served the query. Gate on
+    // the committed execution mode so a `fromRewriteResult` path (rewrite matched structurally
+    // but the handler skipped the swap, e.g. SPLIT_REWRITE on a cold-start MV or an MV-schema
+    // miss) does not produce a false-positive annotation. Without this guard, the broker would
+    // report `materializedViewQueried=mv_orders_OFFLINE` even when the server query stayed
+    // against the base table.
+    if (mvContext == null || (!mvContext.isFullRewrite() && !mvContext.isSplitRewrite())) {
       return;
     }
     response.setMaterializedViewQueried(mvContext.getMaterializedViewQueriedName());
