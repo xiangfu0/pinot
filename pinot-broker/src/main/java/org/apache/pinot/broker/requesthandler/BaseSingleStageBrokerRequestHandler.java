@@ -377,30 +377,27 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
     final Schema _schema;
     final String _tableName;
     final String _rawTableName;
-    /// User-facing raw table name preserved across the FULL_REWRITE MV swap.  When the broker
-    /// rewrites a base-table query to target an MV, `_rawTableName` becomes the MV's raw name
-    /// (the routing target); `_userRawTableName` stays on the base table so the public-facing
-    /// `tablesQueried` response field tags the user's table.  Per-table broker metrics and
+    final BrokerResponse _errorOrLiteralOnlyBrokerResponse;
+    /// MV compile-time output.  When [MaterializedViewContext#isFullRewrite()] holds,
+    /// `_serverPinotQuery`/`_tableName`/`_rawTableName` point at the MV; the original
+    /// base-table query/table is preserved inside this context and surfaced via
+    /// `getPreRewriteServerPinotQueryOrDefault` / `getUserRawTableNameOrDefault` so the broker
+    /// can charge ACL/quota/RLS against the user's base table and tag `tablesQueried` against
+    /// the base table even on a committed FULL_REWRITE swap.  Per-table broker metrics and
     /// phase timings continue to use `_rawTableName` (which equals the MV name on FULL_REWRITE)
     /// so that MV-served queries are tagged under the MV's dashboards — necessary for
     /// per-MV throughput / quota observability.
-    final String _userRawTableName;
-    final BrokerResponse _errorOrLiteralOnlyBrokerResponse;
     final MaterializedViewContext _materializedViewContext;
-    final boolean _rlsFiltersApplied;
 
     public CompileResult(PinotQuery pinotQuery, PinotQuery serverPinotQuery, Schema schema, String tableName,
-        String rawTableName, String userRawTableName, MaterializedViewContext materializedViewContext,
-        boolean rlsFiltersApplied) {
+        String rawTableName, MaterializedViewContext materializedViewContext) {
       _pinotQuery = pinotQuery;
       _serverPinotQuery = serverPinotQuery;
       _schema = schema;
       _tableName = tableName;
       _rawTableName = rawTableName;
-      _userRawTableName = userRawTableName;
       _errorOrLiteralOnlyBrokerResponse = null;
       _materializedViewContext = materializedViewContext;
-      _rlsFiltersApplied = rlsFiltersApplied;
     }
 
     public CompileResult(BrokerResponse errorOrLiteralOnlyBrokerResponse) {
@@ -409,10 +406,8 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
       _schema = null;
       _tableName = null;
       _rawTableName = null;
-      _userRawTableName = null;
       _errorOrLiteralOnlyBrokerResponse = errorOrLiteralOnlyBrokerResponse;
       _materializedViewContext = MaterializedViewContext.empty();
-      _rlsFiltersApplied = false;
     }
 
     /// Returns `true` when the query should be split into a base-table query and
@@ -453,13 +448,25 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
     Schema schema = compileResult._schema;
     String tableName = compileResult._tableName;
     String rawTableName = compileResult._rawTableName;
-    // _userRawTableName preserves the base-table name across FULL_REWRITE swaps so response
-    // fields like `tablesQueried` tag the user-facing surface, not the MV the broker happened
-    // to route through.  Same value as rawTableName on the non-rewrite path.
-    String userRawTableName = compileResult._userRawTableName;
     PinotQuery pinotQuery = compileResult._pinotQuery;
     PinotQuery serverPinotQuery = compileResult._serverPinotQuery;
-    boolean rlsFiltersApplied = compileResult._rlsFiltersApplied;
+    MaterializedViewContext materializedViewContext = compileResult._materializedViewContext;
+    /// `userRawTableName` preserves the base-table raw name across FULL_REWRITE swaps so
+    /// response fields like `tablesQueried` and rewrite-exception metrics tag the user-facing
+    /// surface, not the MV the broker happened to route through.  Same value as `rawTableName`
+    /// on the non-rewrite path.  Derived from `materializedViewContext` rather than carried
+    /// on `CompileResult` so the MV state lives in one place.
+    String userRawTableName = materializedViewContext.getUserRawTableNameOrDefault(rawTableName);
+    /// `rlsFiltersApplied` is detected from query options on the pre-rewrite server query (i.e.
+    /// the query RLS was applied to at compile time).  `applyRlsFilters` leaves the
+    /// `rlsFilters-<rawTable>` key in `queryOptions` after rewriting; checking the key avoids
+    /// threading a separate boolean through `CompileResult`.  For FULL_REWRITE the post-swap
+    /// `serverPinotQuery` may not carry the marker (the MV query is a fresh PinotQuery), so we
+    /// read from the pre-rewrite query exposed by the MV context.
+    PinotQuery preRewriteServerPinotQuery =
+        materializedViewContext.getPreRewriteServerPinotQueryOrDefault(serverPinotQuery);
+    boolean rlsFiltersApplied =
+        RlsUtils.isRlsAppliedForTable(preRewriteServerPinotQuery.getQueryOptions(), userRawTableName);
     LogicalTableConfig logicalTableConfig = _tableCache.getLogicalTableConfig(rawTableName);
     /// Database is derived from the pre-rewrite user-facing `tableName` so that database-level
     /// query quota is charged against the database the user named — not the (possibly different)
@@ -467,7 +474,7 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
     /// different database and silently bypass the base database's rate-limit.  Mirrors the
     /// per-table `quotaTableName` derivation below.
     String database = DatabaseUtils.extractDatabaseFromFullyQualifiedTableName(
-        compileResult._materializedViewContext.getPreRewriteTableNameOrDefault(tableName));
+        materializedViewContext.getPreRewriteTableNameWithTypeOrDefault(tableName));
     long compilationEndTimeNs = System.nanoTime();
 
     // Validate that physical tables are not queried with multi-cluster routing enabled.
@@ -494,14 +501,11 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
     /// control for the base table cannot be bypassed via an MV.
     ///
     /// TODO: Modify `AccessControl` interface to directly take `PinotQuery`
-    MaterializedViewContext materializedViewContext = compileResult._materializedViewContext;
-    PinotQuery authServerPinotQuery =
-        materializedViewContext.getPreRewriteServerPinotQueryOrDefault(serverPinotQuery);
     BrokerRequest brokerRequest = CalciteSqlCompiler.convertToBrokerRequest(pinotQuery);
     BrokerRequest serverBrokerRequest =
         serverPinotQuery == pinotQuery ? brokerRequest : CalciteSqlCompiler.convertToBrokerRequest(serverPinotQuery);
-    BrokerRequest authBrokerRequest = authServerPinotQuery == serverPinotQuery ? serverBrokerRequest
-        : CalciteSqlCompiler.convertToBrokerRequest(authServerPinotQuery);
+    BrokerRequest authBrokerRequest = preRewriteServerPinotQuery == serverPinotQuery ? serverBrokerRequest
+        : CalciteSqlCompiler.convertToBrokerRequest(preRewriteServerPinotQuery);
 
     TableRouteProvider routeProvider;
 
@@ -546,7 +550,7 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
       /// For `FULL_REWRITE` materialized-view queries, `tableName` has been overwritten to the MV
       /// table name.  Quota must be charged against the original base table so that base-table
       /// rate limits cannot be bypassed by routing the query through an unthrottled MV.
-      String quotaTableName = materializedViewContext.getPreRewriteTableNameOrDefault(tableName);
+      String quotaTableName = materializedViewContext.getPreRewriteTableNameWithTypeOrDefault(tableName);
       if (!_queryQuotaManager.acquireDatabase(database)) {
         String errorMessage =
             String.format("Request %d: %s exceeds query quota for database: %s", requestId, query, database);
@@ -854,8 +858,8 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
     if (compileResult.isMaterializedViewSplit()) {
       BrokerResponseNative viewSplitResponse = tryExecuteMaterializedViewSplit(requestId, query, sqlNodeAndOptions,
           requesterIdentity, requestContext, brokerRequest, compileResult, materializedViewContext, routeInfo,
-          remainingTimeMs, errorMsgs, numPrunedSegmentsTotal, schema, database, tableName, userRawTableName,
-          rlsFiltersApplied, serverStats, selectedRoutingManager, routeProvider, queryWasLogged);
+          remainingTimeMs, errorMsgs, numPrunedSegmentsTotal, schema, database, tableName, rlsFiltersApplied,
+          serverStats, selectedRoutingManager, routeProvider, queryWasLogged);
       if (viewSplitResponse != null) {
         return viewSplitResponse;
       }
@@ -1147,12 +1151,9 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
 
     Schema schema = _tableCache.getSchema(rawTableName);
 
-    boolean rlsFiltersApplied = false;
     if (_enableRowColumnLevelAuth && _tableCache.getLogicalTableConfig(rawTableName) == null) {
       try {
-        rlsFiltersApplied =
-            applyRlsFilters(requestId, query, serverPinotQuery, rawTableName, requesterIdentity,
-                accessControl);
+        applyRlsFilters(requestId, query, serverPinotQuery, rawTableName, requesterIdentity, accessControl);
       } catch (Exception e) {
         LOGGER.error("Unable to apply RLS filter with {} for request {}: {}",
             RlsFiltersRewriter.class.getName(), requestId, query, e);
@@ -1161,11 +1162,6 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
             "Unable to apply row-level security filter: " + e.getMessage()));
       }
     }
-
-    /// Capture the user-facing raw table name BEFORE the `FULL_REWRITE` MV swap so the response's
-    /// `tablesQueried` field and per-table metrics tag the base table, not the MV the broker
-    /// happened to route through.
-    String userRawTableName = rawTableName;
 
     MaterializedViewContext materializedViewContext = MaterializedViewContext.empty();
     if (_materializedViewHandler != null) {
@@ -1180,8 +1176,7 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
 
     _queryOptimizer.optimize(serverPinotQuery, schema);
 
-    return new CompileResult(pinotQuery, serverPinotQuery, schema, tableName, rawTableName,
-        userRawTableName, materializedViewContext, rlsFiltersApplied);
+    return new CompileResult(pinotQuery, serverPinotQuery, schema, tableName, rawTableName, materializedViewContext);
   }
 
   /// Mutable holder returned from [#applyMaterializedViewRewriteAtCompile] — Java has no out
@@ -1214,6 +1209,23 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
   /// `QUERY_REWRITE_EXCEPTIONS`.
   private MaterializedViewCompileOutcome applyMaterializedViewRewriteAtCompile(long requestId,
       PinotQuery serverPinotQuery, String tableName, String rawTableName, Schema schema, boolean ignoreCase) {
+    /// Skip rewrite when the user's query already targets an MV table directly
+    /// ([TableConfig#isMaterializedView()] is the single source of truth for MV identity since
+    /// upstream PR #18564 added the `isMaterializedView` flag on `TableConfig`).  Cascading
+    /// MV-to-MV rewrites are not supported — the handler/cache only indexes the base-table →
+    /// MV direction, so this would be a no-op anyway, but the explicit guard makes the intent
+    /// visible and avoids a wasted cache lookup per query.  When `tableName` already carries a
+    /// type suffix (the user typed `mv_t_OFFLINE` or `mv_t_REALTIME` explicitly), look up that
+    /// exact variant; otherwise fall back to the OFFLINE variant since MVs are always OFFLINE
+    /// per `validateMaterializedViewInvariants`.
+    String mvLookupTableNameWithType = TableNameBuilder.getTableTypeFromTableName(tableName) != null
+        ? tableName : TableNameBuilder.OFFLINE.tableNameWithType(rawTableName);
+    TableConfig userTableConfig = _tableCache.getTableConfig(mvLookupTableNameWithType);
+    if (userTableConfig != null && userTableConfig.isMaterializedView()) {
+      return new MaterializedViewCompileOutcome(
+          serverPinotQuery, tableName, rawTableName, schema, MaterializedViewContext.empty());
+    }
+
     MaterializedViewContext materializedViewContext;
     try {
       materializedViewContext = _materializedViewHandler.compile(new MaterializedViewCompileContext(
@@ -1289,12 +1301,16 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
         rewrittenServerQuery, rewrittenTableName, rewrittenRawTableName, rewrittenSchema, materializedViewContext);
   }
 
-  private boolean applyRlsFilters(long requestId, String query, PinotQuery serverPinotQuery, String rawTableName,
+  /// Apply row-level security filters to `serverPinotQuery`.  When the accessor returns RLS rules
+  /// for `rawTableName`, the rewriter appends them to the query's WHERE clause and stamps a
+  /// `rlsFilters-<rawTableName>` entry in `queryOptions` — the marker the caller later reads to
+  /// stamp `rlsFiltersApplied` on the broker response.
+  private void applyRlsFilters(long requestId, String query, PinotQuery serverPinotQuery, String rawTableName,
       @Nullable RequesterIdentity requesterIdentity, AccessControl accessControl) {
     TableRowColAccessResult rlsFilters = accessControl.getRowColFilters(requesterIdentity, rawTableName);
     List<String> rowFilters = rlsFilters.getRLSFilters().orElse(null);
     if (CollectionUtils.isEmpty(rowFilters)) {
-      return false;
+      return;
     }
 
     Map<String, String> queryOptions =
@@ -1306,7 +1322,6 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
     CalciteSqlParser.queryRewrite(serverPinotQuery, RlsFiltersRewriter.class);
     _brokerMetrics.addMeteredTableValue(rawTableName, BrokerMeter.RLS_FILTERS_APPLIED, 1);
     LOGGER.debug("Applied RLS filters for request {} on table {}: {}", requestId, rawTableName, query);
-    return true;
   }
 
   private void throwAccessDeniedError(long requestId, String query, RequestContext requestContext, String tableName,
@@ -2302,9 +2317,15 @@ public abstract class BaseSingleStageBrokerRequestHandler extends BaseBrokerRequ
       RequestContext requestContext, BrokerRequest brokerRequest, CompileResult compileResult,
       MaterializedViewContext materializedViewContext, TableRouteInfo routeInfo, long remainingTimeMs,
       List<QueryProcessingException> errorMsgs, int numPrunedSegmentsTotal, Schema schema, String database,
-      String tableName, String userRawTableName, boolean rlsFiltersApplied, ServerStats serverStats,
+      String tableName, boolean rlsFiltersApplied, ServerStats serverStats,
       RoutingManager selectedRoutingManager, TableRouteProvider routeProvider, boolean queryWasLogged) {
     String clientRequestId = extractClientRequestId(sqlNodeAndOptions);
+    /// `userRawTableName` is the base-table raw name (preserved across FULL_REWRITE swaps) so
+    /// `tablesQueried` and rewrite-exception metrics tag the user-facing surface, not the MV
+    /// the broker routed through.  Derived from the MV context rather than threaded through
+    /// the call signature so the caller doesn't have to plumb a duplicate of compile state.
+    String userRawTableName =
+        materializedViewContext.getUserRawTableNameOrDefault(compileResult._rawTableName);
     MaterializedViewSplitDispatcher dispatcher =
         (originalReq, baseQ, baseRoute, baseSch, viewQ, viewTable, viewSch, timeoutMs) ->
             dispatchMaterializedViewSplit(requestId, originalReq, baseQ, baseRoute, baseSch, viewQ, viewTable,

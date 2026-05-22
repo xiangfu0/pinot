@@ -1196,4 +1196,112 @@ public class BaseSingleStageBrokerRequestHandlerTest {
     Assert.assertEquals(response.getMaterializedViewQueried(), materializedViewOfflineTable,
         "Response must report the MV name when the swap was committed");
   }
+
+  /**
+   * Pins the cascade-prevention guard: when the user's query already targets an MV table
+   * directly ({@code TableConfig.isMaterializedView()} is {@code true}), the broker must skip
+   * MV rewrite entirely.  Cascading MV-to-MV rewrites are not supported, and the explicit
+   * guard uses the new flag from PR #18564 as the single source of truth for MV identity.
+   */
+  @Test
+  public void testMaterializedViewRewriteSkippedWhenUserQueryTargetsMaterializedView()
+      throws Exception {
+    String materializedViewOfflineTable = "mv_baseTable_OFFLINE";
+    String materializedViewRawTable = "mv_baseTable";
+
+    String userSql = "SELECT ts, SUM(revenue) FROM mv_baseTable GROUP BY ts LIMIT 100";
+
+    // The engine should NEVER be invoked — the broker's cascade guard fires first.  Use a strict
+    // mock that fails if `tryRewrite` is called.
+    MaterializedViewQueryRewriteEngine materializedViewEngine = mock(MaterializedViewQueryRewriteEngine.class);
+    when(materializedViewEngine.tryRewrite(any(PinotQuery.class), anyString()))
+        .thenThrow(new AssertionError("MV engine must not be invoked when the user query already targets an MV"));
+    MaterializedViewHandler materializedViewHandler = new DefaultMaterializedViewHandler(materializedViewEngine);
+
+    Schema materializedViewSchema = new Schema.SchemaBuilder()
+        .setSchemaName(materializedViewRawTable)
+        .addSingleValueDimension("ts", DataType.STRING)
+        .addMetric("revenue", DataType.DOUBLE)
+        .build();
+
+    TableCache tableCache = mock(TableCache.class);
+    when(tableCache.getActualTableName(materializedViewRawTable)).thenReturn(materializedViewRawTable);
+    when(tableCache.getSchema(materializedViewRawTable)).thenReturn(materializedViewSchema);
+    when(tableCache.getColumnNameMap(anyString())).thenReturn(Map.of("ts", "ts", "revenue", "revenue"));
+    TableConfig mvTableCfg = mock(TableConfig.class);
+    TenantConfig tenant = new TenantConfig("t_BROKER", "t_SERVER", null);
+    when(mvTableCfg.getTenantConfig()).thenReturn(tenant);
+    // The MV's TableConfig declares MV identity via the new isMaterializedView flag.
+    when(mvTableCfg.isMaterializedView()).thenReturn(true);
+    when(tableCache.getTableConfig(materializedViewOfflineTable)).thenReturn(mvTableCfg);
+
+    BrokerRoutingManager routingManager = mock(BrokerRoutingManager.class);
+    when(routingManager.routingExists(materializedViewOfflineTable)).thenReturn(true);
+    when(routingManager.getQueryTimeoutMs(anyString())).thenReturn(10000L);
+    RoutingTable rt = mock(RoutingTable.class);
+    when(rt.getServerInstanceToSegmentsMap()).thenReturn(
+        Map.of(new ServerInstance(new InstanceConfig("server01_9000")),
+            new SegmentsToQuery(List.of("seg01"), List.of())));
+    when(routingManager.getRoutingTable(any(), Mockito.anyLong())).thenReturn(rt);
+
+    QueryQuotaManager quotaManager = mock(QueryQuotaManager.class);
+    when(quotaManager.acquireDatabase(anyString())).thenReturn(true);
+    when(quotaManager.acquireApplication(anyString())).thenReturn(true);
+    when(quotaManager.acquire(anyString())).thenReturn(true);
+
+    BrokerMetrics.register(mock(BrokerMetrics.class));
+    PinotConfiguration config = new PinotConfiguration();
+    BrokerQueryEventListenerFactory.init(config);
+
+    AtomicReference<BrokerRequest> capturedServerBrokerRequest = new AtomicReference<>();
+    BaseSingleStageBrokerRequestHandler handler =
+        new BaseSingleStageBrokerRequestHandler(config, "broker1", new BrokerRequestIdGenerator(),
+            routingManager, new AllowAllAccessControlFactory(), quotaManager, tableCache,
+            ThreadAccountantUtils.getNoOpAccountant(), null, materializedViewHandler) {
+          @Override
+          public void start() {
+          }
+
+          @Override
+          public void shutDown() {
+          }
+
+          @Override
+          protected BrokerResponseNative processBrokerRequest(long requestId,
+              BrokerRequest originalBrokerRequest, BrokerRequest serverBrokerRequest,
+              TableRouteInfo route, long timeoutMs, ServerStats serverStats,
+              RequestContext requestContext) {
+            capturedServerBrokerRequest.set(serverBrokerRequest);
+            return BrokerResponseNative.empty();
+          }
+
+          @Override
+          protected BrokerResponseNative processMaterializedViewSplitBrokerRequest(long requestId,
+              long materializedViewRequestId, BrokerRequest originalBrokerRequest, TableRouteInfo baseRoute,
+              TableRouteInfo materializedViewRoute, long timeoutMs, ServerStats serverStats,
+              RequestContext requestContext) {
+            Assert.fail("Split path must not be entered when the cascade guard fires");
+            return null;
+          }
+        };
+
+    BrokerResponseNative response = (BrokerResponseNative) handler.handleRequest(userSql);
+    BrokerRequest serverBrokerRequest = capturedServerBrokerRequest.get();
+    Assert.assertNotNull(serverBrokerRequest,
+        "processBrokerRequest must have been reached without invoking MV rewrite; exceptions: "
+            + response.getExceptions());
+    // The server query MUST still target the MV table the user explicitly named — the rewrite is
+    // skipped, but the user's choice of table stands.
+    String serverTableName = serverBrokerRequest.getPinotQuery().getDataSource().getTableName();
+    Assert.assertEquals(serverTableName, materializedViewOfflineTable,
+        "User-issued MV query must run as-is when the cascade guard fires; got: " + serverTableName);
+    // The MV-rewrite marker must NOT have been stamped (no rewrite happened).
+    Map<String, String> serverOptions = serverBrokerRequest.getPinotQuery().getQueryOptions();
+    Assert.assertTrue(serverOptions == null
+            || !serverOptions.containsKey(CommonConstants.Broker.Request.QueryOptionKey.MATERIALIZED_VIEW_REWRITE),
+        "MV-rewrite marker must not be stamped when the cascade guard skipped rewrite; options: " + serverOptions);
+    // And the response must NOT report a materializedViewQueried — no MV was selected.
+    Assert.assertNull(response.getMaterializedViewQueried(),
+        "Response must not report a materializedViewQueried when the cascade guard fired");
+  }
 }

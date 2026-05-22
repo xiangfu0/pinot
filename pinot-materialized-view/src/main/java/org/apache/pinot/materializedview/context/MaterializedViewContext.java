@@ -22,6 +22,7 @@ import javax.annotation.Nullable;
 import org.apache.pinot.common.request.PinotQuery;
 import org.apache.pinot.materializedview.rewrite.MaterializedViewRewritePlan;
 import org.apache.pinot.spi.data.Schema;
+import org.apache.pinot.spi.utils.builder.TableNameBuilder;
 
 
 /// Broker-facing materialized-view state produced during query compilation.
@@ -64,9 +65,9 @@ public final class MaterializedViewContext {
   }
 
   public static MaterializedViewContext forFullRewrite(MaterializedViewRewritePlan plan,
-      PinotQuery preRewriteServerPinotQuery, String preRewriteTableName) {
+      PinotQuery preRewriteServerPinotQuery, String preRewriteTableNameWithType) {
     FullRewriteContext fullRewriteContext =
-        new FullRewriteContext(preRewriteServerPinotQuery, preRewriteTableName);
+        new FullRewriteContext(preRewriteServerPinotQuery, preRewriteTableNameWithType);
     return new MaterializedViewContext(plan, null, fullRewriteContext);
   }
 
@@ -97,8 +98,20 @@ public final class MaterializedViewContext {
     return _fullRewriteContext != null ? _fullRewriteContext.getPreRewriteServerPinotQuery() : defaultPinotQuery;
   }
 
-  public String getPreRewriteTableNameOrDefault(String defaultTableName) {
-    return _fullRewriteContext != null ? _fullRewriteContext.getPreRewriteTableName() : defaultTableName;
+  public String getPreRewriteTableNameWithTypeOrDefault(String defaultTableNameWithType) {
+    return _fullRewriteContext != null
+        ? _fullRewriteContext.getPreRewriteTableNameWithType() : defaultTableNameWithType;
+  }
+
+  /// User-facing raw table name preserved across the `FULL_REWRITE` MV swap.  Returns the
+  /// raw name extracted from [FullRewriteContext#getPreRewriteTableNameWithType()] when full
+  /// rewrite is active, otherwise the supplied default (the broker's current raw table name
+  /// for non-rewrite paths).  Used by the broker to tag `tablesQueried` and rewrite-exception
+  /// metrics against the base table even after the server query was swapped to the MV.
+  public String getUserRawTableNameOrDefault(String defaultRawTableName) {
+    return _fullRewriteContext != null
+        ? TableNameBuilder.extractRawTableName(_fullRewriteContext.getPreRewriteTableNameWithType())
+        : defaultRawTableName;
   }
 
   /// MV branch state for split execution.  Callers that need the raw table name derive it
@@ -130,21 +143,24 @@ public final class MaterializedViewContext {
   }
 
   /// Base-table state preserved when full rewrite replaces the server query with an MV query.
+  /// Callers that need the raw table name derive it via
+  /// [TableNameBuilder#extractRawTableName(String)] from [#getPreRewriteTableNameWithType()] —
+  /// the same convention used by [SplitRewriteContext].
   public static final class FullRewriteContext {
     private final PinotQuery _preRewriteServerPinotQuery;
-    private final String _preRewriteTableName;
+    private final String _preRewriteTableNameWithType;
 
-    private FullRewriteContext(PinotQuery preRewriteServerPinotQuery, String preRewriteTableName) {
+    private FullRewriteContext(PinotQuery preRewriteServerPinotQuery, String preRewriteTableNameWithType) {
       _preRewriteServerPinotQuery = preRewriteServerPinotQuery;
-      _preRewriteTableName = preRewriteTableName;
+      _preRewriteTableNameWithType = preRewriteTableNameWithType;
     }
 
     public PinotQuery getPreRewriteServerPinotQuery() {
       return _preRewriteServerPinotQuery;
     }
 
-    public String getPreRewriteTableName() {
-      return _preRewriteTableName;
+    public String getPreRewriteTableNameWithType() {
+      return _preRewriteTableNameWithType;
     }
   }
 }
