@@ -381,23 +381,24 @@ public class TableAdminClient extends BaseServiceAdminClient {
   /**
    * Rebalances a table (reassigns instances and segments).
    *
+   * <p>Maps to the controller's {@code downtime} and {@code minAvailableReplicas} query params (see
+   * {@link #rebalanceTable(String, String, boolean, boolean, boolean, boolean, int)} for the full parameter set, or
+   * {@link #rebalanceTable(String, Map)} to pass arbitrary params).
+   *
    * @param tableName Name of the table to rebalance
-   * @param noDowntime Whether to allow rebalance without downtime
-   * @param rebalanceMode Rebalance mode (default or specific)
-   * @param minReplicasToKeepAfterRebalance Minimum replicas to keep after rebalance
+   * @param noDowntime Whether the rebalance should avoid downtime (maps to {@code downtime=false})
+   * @param minReplicasToKeepAfterRebalance Minimum number of replicas to keep available during a no-downtime
+   *                                        rebalance (maps to {@code minAvailableReplicas})
    * @return Rebalance result
    * @throws PinotAdminException If the request fails
    */
-  public String rebalanceTable(String tableName, boolean noDowntime, @Nullable String rebalanceMode,
+  public String rebalanceTable(String tableName, boolean noDowntime,
       @Nullable Integer minReplicasToKeepAfterRebalance)
       throws PinotAdminException {
     Map<String, String> queryParams = new HashMap<>();
-    queryParams.put("noDowntime", String.valueOf(noDowntime));
-    if (rebalanceMode != null) {
-      queryParams.put("rebalanceMode", rebalanceMode);
-    }
+    queryParams.put("downtime", String.valueOf(!noDowntime));
     if (minReplicasToKeepAfterRebalance != null) {
-      queryParams.put("minReplicasToKeepAfterRebalance", String.valueOf(minReplicasToKeepAfterRebalance));
+      queryParams.put("minAvailableReplicas", String.valueOf(minReplicasToKeepAfterRebalance));
     }
 
     JsonNode response = _transport.executePost(_controllerAddress, "/tables/" + tableName + "/rebalance", null,
@@ -432,7 +433,8 @@ public class TableAdminClient extends BaseServiceAdminClient {
       throws PinotAdminException {
     JsonNode response =
         _transport.executeDelete(_controllerAddress, "/tables/" + tableName + "/rebalance", null, _headers);
-    return _transport.parseStringArray(response, "jobIds");
+    // DELETE /tables/{tableName}/rebalance returns a bare JSON array of cancelled job IDs.
+    return PinotAdminTransport.parseStringArrayNode(response);
   }
 
   /**

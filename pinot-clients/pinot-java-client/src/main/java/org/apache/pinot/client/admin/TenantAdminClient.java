@@ -22,7 +22,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -71,7 +71,17 @@ public class TenantAdminClient extends BaseServiceAdminClient {
 
     JsonNode response =
         _transport.executeGet(_controllerAddress, "/tenants", queryParams.isEmpty() ? null : queryParams, _headers);
-    Set<String> tenants = new HashSet<>();
+    return parseTenantNames(response);
+  }
+
+  /**
+   * Extracts the broker and server tenant names from a {@code GET /tenants} response.
+   *
+   * <p>The controller returns a {@code TenantsList} serialized as {@code {"SERVER_TENANTS": [...],
+   * "BROKER_TENANTS": [...]}}; there is no flat {@code tenants} field.
+   */
+  private static List<String> parseTenantNames(JsonNode response) {
+    Set<String> tenants = new LinkedHashSet<>();
     JsonNode brokerTenants = response.get("BROKER_TENANTS");
     if (brokerTenants != null && brokerTenants.isArray()) {
       brokerTenants.forEach(node -> tenants.add(node.asText()));
@@ -320,31 +330,32 @@ public class TenantAdminClient extends BaseServiceAdminClient {
   /**
    * Rebalances all tables that are part of the tenant.
    *
+   * <p>The controller endpoint reads the include/exclude filters from the {@code includeTables}/{@code excludeTables}
+   * query params and requires a {@code TenantRebalanceConfig} request body; this method sends an empty config object
+   * so the query params can populate it. Use {@link #rebalanceTenantWithConfig(String, String, Map)} when you need to
+   * supply a full rebalance config.
+   *
    * @param tenantName Name of the tenant
    * @param degreeOfParallelism Number of table rebalance jobs allowed to run at the same time
-   * @param includeTableTypes Comma-separated list of table types to include (optional)
-   * @param excludeTableTypes Comma-separated list of table types to exclude (optional)
-   * @param rebalanceMode Rebalance mode (optional)
+   * @param includeTables Comma-separated list of tables (with type) to include (optional)
+   * @param excludeTables Comma-separated list of tables (with type) to exclude (optional)
    * @return Rebalance result
    * @throws PinotAdminException If the request fails
    */
-  public String rebalanceTenant(String tenantName, int degreeOfParallelism, @Nullable String includeTableTypes,
-      @Nullable String excludeTableTypes, @Nullable String rebalanceMode)
+  public String rebalanceTenant(String tenantName, int degreeOfParallelism, @Nullable String includeTables,
+      @Nullable String excludeTables)
       throws PinotAdminException {
     Map<String, String> queryParams = new HashMap<>();
     queryParams.put("degreeOfParallelism", String.valueOf(degreeOfParallelism));
-    if (includeTableTypes != null) {
-      queryParams.put("includeTableTypes", includeTableTypes);
+    if (includeTables != null) {
+      queryParams.put("includeTables", includeTables);
     }
-    if (excludeTableTypes != null) {
-      queryParams.put("excludeTableTypes", excludeTableTypes);
-    }
-    if (rebalanceMode != null) {
-      queryParams.put("rebalanceMode", rebalanceMode);
+    if (excludeTables != null) {
+      queryParams.put("excludeTables", excludeTables);
     }
 
     JsonNode response = _transport.executePost(_controllerAddress, "/tenants/" + tenantName + "/rebalance",
-        null, queryParams, _headers);
+        "{}", queryParams, _headers);
     return response.toString();
   }
 
@@ -431,7 +442,7 @@ public class TenantAdminClient extends BaseServiceAdminClient {
    */
   public CompletableFuture<List<String>> listTenantsAsync() {
     return _transport.executeGetAsync(_controllerAddress, "/tenants", null, _headers)
-        .thenApply(response -> PinotAdminTransport.getObjectMapper().convertValue(response.get("tenants"), List.class));
+        .thenApply(TenantAdminClient::parseTenantNames);
   }
 
   /**

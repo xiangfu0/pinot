@@ -443,24 +443,42 @@ public class PinotAdminTransport implements AutoCloseable {
     if (arrayNode == null) {
       throw new PinotAdminException("Response missing '" + fieldName + "' field");
     }
+    return parseStringArrayNode(arrayNode);
+  }
 
+  /**
+   * Parses a JSON node that is itself a string array (or a comma-separated textual value) into a list of strings.
+   *
+   * <p>This is the single implementation shared by {@link #parseStringArray(JsonNode, String)} (which first extracts a
+   * named field) and the admin clients that consume controller endpoints returning a bare JSON array (for example
+   * {@code GET /schemas} and {@code DELETE /tables/{tableName}/rebalance}).
+   *
+   * @param arrayNode the node expected to be a JSON array (or a comma-separated string)
+   * @return the parsed list of strings
+   * @throws PinotAdminException if {@code arrayNode} is {@code null} or is neither an array nor a string
+   */
+  static List<String> parseStringArrayNode(JsonNode arrayNode)
+      throws PinotAdminException {
+    if (arrayNode == null || arrayNode.isNull()) {
+      throw new PinotAdminException("Expected a JSON array but got a null node");
+    }
     if (arrayNode.isArray()) {
       // Handle JSON array format
-      List<String> result = new ArrayList<>();
+      List<String> result = new ArrayList<>(arrayNode.size());
       for (JsonNode element : arrayNode) {
         result.add(element.asText());
       }
       return result;
-    } else if (arrayNode.isTextual()) {
+    }
+    if (arrayNode.isTextual()) {
       // Handle comma-separated string format for backward compatibility
       String text = arrayNode.asText().trim();
       if (text.isEmpty()) {
         return Collections.emptyList();
       }
       return Arrays.asList(text.split(","));
-    } else {
-      throw new PinotAdminException("Field '" + fieldName + "' is not an array or string: " + arrayNode.getNodeType());
     }
+    throw new PinotAdminException("Expected a JSON array or string but got: " + arrayNode.getNodeType());
   }
 
   /**
