@@ -27,9 +27,11 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.pinot.segment.local.data.manager.TableDataManager;
 import org.apache.pinot.segment.local.utils.SegmentOperationsThrottlerSet;
 import org.apache.pinot.spi.config.table.TableConfig;
+import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.config.table.UpsertConfig;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.env.PinotConfiguration;
+import org.apache.pinot.spi.utils.CommonConstants.Segment.BuiltInVirtualColumn;
 import org.apache.pinot.spi.utils.CommonConstants.Server.Upsert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,12 +62,14 @@ public abstract class BaseTableUpsertMetadataManager implements TableUpsertMetad
 
     List<String> comparisonColumns = upsertConfig.getComparisonColumns();
     if (comparisonColumns == null) {
-      // Fall back to the table's time column, same as realtime upsert. Realtime always has a time column, but an
-      // offline upsert table might not, so fail fast with an actionable message instead of an NPE.
       String timeColumnName = tableConfig.getValidationConfig().getTimeColumnName();
-      Preconditions.checkState(timeColumnName != null,
-          "Upsert table: %s must have a comparison column or a time column configured", _tableNameWithType);
-      comparisonColumns = List.of(timeColumnName);
+      if (timeColumnName != null) {
+        comparisonColumns = List.of(timeColumnName);
+      } else {
+        // No comparison column and no time column: use segment creation time for OFFLINE upsert comparison.
+        comparisonColumns = tableConfig.getTableType() == TableType.OFFLINE
+            ? List.of(BuiltInVirtualColumn.CREATIONTIME) : List.of();
+      }
     }
 
     // PartialUpsertHandler is not thread safe, so hand each partition a factory rather than one shared instance.
