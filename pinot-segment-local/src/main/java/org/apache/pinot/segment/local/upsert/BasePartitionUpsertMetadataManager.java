@@ -66,6 +66,7 @@ import org.apache.pinot.spi.config.table.UpsertConfig;
 import org.apache.pinot.spi.data.readers.GenericRow;
 import org.apache.pinot.spi.data.readers.PrimaryKey;
 import org.apache.pinot.spi.utils.BooleanUtils;
+import org.apache.pinot.spi.utils.CommonConstants.Segment.BuiltInVirtualColumn;
 import org.apache.pinot.spi.utils.ConsumingSegmentConsistencyModeListener;
 import org.apache.pinot.spi.utils.builder.TableNameBuilder;
 import org.roaringbitmap.PeekableIntIterator;
@@ -310,6 +311,22 @@ public abstract class BasePartitionUpsertMetadataManager implements PartitionUps
     } finally {
       finishOperation();
     }
+  }
+
+  /// Creates a RecordInfoReader for the given segment. When comparison columns are configured, reads comparison values
+  /// from the columns. When comparison columns are empty, uses segment creation time as the comparison value.
+  protected UpsertUtils.RecordInfoReader createRecordInfoReader(IndexSegment segment) {
+    if (_comparisonColumns.isEmpty()) {
+      if (_tableType == TableType.OFFLINE
+          && segment.getPhysicalColumnNames().contains(BuiltInVirtualColumn.CREATIONTIME)) {
+        return new UpsertUtils.RecordInfoReader(segment, _primaryKeyColumns,
+            List.of(BuiltInVirtualColumn.CREATIONTIME), _deleteRecordColumn);
+      }
+      long segmentCreationTime = _tableType == TableType.OFFLINE
+          ? segment.getSegmentMetadata().getIndexCreationTime() : getAuthoritativeUpdateOrCreationTime(segment);
+      return new UpsertUtils.RecordInfoReader(segment, _primaryKeyColumns, segmentCreationTime, _deleteRecordColumn);
+    }
+    return new UpsertUtils.RecordInfoReader(segment, _primaryKeyColumns, _comparisonColumns, _deleteRecordColumn);
   }
 
   protected boolean isTTLEnabled() {
