@@ -111,6 +111,16 @@ public class RequestUtilsTest {
   }
 
   @Test
+  public void testUuidCastToStringFoldsToCanonicalLiteral() {
+    UUID uuid = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
+    Expression expression = CalciteSqlParser.compileToPinotQuery(
+        "SELECT CAST(CAST('" + uuid + "' AS UUID) AS STRING) FROM myTable").getSelectList().get(0);
+
+    assertTrue(expression.isSetLiteral());
+    assertEquals(expression.getLiteral().getStringValue(), uuid.toString());
+  }
+
+  @Test
   public void testParseQuery() {
     SqlNodeAndOptions result = RequestUtils.parseQuery("select foo from countries where bar > 1");
     assertTrue(result.getParseTimeNs() > 0);
