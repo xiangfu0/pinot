@@ -32,6 +32,7 @@ import org.apache.pinot.common.request.Literal;
 import org.apache.pinot.common.request.PinotQuery;
 import org.apache.pinot.common.utils.DataSchema.ColumnDataType;
 import org.apache.pinot.common.utils.request.RequestUtils;
+import org.apache.pinot.spi.utils.UuidUtils;
 import org.apache.pinot.sql.parsers.SqlCompilationException;
 
 
@@ -70,13 +71,20 @@ public class CompileTimeFunctionsInvoker implements QueryRewriter {
     ColumnDataType[] argumentTypes = new ColumnDataType[numOperands];
     Object[] arguments = new Object[numOperands];
     for (int i = 0; i < numOperands; i++) {
-      Expression operand = invokeCompileTimeFunctionExpression(operands.get(i));
+      Expression originalOperand = operands.get(i);
+      Expression operand = invokeCompileTimeFunctionExpression(originalOperand);
       operands.set(i, operand);
       Literal literal = operand.getLiteral();
       if (compilable && literal != null) {
         Pair<ColumnDataType, Object> typeAndValue = RequestUtils.getLiteralTypeAndValue(literal);
-        argumentTypes[i] = typeAndValue.getLeft();
-        arguments[i] = typeAndValue.getRight();
+        Object value = typeAndValue.getRight();
+        if (value != null && isUuidCast(originalOperand)) {
+          argumentTypes[i] = ColumnDataType.UUID;
+          arguments[i] = UuidUtils.toUUID(value);
+        } else {
+          argumentTypes[i] = typeAndValue.getLeft();
+          arguments[i] = value;
+        }
       } else {
         // NOTE: Do not directly 'return expression;' here because we want to compile all operands even if the current
         //       expression is not compilable.
@@ -106,5 +114,15 @@ public class CompileTimeFunctionsInvoker implements QueryRewriter {
           "Caught exception while invoking method: " + functionInfo.getMethod().getName() + " with arguments: "
               + Arrays.toString(arguments) + ": " + e.getMessage(), e);
     }
+  }
+
+  private static boolean isUuidCast(Expression expression) {
+    Function function = expression.getFunctionCall();
+    if (function == null || !"cast".equals(FunctionRegistry.canonicalize(function.getOperator()))) {
+      return false;
+    }
+    List<Expression> operands = function.getOperands();
+    return operands.size() == 2 && operands.get(1).isSetLiteral() && operands.get(1).getLiteral().isSetStringValue()
+        && "UUID".equalsIgnoreCase(operands.get(1).getLiteral().getStringValue());
   }
 }
