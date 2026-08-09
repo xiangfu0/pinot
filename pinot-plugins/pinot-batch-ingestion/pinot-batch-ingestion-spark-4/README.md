@@ -21,7 +21,7 @@
 # Pinot Batch Ingestion for Spark 4
 
 Runs Pinot segment generation and segment push as a Spark job, built for **Apache Spark 4.x on
-JDK 21**. If you are on Spark 3.5.x or an older JDK, use
+JDK 25**. If you are on Spark 3.5.x or an older JDK, use
 [pinot-batch-ingestion-spark-3](../../pinot-plugins/pinot-batch-ingestion/pinot-batch-ingestion-spark-3/)
 instead.
 
@@ -39,15 +39,15 @@ ingestion spec format and shared base classes in
 | Pinot module                        | Spark | Scala       | JDK (build & runtime) |
 |-------------------------------------|-------|-------------|------------------------|
 | `pinot-batch-ingestion-spark-3`     | 3.5.x | 2.12 / 2.13 | 8 / 11 / 17            |
-| `pinot-batch-ingestion-spark-4`     | 4.0.x | 2.13 only   | **21 only**            |
+| `pinot-batch-ingestion-spark-4`     | 4.1.x | 2.13 only   | **25 only**            |
 
-The produced jar is compiled with `--release 21` (class file major version 65), so it will
-not load on a JDK 17 runtime despite Spark 4 itself supporting JDK 17. If JDK 17 runtime is
-required, use the Spark 3 batch ingestion module.
+The produced jar is compiled with `--release 25` (class file major version 69), so it will
+not load on a JDK 17 or JDK 21 runtime despite Spark 4 itself supporting JDK 17. If a JDK 17
+runtime is required, use the Spark 3 batch ingestion module.
 
 This module sits next to [`pinot-batch-ingestion-spark-3`](../pinot-batch-ingestion-spark-3)
-under `pinot-plugins/pinot-batch-ingestion/` and is only registered in the reactor when the
-active JDK is 21 or later (see the `pinot-batch-ingestion-spark-4` profile in
+under `pinot-plugins/pinot-batch-ingestion/` and is built unconditionally as part of the
+default reactor, since Pinot's root pom enforces JDK 25+ (see
 [`pinot-plugins/pinot-batch-ingestion/pom.xml`](../pom.xml)). Automatically excluded under
 `-Pscala-2.12` — Apache Spark 4 is Scala 2.13 only.
 
