@@ -22,30 +22,44 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import org.testng.annotations.Test;
 
-import static org.testng.Assert.assertNotEquals;
+import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertTrue;
 
 
 /// Smoke tests for the verifier. We don't have a built distribution at unit-test time, so
-/// these only confirm that the binary is wired together correctly — the full end-to-end run
-/// happens via {@code bin/verify-plugins.sh} against an assembled tarball.
+/// these only confirm the binary is wired together correctly — argument parsing, exit codes, and
+/// dispatch — by driving the real {@link PluginVerifier#execute(String[])} entry point. The full
+/// end-to-end run (realm isolation with a production classpath layout) happens via
+/// {@code bin/verify-plugins.sh} against an assembled tarball; it cannot run here because surefire
+/// puts every plugin on the system classloader, which defeats realm isolation.
 public class PluginVerifierSmokeTest {
 
   @Test
   public void helpFlagPrintsUsageAndExitsZero() {
-    int rc = invokeMain(new String[]{"--help"}).rc;
-    // --help prints to stdout and System.exit(0) — but the harness invokes main() through a
-    // wrapper that captures the exit code instead of letting the JVM die mid-test, so we just
-    // assert main() returned without throwing.
-    assertTrue(rc == 0 || rc == -1);  // -1 is the sentinel from runWithoutExiting
+    Result r = invokeMain(new String[]{"--help"});
+    assertEquals(r.rc, 0, "expected --help to exit 0, got stderr:\n" + r.stderr);
+    assertTrue(r.stdout.contains("Usage:"), "expected usage text on stdout, got:\n" + r.stdout);
   }
 
   @Test
-  public void unknownFlagExitsNonZero() {
+  public void unknownFlagExitsTwoWithSingleDiagnostic() {
     Result r = invokeMain(new String[]{"--no-such-flag"});
-    assertNotEquals(r.rc, 0, "expected non-zero exit for unknown flag, got stdout:\n" + r.stdout
+    assertEquals(r.rc, 2, "expected exit 2 for unknown flag, got stdout:\n" + r.stdout
         + "\n--- stderr:\n" + r.stderr);
-    assertTrue(r.stderr.contains("Unknown flag"), "expected 'Unknown flag' diagnostic, got:\n" + r.stderr);
+    assertTrue(r.stderr.contains("Unknown flag: --no-such-flag"),
+        "expected 'Unknown flag: --no-such-flag' diagnostic, got:\n" + r.stderr);
+    // Regression guard: the diagnostic must appear exactly once, not doubled
+    // ("Unknown flag: Unknown flag: ...") as an earlier reflective wrapper produced.
+    assertEquals(countOccurrences(r.stderr, "Unknown flag"), 1,
+        "'Unknown flag' should appear exactly once, got:\n" + r.stderr);
+  }
+
+  @Test
+  public void unknownCheckTypeExitsTwo() {
+    Result r = invokeMain(new String[]{"--check", "no-such-check"});
+    assertEquals(r.rc, 2, "expected exit 2 for unknown check type, got stdout:\n" + r.stdout);
+    assertTrue(r.stderr.contains("Unknown check type"),
+        "expected 'Unknown check type' diagnostic, got:\n" + r.stderr);
   }
 
   @Test
@@ -70,22 +84,9 @@ public class PluginVerifierSmokeTest {
     System.setErr(new PrintStream(err, true));
     int rc;
     try {
-      // We can't call PluginVerifier.main directly because it calls System.exit. Instead,
-      // build a verifier and invoke run() — same code path minus the exit.
-      PluginVerifier.Options options = parseArgsReflectively(args);
-      if (options == null) {
-        rc = 2;
-      } else if (options._help) {
-        rc = 0;
-      } else {
-        rc = createAndRun(options);
-      }
-    } catch (RuntimeException e) {
-      try {
-        err.write(("Caught " + e.getClass().getSimpleName() + ": " + e.getMessage() + "\n").getBytes());
-      } catch (java.io.IOException ignored) {
-      }
-      rc = 2;
+      // execute() is the real main() path minus System.exit, so this drives the actual argument
+      // parser and dispatcher rather than a test-only reimplementation.
+      rc = PluginVerifier.execute(args);
     } finally {
       System.setOut(origOut);
       System.setErr(origErr);
@@ -93,28 +94,11 @@ public class PluginVerifierSmokeTest {
     return new Result(rc, out.toString(), err.toString());
   }
 
-  private PluginVerifier.Options parseArgsReflectively(String[] args) {
-    try {
-      var m = PluginVerifier.class.getDeclaredMethod("parseArgs", String[].class);
-      m.setAccessible(true);
-      return (PluginVerifier.Options) m.invoke(null, (Object) args);
-    } catch (java.lang.reflect.InvocationTargetException e) {
-      System.err.println(e.getCause() instanceof IllegalArgumentException
-          ? "Unknown flag: " + e.getCause().getMessage() : e.getCause().getMessage());
-      return null;
-    } catch (ReflectiveOperationException e) {
-      throw new RuntimeException(e);
+  private static int countOccurrences(String haystack, String needle) {
+    int count = 0;
+    for (int idx = haystack.indexOf(needle); idx >= 0; idx = haystack.indexOf(needle, idx + needle.length())) {
+      count++;
     }
-  }
-
-  private int createAndRun(PluginVerifier.Options options) {
-    try {
-      var ctor = PluginVerifier.class.getDeclaredConstructor(PluginVerifier.Options.class);
-      ctor.setAccessible(true);
-      PluginVerifier v = ctor.newInstance(options);
-      return v.run();
-    } catch (ReflectiveOperationException e) {
-      throw new RuntimeException(e);
-    }
+    return count;
   }
 }

@@ -47,8 +47,14 @@ if [ -z "$VERIFIER_JAR" ]; then
       "$DIST_DIR"/lib/pinot-plugin-verifier-*.jar \
       "$SCRIPT_DIR"/../../../target/pinot-plugin-verifier-*.jar \
       "$SCRIPT_DIR"/../target/pinot-plugin-verifier-*.jar; do
-    if compgen -G "$candidate" > /dev/null 2>&1; then
-      VERIFIER_JAR="$(ls -1 $candidate | head -1)"
+    # Read compgen's matches into an array so paths containing spaces survive (an unquoted
+    # `ls $candidate` would word-split them and fail to find the jar). Take the first match.
+    matches=()
+    while IFS= read -r line; do
+      matches+=("$line")
+    done < <(compgen -G "$candidate" 2> /dev/null || true)
+    if [ "${#matches[@]}" -gt 0 ]; then
+      VERIFIER_JAR="${matches[0]}"
       break
     fi
   done

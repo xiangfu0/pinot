@@ -21,6 +21,7 @@ package org.apache.pinot.verifier.checks;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.apache.pinot.spi.data.readers.RecordReader;
+import org.apache.pinot.spi.stream.StreamMessageDecoder;
 import org.apache.pinot.verifier.PluginVerifier.CheckContext;
 
 
@@ -70,9 +71,13 @@ public final class InputFormatCheck implements Check {
       }
       try {
         Object instance = context.createInstance(pluginName, fqcn);
-        if (!(instance instanceof RecordReader || instance.getClass().getName().contains("MessageDecoder"))) {
-          // The Confluent classes implement StreamMessageDecoder rather than RecordReader.
-          // We accept both — the check is about whether they instantiate at all.
+        // The Confluent classes implement StreamMessageDecoder rather than RecordReader; accept
+        // either, but fail loudly if the loaded class is neither — that means the FQCN in READERS
+        // resolved to something unexpected (e.g. a stale mapping after a plugin refactor).
+        if (!(instance instanceof RecordReader || instance instanceof StreamMessageDecoder)) {
+          throw new IllegalStateException(
+              fqcn + " is neither a RecordReader nor a StreamMessageDecoder (got "
+                  + instance.getClass().getName() + ")");
         }
         System.out.println("  PASS  " + fqcn);
         if (context.verbose()) {

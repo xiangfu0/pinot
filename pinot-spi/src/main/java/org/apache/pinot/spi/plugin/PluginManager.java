@@ -37,6 +37,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -147,8 +148,10 @@ public class PluginManager {
   private boolean _initialized = false;
 
   PluginManager() {
-    // For the shaded plugins
-    _registry = new HashMap<>();
+    // For the shaded plugins. LinkedHashMap (not HashMap) so the realm walk in
+    // loadClassFromAnyPlugin / collectClassLoaders iterates in deterministic load order, honouring
+    // the "first hit wins, registration order" contract those methods document.
+    _registry = new LinkedHashMap<>();
     _registry.put(new Plugin(DEFAULT_PLUGIN_NAME), createClassLoader(List.of()));
 
     // for the new pinot plugins
@@ -291,42 +294,50 @@ public class PluginManager {
         throw new RuntimeException(e);
       }
 
-      try {
-        ClassRealm pluginRealm = _classWorld.newRealm(pluginName, baseClassLoader);
-        urlList.forEach(pluginRealm::addURL);
+      // Register the realm and finish wiring it (URLs, imports, parent) atomically w.r.t. the
+      // realm walk in loadClassFromAnyPlugin / collectClassLoaders. newRealm() makes the realm
+      // visible via _classWorld.getRealms() immediately, so without this lock a concurrent walk
+      // could observe a half-configured realm (URLs/imports not yet applied). The lock is the same
+      // 'this' monitor those readers take; the preceding I/O (config read, jar listing) stays
+      // outside it so we never hold the monitor across disk access on the query hot path.
+      synchronized (this) {
+        try {
+          ClassRealm pluginRealm = _classWorld.newRealm(pluginName, baseClassLoader);
+          urlList.forEach(pluginRealm::addURL);
 
-        ClassRealm pinotRealm = _classWorld.getClassRealm(PINOT_REALMID);
+          ClassRealm pinotRealm = _classWorld.getClassRealm(PINOT_REALMID);
 
-        // All packages to look up in pinot realm BEFORE itself.
-        // Acts like a prefix so all classes in (and below) the listed package are accessible.
-        // Hardcoding the list here is cheap while it stays small. A cleaner long-term approach
-        // would have each SPI module self-declare its exports in a META-INF/pinot-realm-exports
-        // resource file (one package per line) and have PluginManager discover them at init time
-        // via ClassLoader.getResources() — that would eliminate the layering violation of
-        // pinot-spi naming packages from higher-level modules such as pinot-query-planner-spi.
-        // TODO: implement the self-declaring META-INF/pinot-realm-exports mechanism.
-        Stream.of(
-            "org.apache.pinot.spi",
-            "org.apache.pinot.query.planner.spi",     // RuleSetCustomizer SPI (pinot-query-planner-spi)
-            "org.apache.calcite.plan"                 // RelOptRule, used by RuleSetCustomizer.customize
-        ).forEach(p -> pluginRealm.importFrom(pinotRealm, p));
+          // All packages to look up in pinot realm BEFORE itself.
+          // Acts like a prefix so all classes in (and below) the listed package are accessible.
+          // Hardcoding the list here is cheap while it stays small. A cleaner long-term approach
+          // would have each SPI module self-declare its exports in a META-INF/pinot-realm-exports
+          // resource file (one package per line) and have PluginManager discover them at init time
+          // via ClassLoader.getResources() — that would eliminate the layering violation of
+          // pinot-spi naming packages from higher-level modules such as pinot-query-planner-spi.
+          // TODO: implement the self-declaring META-INF/pinot-realm-exports mechanism.
+          Stream.of(
+              "org.apache.pinot.spi",
+              "org.apache.pinot.query.planner.spi",     // RuleSetCustomizer SPI (pinot-query-planner-spi)
+              "org.apache.calcite.plan"                 // RelOptRule, used by RuleSetCustomizer.customize
+          ).forEach(p -> pluginRealm.importFrom(pinotRealm, p));
 
-        // Additional importForm as specified by the plugin configuration
-        config.getImportsFromPerRealm().forEach((r, ifs) -> {
-          try {
-            ClassRealm cr = _classWorld.getRealm(r);
-            ifs.forEach(i -> pluginRealm.importFrom(cr, i));
-          } catch (NoSuchRealmException e) {
-            LOGGER.warn("{} realm does not exist", r);
-          }
-        });
+          // Additional importForm as specified by the plugin configuration
+          config.getImportsFromPerRealm().forEach((r, ifs) -> {
+            try {
+              ClassRealm cr = _classWorld.getRealm(r);
+              ifs.forEach(i -> pluginRealm.importFrom(cr, i));
+            } catch (NoSuchRealmException e) {
+              LOGGER.warn("{} realm does not exist", r);
+            }
+          });
 
-        // Important: parent is not the same as baseclassloader (see pluginRealm above)
-        // baseClassLoader is BEFORE self classloader (should be Platform class loader)
-        // parentClassLoader is AFTER self classloader
-        config.getParentRealmId().map(_classWorld::getClassRealm).ifPresent(pluginRealm::setParentRealm);
-      } catch (DuplicateRealmException e) {
-        throw new RuntimeException(e);
+          // Important: parent is not the same as baseclassloader (see pluginRealm above)
+          // baseClassLoader is BEFORE self classloader (should be Platform class loader)
+          // parentClassLoader is AFTER self classloader
+          config.getParentRealmId().map(_classWorld::getClassRealm).ifPresent(pluginRealm::setParentRealm);
+        } catch (DuplicateRealmException e) {
+          throw new RuntimeException(e);
+        }
       }
       LOGGER.info("Successfully loaded plugin [{}] from jar files: {}", pluginName, Arrays.toString(urlList.toArray()));
     } else {
@@ -342,7 +353,12 @@ public class PluginManager {
       }
 
       PluginClassLoader classLoader = createClassLoader(urlList);
-      _registry.put(new Plugin(pluginName), classLoader);
+      // Guard the shared _registry write on the same monitor the realm walk reads it under, so a
+      // concurrent loadClassFromAnyPlugin / collectClassLoaders never races this put (plain HashMap
+      // put concurrent with iteration can corrupt the map or throw).
+      synchronized (this) {
+        _registry.put(new Plugin(pluginName), classLoader);
+      }
 
       LOGGER.info("Successfully loaded plugin [{}] from jar files: {}", pluginName, Arrays.toString(urlList.toArray()));
     }
@@ -502,12 +518,22 @@ public class PluginManager {
   /// the same name, or a relocated dependency leaks the same package — the first hit wins and
   /// a `WARN` is logged listing every classloader that also resolved the name. Callers that
   /// need strict precedence must use the explicit `pluginName:className` form.
+  ///
+  /// A hit on the `DEFAULT` `PluginClassLoader` (system classloader / Pinot core) is authoritative
+  /// and short-circuits the walk: core classes are never shadowed by a plugin copy, and we avoid
+  /// loading them on every realm. Classes are resolved with `initialize=false`, so the walk itself
+  /// never triggers a class's static initializers — those run lazily when the class is actually used.
   private Class<?> loadClassFromAnyPlugin(String name) throws ClassNotFoundException {
     List<ClassLoader> classLoaders;
+    // The DEFAULT PluginClassLoader (delegates to the system classloader, i.e. Pinot core). Captured
+    // in the snapshot so the walk below can treat a hit there as authoritative without a second
+    // unsynchronized _registry read.
+    ClassLoader authoritativeLoader;
     synchronized (this) {
       classLoaders = new ArrayList<>(1 + _classWorld.getRealms().size() + _registry.size());
       Plugin defaultPlugin = new Plugin(DEFAULT_PLUGIN_NAME);
       PluginClassLoader defaultClassLoader = _registry.get(defaultPlugin);
+      authoritativeLoader = defaultClassLoader;
       if (defaultClassLoader != null) {
         classLoaders.add(defaultClassLoader);
       }
@@ -531,10 +557,22 @@ public class PluginManager {
     List<ClassLoader> additionalHitLoaders = null;
     for (ClassLoader cl : classLoaders) {
       try {
-        Class<?> c = Class.forName(name, true, cl);
+        // initialize=false: this is a resolution walk, not the point of use. Running a class's
+        // static initializers here would fire side effects on every bare-FQCN lookup — including
+        // for classes on plugin realms we only touch to detect name collisions. The class is
+        // initialized lazily when actually used (createInstance's newInstance, or first access by
+        // the caller), so deferring init changes nothing observable except the unwanted side effects.
+        Class<?> c = Class.forName(name, false, cl);
         if (firstHit == null) {
           firstHit = c;
           firstHitLoader = cl;
+          // A hit on the DEFAULT PluginClassLoader (which delegates to the system classloader) is a
+          // Pinot-core / pinot-all.jar class. That resolution is authoritative: a plugin realm must
+          // never shadow a core class. Short-circuit so we neither pay to load the class on every
+          // plugin realm nor risk returning a plugin-local copy of a core type.
+          if (cl == authoritativeLoader) {
+            return firstHit;
+          }
         } else {
           if (additionalHitLoaders == null) {
             additionalHitLoaders = new ArrayList<>(2);

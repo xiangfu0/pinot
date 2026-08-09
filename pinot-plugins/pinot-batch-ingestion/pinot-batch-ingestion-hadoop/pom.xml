@@ -63,6 +63,36 @@
     </dependency>
   </dependencies>
 
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <configuration>
+          <!-- These relocations previously came from the root pom's global shade block, which was
+               removed when plugin shading was replaced by realm isolation. This module is an
+               external-process connector that still shades (shade.phase.prop=package) and runs
+               inside a Hadoop mapper/reducer JVM. Unlike the spark-3 connector (whose jackson/guava
+               are 'provided' and therefore never bundled), hadoop-client pulls jackson/guava in at
+               compile scope, so the shaded jar bundles ~1200 of their classes — without relocation
+               they land unrelocated at the jar root and clash with the versions Hadoop supplies,
+               causing LinkageError/NoSuchMethodError at job runtime. Merges with the inherited shade
+               transformers/filters. -->
+          <relocations>
+            <relocation>
+              <pattern>com.fasterxml.jackson</pattern>
+              <shadedPattern>${shade.prefix}.com.fasterxml.jackson</shadedPattern>
+            </relocation>
+            <relocation>
+              <pattern>com.google.common</pattern>
+              <shadedPattern>${shade.prefix}.com.google.common</shadedPattern>
+            </relocation>
+          </relocations>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
   <profiles>
     <profile>
       <id>pinot-fastdev</id>

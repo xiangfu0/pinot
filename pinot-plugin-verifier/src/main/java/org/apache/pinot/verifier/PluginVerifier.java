@@ -71,6 +71,16 @@ public final class PluginVerifier {
   }
 
   public static void main(String[] args) {
+    System.exit(execute(args));
+  }
+
+  /**
+   * Parses {@code args} and runs the selected checks, returning the process exit code (0 = all
+   * selected checks passed, 1 = at least one failed, 2 = usage/argument error). Unlike
+   * {@link #main(String[])} this never calls {@link System#exit}, so it is the seam tests drive to
+   * exercise the real argument-parsing and dispatch path without killing the JVM.
+   */
+  static int execute(String[] args) {
     Options options;
     try {
       options = parseArgs(args);
@@ -78,16 +88,13 @@ public final class PluginVerifier {
       System.err.println("Argument error: " + e.getMessage());
       System.err.println();
       System.err.println(usage());
-      System.exit(2);
-      return;
+      return 2;
     }
     if (options._help) {
       System.out.println(usage());
-      System.exit(0);
-      return;
+      return 0;
     }
-    int rc = new PluginVerifier(options).run();
-    System.exit(rc);
+    return new PluginVerifier(options).run();
   }
 
   /**
