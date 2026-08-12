@@ -39,6 +39,8 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.common.evaluator.FunctionEvaluatorFactory;
+import org.apache.pinot.common.evaluator.GroovyDisabledException;
+import org.apache.pinot.common.evaluator.GroovyFunctionEvaluator;
 import org.apache.pinot.common.function.FunctionInfo;
 import org.apache.pinot.common.function.FunctionRegistry;
 import org.apache.pinot.common.request.context.ExpressionContext;
@@ -143,12 +145,17 @@ public final class TableConfigUtils {
       ImmutableSet.of(RoutingConfig.STRICT_REPLICA_GROUP_INSTANCE_SELECTOR_TYPE,
           RoutingConfig.MULTI_STAGE_REPLICA_GROUP_SELECTOR_TYPE);
 
-  private static boolean _disableGroovy;
-
   private static boolean _enforcePoolBasedAssignment;
 
+  /// Delegates to the centralized ingestion-time Groovy policy held by [GroovyFunctionEvaluator], which is the single
+  /// source of truth enforced across every evaluator-construction path (schema field specs, table-config transforms,
+  /// realtime and offline/minion ingestion).
   public static void setDisableGroovy(boolean disableGroovy) {
-    _disableGroovy = disableGroovy;
+    GroovyFunctionEvaluator.setDisableGroovy(disableGroovy);
+  }
+
+  private static boolean isDisableGroovy() {
+    return GroovyFunctionEvaluator.isDisableGroovy();
   }
 
   public static void setEnforcePoolBasedAssignment(boolean enforcePoolBasedAssignment) {
@@ -534,8 +541,8 @@ public final class TableConfigUtils {
     if (filterConfig != null) {
       String filterFunction = filterConfig.getFilterFunction();
       if (filterFunction != null) {
-        if (_disableGroovy && FunctionEvaluatorFactory.isGroovyExpression(filterFunction)) {
-          throw new IllegalStateException(
+        if (GroovyFunctionEvaluator.isBlockedIngestionGroovyExpression(filterFunction)) {
+          throw new GroovyDisabledException(
               "Groovy filter functions are disabled for table config. Found '" + filterFunction + "'");
         }
         try {
@@ -569,7 +576,7 @@ public final class TableConfigUtils {
     if (enrichmentConfigs != null) {
       for (EnrichmentConfig enrichmentConfig : enrichmentConfigs) {
         RecordEnricherRegistry.validateEnrichmentConfig(enrichmentConfig,
-            new RecordEnricherValidationConfig(_disableGroovy));
+            new RecordEnricherValidationConfig(isDisableGroovy()));
       }
     }
 
@@ -590,8 +597,8 @@ public final class TableConfigUtils {
         // Skip Groovy expressions when Groovy is disabled: do not compile them just to collect arguments (the main
         // loop below rejects Groovy without compiling). Such a config is rejected anyway, so these columns are not
         // needed as valid intermediate targets.
-        if (transformFunction != null && !(_disableGroovy && FunctionEvaluatorFactory.isGroovyExpression(
-            transformFunction))) {
+        if (transformFunction != null
+            && !GroovyFunctionEvaluator.isBlockedIngestionGroovyExpression(transformFunction)) {
           try {
             transformInputColumns.addAll(
                 FunctionEvaluatorFactory.getExpressionEvaluator(transformFunction).getArguments());
@@ -616,8 +623,8 @@ public final class TableConfigUtils {
             + "' of the transform function must be present in the schema, be consumed as the input of another "
             + "transform function, or be a source column for aggregations");
         FunctionEvaluator expressionEvaluator;
-        if (_disableGroovy && FunctionEvaluatorFactory.isGroovyExpression(transformFunction)) {
-          throw new IllegalStateException(
+        if (GroovyFunctionEvaluator.isBlockedIngestionGroovyExpression(transformFunction)) {
+          throw new GroovyDisabledException(
               "Groovy transform functions are disabled for table config. Found '" + transformFunction + "' for column '"
                   + columnName + "'");
         }
@@ -1165,8 +1172,8 @@ public final class TableConfigUtils {
           Preconditions.checkState(schema.hasColumn(columnName),
               "The destination column '%s' of the post-partial-upsert transform function must be present in the "
                   + "schema", columnName);
-          if (_disableGroovy && FunctionEvaluatorFactory.isGroovyExpression(transformFunction)) {
-            throw new IllegalStateException(
+          if (GroovyFunctionEvaluator.isBlockedIngestionGroovyExpression(transformFunction)) {
+            throw new GroovyDisabledException(
                 "Groovy transform functions are disabled. Found '" + transformFunction + "' for column '"
                     + columnName + "' in postPartialUpsertTransformConfigs");
           }

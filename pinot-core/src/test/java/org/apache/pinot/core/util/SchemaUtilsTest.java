@@ -25,6 +25,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import org.apache.pinot.common.evaluator.GroovyDisabledException;
+import org.apache.pinot.common.evaluator.GroovyFunctionEvaluator;
 import org.apache.pinot.segment.local.utils.SchemaUtils;
 import org.apache.pinot.segment.local.utils.TableConfigUtils;
 import org.apache.pinot.spi.config.table.TableConfig;
@@ -633,6 +635,99 @@ public class SchemaUtilsTest {
         deserSchema.getComplexFieldSpecs().get(1).getChildFieldSpec(ComplexFieldSpec.KEY_FIELD));
     Assert.assertEquals(pinotSchema.getComplexFieldSpecs().get(1).getChildFieldSpec(ComplexFieldSpec.VALUE_FIELD),
         deserSchema.getComplexFieldSpecs().get(1).getChildFieldSpec(ComplexFieldSpec.VALUE_FIELD));
+  }
+
+  /// When Groovy is disabled (the default controller policy), schema validation must reject a FieldSpec Groovy
+  /// transform with a clear configuration error, without compiling the Groovy expression. This covers the schema
+  /// create (POST), update (PUT), validate endpoints and the combined tableConfigs bundle, which all funnel through
+  /// {@link SchemaUtils#validate}.
+  @Test
+  public void testFieldSpecGroovyTransformRejectedWhenGroovyDisabled() {
+    Schema schema = new Schema.SchemaBuilder()
+        .addSingleValueDimension("firstName", DataType.STRING)
+        .addSingleValueDimension("lastName", DataType.STRING)
+        .addSingleValueDimension("fullName", DataType.STRING)
+        .build();
+    schema.getFieldSpecFor("fullName")
+        .setTransformFunction("Groovy({firstName + ' ' + lastName}, firstName, lastName)");
+
+    GroovyFunctionEvaluator.setDisableGroovy(true);
+    try {
+      SchemaUtils.validate(schema);
+      Assert.fail("Schema validation should reject FieldSpec Groovy transform when Groovy is disabled");
+    } catch (GroovyDisabledException e) {
+      Assert.assertTrue(e.getMessage().contains("Groovy transform functions are disabled"),
+          "Expected a clear disabled-Groovy configuration error, got: " + e.getMessage());
+    } finally {
+      GroovyFunctionEvaluator.setDisableGroovy(false);
+    }
+
+    // Explicit opt-in permits the same FieldSpec Groovy transform.
+    GroovyFunctionEvaluator.setDisableGroovy(false);
+    SchemaUtils.validate(schema);
+  }
+
+  /// The FieldSpec (schema-based) and TransformConfig (table-config-based) Groovy transforms must follow the same
+  /// policy: both are rejected when Groovy is disabled and both are permitted when it is enabled.
+  @Test
+  public void testSchemaAndTableConfigGroovyTransformsFollowSamePolicy() {
+    Schema schema = new Schema.SchemaBuilder()
+        .addSingleValueDimension("firstName", DataType.STRING)
+        .addSingleValueDimension("lastName", DataType.STRING)
+        .addSingleValueDimension("fullName", DataType.STRING)
+        .build();
+
+    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE)
+        .setTableName(TABLE_NAME).build();
+    IngestionConfig ingestionConfig = new IngestionConfig();
+    ingestionConfig.setTransformConfigs(
+        List.of(new TransformConfig("fullName", "Groovy({firstName + ' ' + lastName}, firstName, lastName)")));
+    tableConfig.setIngestionConfig(ingestionConfig);
+
+    GroovyFunctionEvaluator.setDisableGroovy(true);
+    try {
+      // Schema-based (FieldSpec) transform - rejected.
+      Schema schemaTransform = new Schema.SchemaBuilder()
+          .addSingleValueDimension("firstName", DataType.STRING)
+          .addSingleValueDimension("lastName", DataType.STRING)
+          .addSingleValueDimension("fullName", DataType.STRING).build();
+      schemaTransform.getFieldSpecFor("fullName")
+          .setTransformFunction("Groovy({firstName + ' ' + lastName}, firstName, lastName)");
+      assertThrows(GroovyDisabledException.class, () -> SchemaUtils.validate(schemaTransform));
+
+      // Table-config-based (TransformConfig) transform - rejected.
+      assertThrows(GroovyDisabledException.class, () -> TableConfigUtils.validate(tableConfig, schema));
+    } finally {
+      GroovyFunctionEvaluator.setDisableGroovy(false);
+    }
+
+    // Both permitted when enabled.
+    GroovyFunctionEvaluator.setDisableGroovy(false);
+    Schema schemaTransform = new Schema.SchemaBuilder()
+        .addSingleValueDimension("firstName", DataType.STRING)
+        .addSingleValueDimension("lastName", DataType.STRING)
+        .addSingleValueDimension("fullName", DataType.STRING).build();
+    schemaTransform.getFieldSpecFor("fullName")
+        .setTransformFunction("Groovy({firstName + ' ' + lastName}, firstName, lastName)");
+    SchemaUtils.validate(schemaTransform);
+    TableConfigUtils.validate(tableConfig, schema);
+  }
+
+  /// Non-Groovy built-in FieldSpec transforms must keep validating even when Groovy is disabled.
+  @Test
+  public void testBuiltInFieldSpecTransformStillValidatesWhenGroovyDisabled() {
+    Schema schema = new Schema.SchemaBuilder()
+        .addSingleValueDimension("rawName", DataType.STRING)
+        .addSingleValueDimension("upperName", DataType.STRING)
+        .build();
+    schema.getFieldSpecFor("upperName").setTransformFunction("upper(rawName)");
+
+    GroovyFunctionEvaluator.setDisableGroovy(true);
+    try {
+      SchemaUtils.validate(schema);
+    } finally {
+      GroovyFunctionEvaluator.setDisableGroovy(false);
+    }
   }
 
   private void checkValidationFails(Schema pinotSchema, boolean isIgnoreCase) {

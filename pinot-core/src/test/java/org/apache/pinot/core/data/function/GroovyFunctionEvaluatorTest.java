@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.apache.pinot.common.evaluator.GroovyDisabledException;
 import org.apache.pinot.common.evaluator.GroovyFunctionEvaluator;
 import org.apache.pinot.common.evaluator.GroovyStaticAnalyzerConfig;
 import org.apache.pinot.spi.data.readers.GenericRow;
@@ -236,5 +237,42 @@ public class GroovyFunctionEvaluatorTest {
     GroovyFunctionEvaluator evaluator =
         new GroovyFunctionEvaluator("Groovy({Integer.parseInt(value)}, value)");
     evaluator.evaluate(new Object[]{"notANumber"});
+  }
+
+  /// The disable-Groovy policy is enforced at construction time, before any Groovy compilation, so an evaluator can
+  /// never be built for a user-supplied expression while the policy is disabled.
+  @Test
+  public void testDisableGroovyPolicyEnforcedAtConstruction() {
+    GroovyFunctionEvaluator.setDisableGroovy(true);
+    try {
+      new GroovyFunctionEvaluator("Groovy({firstName + ' ' + lastName}, firstName, lastName)");
+      fail("Expected GroovyDisabledException when Groovy is disabled");
+    } catch (GroovyDisabledException e) {
+      // expected
+    } finally {
+      GroovyFunctionEvaluator.setDisableGroovy(false);
+    }
+
+    // Explicit opt-in permits construction.
+    GroovyFunctionEvaluator.setDisableGroovy(false);
+    GroovyFunctionEvaluator evaluator =
+        new GroovyFunctionEvaluator("Groovy({firstName + ' ' + lastName}, firstName, lastName)");
+    GenericRow row = new GenericRow();
+    row.putValue("firstName", "John");
+    row.putValue("lastName", "Denver");
+    assertEquals(evaluator.evaluate(row), "John Denver");
+  }
+
+  /// Trusted (Pinot-generated or separately-gated) expressions bypass the disable-Groovy policy.
+  @Test
+  public void testTrustedExpressionBypassesDisableGroovyPolicy() {
+    GroovyFunctionEvaluator.setDisableGroovy(true);
+    try {
+      GroovyFunctionEvaluator evaluator =
+          GroovyFunctionEvaluator.forTrustedExpression("Groovy({2})");
+      assertEquals(evaluator.evaluate(new GenericRow()), 2);
+    } finally {
+      GroovyFunctionEvaluator.setDisableGroovy(false);
+    }
   }
 }

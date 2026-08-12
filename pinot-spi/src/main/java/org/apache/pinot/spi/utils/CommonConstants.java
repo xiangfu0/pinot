@@ -1275,6 +1275,12 @@ public class CommonConstants {
     public static final String QUERY_EXECUTOR_CONFIG_PREFIX = "pinot.server.query.executor";
     public static final String METRICS_CONFIG_PREFIX = "pinot.server.metrics";
 
+    // Disables Groovy transform functions during realtime ingestion (schema field-spec and table-config transforms).
+    // Defaults to true so servers reject Groovy transforms as defense in depth even for schemas persisted while
+    // Groovy was enabled. Must be set to false to permit explicitly enabled Groovy ingestion.
+    public static final String CONFIG_OF_DISABLE_INGESTION_GROOVY = "pinot.server.disable.ingestion.groovy";
+    public static final boolean DEFAULT_DISABLE_INGESTION_GROOVY = true;
+
     public static final String CONFIG_OF_INSTANCE_DATA_MANAGER_CLASS = "pinot.server.instance.data.manager.class";
     public static final String DEFAULT_INSTANCE_DATA_MANAGER_CLASS =
         "org.apache.pinot.server.starter.helix.HelixInstanceDataManager";
@@ -1757,6 +1763,12 @@ public class CommonConstants {
     public static final String CONFIG_OF_METRICS_PREFIX = "pinot.minion.";
     public static final String CONFIG_OF_MINION_ID = "pinot.minion.instance.id";
     public static final String METADATA_EVENT_OBSERVER_PREFIX = "metadata.event.notifier";
+
+    // Disables Groovy transform functions during offline/minion segment generation (schema field-spec and
+    // table-config transforms). Defaults to true so minions reject Groovy transforms as defense in depth even for
+    // schemas persisted while Groovy was enabled. Must be set to false to permit explicitly enabled Groovy ingestion.
+    public static final String CONFIG_OF_DISABLE_INGESTION_GROOVY = "pinot.minion.disable.ingestion.groovy";
+    public static final boolean DEFAULT_DISABLE_INGESTION_GROOVY = true;
 
     // Config keys
     public static final String CONFIG_OF_SWAGGER_USE_HTTPS = "pinot.minion.swagger.use.https";

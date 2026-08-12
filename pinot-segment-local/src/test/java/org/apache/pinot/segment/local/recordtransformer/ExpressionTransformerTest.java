@@ -25,6 +25,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import org.apache.pinot.common.evaluator.GroovyDisabledException;
+import org.apache.pinot.common.evaluator.GroovyFunctionEvaluator;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.config.table.ingestion.IngestionConfig;
@@ -590,5 +592,128 @@ public class ExpressionTransformerTest {
     Object transformedValue = row.getValue("columnArray");
     Assert.assertTrue(transformedValue.getClass().isArray());
     Assert.assertEquals(Arrays.asList((Object[]) transformedValue), Arrays.asList("a", "b", "c"));
+  }
+
+  /// Runtime defense in depth: even for a schema/table config that was persisted while Groovy was enabled, a server
+  /// (or minion) that has Groovy disabled must refuse to construct the ExpressionTransformer instead of executing the
+  /// Groovy transform. Covers the realtime and offline/minion ingestion paths, both of which build the transformer
+  /// from the FieldSpec / TransformConfig at ingestion time.
+  @Test
+  public void testGroovyFieldSpecTransformRejectedAtRuntimeWhenDisabled() {
+    Schema schema = new Schema.SchemaBuilder()
+        .addSingleValueDimension("firstName", FieldSpec.DataType.STRING)
+        .addSingleValueDimension("lastName", FieldSpec.DataType.STRING)
+        .addSingleValueDimension("fullName", FieldSpec.DataType.STRING)
+        .build();
+    // Legacy schema-level (FieldSpec) Groovy transform, as would be read from a persisted schema.
+    schema.getFieldSpecFor("fullName")
+        .setTransformFunction("Groovy({firstName + ' ' + lastName}, firstName, lastName)");
+    TableConfig tableConfig = new TableConfigBuilder(TableType.REALTIME)
+        .setTableName("testGroovyFieldSpecRuntime").build();
+
+    GroovyFunctionEvaluator.setDisableGroovy(true);
+    try {
+      new ExpressionTransformer(tableConfig, schema);
+      Assert.fail("Expected the FieldSpec Groovy transform to be rejected at runtime when Groovy is disabled");
+    } catch (Exception e) {
+      Assert.assertTrue(getRootCause(e) instanceof GroovyDisabledException,
+          "Expected a GroovyDisabledException root cause, got: " + e);
+    } finally {
+      GroovyFunctionEvaluator.setDisableGroovy(false);
+    }
+  }
+
+  /// Same runtime path, but for a table-config TransformConfig Groovy transform (the offline/minion segment
+  /// generation and realtime ingestion both flow through here).
+  @Test
+  public void testGroovyTransformConfigRejectedAtRuntimeWhenDisabled() {
+    Schema schema = new Schema.SchemaBuilder()
+        .addSingleValueDimension("fullName", FieldSpec.DataType.STRING).build();
+    IngestionConfig ingestionConfig = new IngestionConfig();
+    ingestionConfig.setTransformConfigs(
+        List.of(new TransformConfig("fullName", "Groovy({firstName + ' ' + lastName}, firstName, lastName)")));
+    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE)
+        .setTableName("testGroovyTransformConfigRuntime").setIngestionConfig(ingestionConfig).build();
+
+    GroovyFunctionEvaluator.setDisableGroovy(true);
+    try {
+      new ExpressionTransformer(tableConfig, schema);
+      Assert.fail("Expected the TransformConfig Groovy transform to be rejected at runtime when Groovy is disabled");
+    } catch (Exception e) {
+      Assert.assertTrue(getRootCause(e) instanceof GroovyDisabledException,
+          "Expected a GroovyDisabledException root cause, got: " + e);
+    } finally {
+      GroovyFunctionEvaluator.setDisableGroovy(false);
+    }
+  }
+
+  /// Explicit opt-in preserves Groovy behavior at runtime.
+  @Test
+  public void testGroovyFieldSpecTransformPermittedAtRuntimeWhenEnabled() {
+    Schema schema = new Schema.SchemaBuilder()
+        .addSingleValueDimension("firstName", FieldSpec.DataType.STRING)
+        .addSingleValueDimension("lastName", FieldSpec.DataType.STRING)
+        .addSingleValueDimension("fullName", FieldSpec.DataType.STRING)
+        .build();
+    schema.getFieldSpecFor("fullName")
+        .setTransformFunction("Groovy({firstName + ' ' + lastName}, firstName, lastName)");
+    TableConfig tableConfig = new TableConfigBuilder(TableType.REALTIME)
+        .setTableName("testGroovyFieldSpecRuntimeEnabled").build();
+
+    // Groovy explicitly enabled (default in this JVM is already false/allowed, but be explicit and restore).
+    GroovyFunctionEvaluator.setDisableGroovy(false);
+    ExpressionTransformer expressionTransformer = new ExpressionTransformer(tableConfig, schema);
+    GenericRow row = new GenericRow();
+    row.putValue("firstName", "John");
+    row.putValue("lastName", "Denver");
+    expressionTransformer.transform(row);
+    Assert.assertEquals(row.getValue("fullName"), "John Denver");
+  }
+
+  /// Built-in, non-user transforms must keep working at runtime even when Groovy is disabled: the implicit
+  /// `__KEYS`/`__VALUES` map handling is Pinot-generated Groovy and the inbuilt scalar functions are not Groovy.
+  @Test
+  public void testBuiltInTransformsRemainFunctionalWhenGroovyDisabled() {
+    Schema schema = new Schema.SchemaBuilder()
+        .addMultiValueDimension("map1__KEYS", FieldSpec.DataType.STRING)
+        .addMultiValueDimension("map1__VALUES", FieldSpec.DataType.STRING)
+        .addSingleValueDimension("upperName", FieldSpec.DataType.STRING)
+        .build();
+    // Non-Groovy inbuilt transform on a FieldSpec must still be allowed.
+    schema.getFieldSpecFor("upperName").setTransformFunction("upper(rawName)");
+    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE)
+        .setTableName("testBuiltInTransformsGroovyDisabled").build();
+
+    GroovyFunctionEvaluator.setDisableGroovy(true);
+    try {
+      ExpressionTransformer expressionTransformer = new ExpressionTransformer(tableConfig, schema);
+      GenericRow row = new GenericRow();
+      HashMap<String, String> map1 = new HashMap<>();
+      map1.put("30", "foo");
+      map1.put("200", "bar");
+      row.putValue("map1", map1);
+      row.putValue("rawName", "john");
+      expressionTransformer.transform(row);
+
+      // Implicit map __KEYS / __VALUES (built-in Groovy) still evaluated.
+      ArrayList map1Keys = (ArrayList) row.getValue("map1__KEYS");
+      Assert.assertEquals(map1Keys.get(0), "200");
+      Assert.assertEquals(map1Keys.get(1), "30");
+      ArrayList map1Values = (ArrayList) row.getValue("map1__VALUES");
+      Assert.assertEquals(map1Values.get(0), "bar");
+      Assert.assertEquals(map1Values.get(1), "foo");
+      // Non-Groovy inbuilt function still evaluated.
+      Assert.assertEquals(row.getValue("upperName"), "JOHN");
+    } finally {
+      GroovyFunctionEvaluator.setDisableGroovy(false);
+    }
+  }
+
+  private static Throwable getRootCause(Throwable t) {
+    Throwable cause = t;
+    while (cause.getCause() != null && cause.getCause() != cause) {
+      cause = cause.getCause();
+    }
+    return cause;
   }
 }
