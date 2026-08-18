@@ -69,6 +69,10 @@ public class ExactVectorScanFilterOperator extends BaseFilterOperator {
   private final float _distanceThreshold;
   @Nullable
   private final ImmutableRoaringBitmap _requiredUpsertCandidateBitmap;
+  @Nullable
+  private final ImmutableRoaringBitmap _publishedDocIdsBitmap;
+  @Nullable
+  private final ImmutableRoaringBitmap _requiredCandidateBitmap;
   private ImmutableRoaringBitmap _matches;
 
   /// Creates an exact scan operator.
@@ -107,7 +111,9 @@ public class ExactVectorScanFilterOperator extends BaseFilterOperator {
     _column = column;
     _hasDistanceThreshold = searchParams.hasDistanceThreshold();
     _distanceThreshold = searchParams.getDistanceThreshold();
-    _requiredUpsertCandidateBitmap = candidateScope != null ? candidateScope.getRequiredDocIds() : null;
+    _requiredUpsertCandidateBitmap = candidateScope != null ? candidateScope.getUpsertDocIds() : null;
+    _publishedDocIdsBitmap = candidateScope != null ? candidateScope.getPublishedDocIds() : null;
+    _requiredCandidateBitmap = candidateScope != null ? candidateScope.getRequiredDocIds() : null;
     float effectiveThreshold = _hasDistanceThreshold ? _distanceThreshold : -1f;
     _vectorExplainContext = new VectorExplainContext(VectorDistanceUtils.resolveBackendType(vectorIndexConfig),
         VectorDistanceUtils.resolveDistanceFunction(vectorIndexConfig), VectorExecutionMode.EXACT_SCAN,
@@ -163,6 +169,8 @@ public class ExactVectorScanFilterOperator extends BaseFilterOperator {
         + ", fallbackReason:" + _vectorExplainContext.getFallbackReason()
         + ", upsertCandidateFilterApplied:" + (_requiredUpsertCandidateBitmap != null)
         + ", upsertCandidateFilterCardinality:" + getRequiredUpsertCandidateCardinality()
+        + ", publishedDocRangeApplied:" + (_publishedDocIdsBitmap != null)
+        + ", publishedDocRangeCardinality:" + getPublishedDocIdsCardinality()
         + ", effectiveAllowedDocIdsCardinality:" + getEffectiveAllowedDocIdsCardinality()
         + ')';
   }
@@ -186,6 +194,8 @@ public class ExactVectorScanFilterOperator extends BaseFilterOperator {
     attributeBuilder.putLongIdempotent("topKtoSearch", _predicate.getTopK());
     attributeBuilder.putBool("upsertCandidateFilterApplied", _requiredUpsertCandidateBitmap != null);
     attributeBuilder.putLongIdempotent("upsertCandidateFilterCardinality", getRequiredUpsertCandidateCardinality());
+    attributeBuilder.putBool("publishedDocRangeApplied", _publishedDocIdsBitmap != null);
+    attributeBuilder.putLongIdempotent("publishedDocRangeCardinality", getPublishedDocIdsCardinality());
     attributeBuilder.putLongIdempotent("effectiveAllowedDocIdsCardinality",
         getEffectiveAllowedDocIdsCardinality());
   }
@@ -194,7 +204,7 @@ public class ExactVectorScanFilterOperator extends BaseFilterOperator {
   /// When a distance threshold is set, returns all vectors within the threshold.
   /// Otherwise uses a max-heap to maintain the top-K closest vectors.
   private ImmutableRoaringBitmap computeExactTopK() {
-    ImmutableRoaringBitmap allowedDocIds = _requiredUpsertCandidateBitmap;
+    ImmutableRoaringBitmap allowedDocIds = _requiredCandidateBitmap;
     if (allowedDocIds != null && allowedDocIds.isEmpty()) {
       return new MutableRoaringBitmap();
     }
@@ -289,8 +299,12 @@ public class ExactVectorScanFilterOperator extends BaseFilterOperator {
     return _requiredUpsertCandidateBitmap != null ? _requiredUpsertCandidateBitmap.getCardinality() : -1;
   }
 
+  private int getPublishedDocIdsCardinality() {
+    return _publishedDocIdsBitmap != null ? _publishedDocIdsBitmap.getCardinality() : -1;
+  }
+
   private int getEffectiveAllowedDocIdsCardinality() {
-    return getRequiredUpsertCandidateCardinality();
+    return _requiredCandidateBitmap != null ? _requiredCandidateBitmap.getCardinality() : -1;
   }
 
   /// Computes the squared L2 (Euclidean) distance between two vectors.

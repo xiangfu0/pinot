@@ -25,7 +25,7 @@ import org.apache.pinot.segment.spi.index.creator.VectorBackendType;
 /// Selectivity-aware planner that decides the optimal vector search execution mode.
 ///
 /// The planner considers filter selectivity, index capabilities (pre-filter support),
-/// segment type (mutable vs immutable), and query shape to choose between:
+/// and query shape to choose between:
 ///
 /// - [VectorSearchMode#POST_FILTER_ANN] — default, best for low-selectivity filters
 /// - [VectorSearchMode#FILTER_THEN_ANN] — best for highly selective filters
@@ -64,7 +64,9 @@ public final class VectorSearchStrategy {
   /// @param estimatedFilteredDocs estimated docs passing the filter (numDocs if no filter)
   /// @param hasVectorIndex whether a vector index exists for this column
   /// @param indexSupportsPreFilter whether the index implements FilterAwareVectorIndexReader
-  /// @param isMutableSegment whether this is a mutable (realtime) segment
+  /// @param isMutableSegment whether this is a mutable (realtime) segment. Retained for call-site compatibility and
+  ///                         future cost tuning; pre-filter eligibility is determined by indexSupportsPreFilter because
+  ///                         mutable readers can also implement filtered search.
   /// @param backendType the vector backend type
   /// @param searchParams the query search parameters
   /// @return the decision with mode, reason, and metadata
@@ -103,7 +105,7 @@ public final class VectorSearchStrategy {
 
     // Highly selective filter → pre-filter ANN if supported
     if (selectivity < HIGH_SELECTIVITY_THRESHOLD) {
-      if (indexSupportsPreFilter && !isMutableSegment) {
+      if (indexSupportsPreFilter) {
         return new Decision(VectorSearchMode.FILTER_THEN_ANN, selectivity,
             "high_selectivity (ratio=" + String.format("%.4f", selectivity) + " < "
                 + HIGH_SELECTIVITY_THRESHOLD + ")",
@@ -128,7 +130,7 @@ public final class VectorSearchStrategy {
     // Cost of FILTER_THEN_ANN: filter evaluation + ANN(topK) on filtered set
     // Heuristic: pre-filter is better when the ANN has to oversample significantly
     // to compensate for filter loss
-    if (indexSupportsPreFilter && !isMutableSegment) {
+    if (indexSupportsPreFilter) {
       // In the middle range, prefer pre-filter when selectivity is in the lower half
       double midpoint = (HIGH_SELECTIVITY_THRESHOLD + LOW_SELECTIVITY_THRESHOLD) / 2;
       if (selectivity < midpoint) {

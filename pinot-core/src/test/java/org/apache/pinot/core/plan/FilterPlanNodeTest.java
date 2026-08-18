@@ -32,6 +32,7 @@ import org.apache.pinot.core.common.BlockDocIdIterator;
 import org.apache.pinot.core.common.BlockDocIdSet;
 import org.apache.pinot.core.operator.blocks.FilterBlock;
 import org.apache.pinot.core.operator.filter.BaseFilterOperator;
+import org.apache.pinot.core.operator.filter.VectorSimilarityFilterOperator;
 import org.apache.pinot.core.operator.filter.predicate.BaseDictIdBasedRegexpLikePredicateEvaluator;
 import org.apache.pinot.core.operator.filter.predicate.PredicateEvaluator;
 import org.apache.pinot.core.query.request.context.QueryContext;
@@ -295,6 +296,120 @@ public class FilterPlanNodeTest {
         bitmapOf(0, 1));
     verify(vectorReader).getDocIds(queryVector, 2);
     verify(vectorReader, never()).getDocIds(eq(queryVector), eq(2), any(ImmutableRoaringBitmap.class));
+  }
+
+  @Test
+  public void testMutablePublishedRangeIsMandatoryWithoutUpsert() {
+    float[] queryVector = {1.0f, 0.0f};
+    FilterAwareVectorIndexReader vectorReader = mock(FilterAwareVectorIndexReader.class);
+    when(vectorReader.supportsPreFilter()).thenReturn(true);
+    when(vectorReader.getDocIds(eq(queryVector), eq(2), any(ImmutableRoaringBitmap.class)))
+        .thenReturn(bitmapOf(0, 1));
+    DataSource dataSource = mock(DataSource.class);
+    when(dataSource.getVectorIndex()).thenReturn(vectorReader);
+    IndexSegment segment = mock(IndexSegment.class);
+    SegmentMetadata metadata = mock(SegmentMetadata.class);
+    when(metadata.getTotalDocs()).thenReturn(2);
+    when(metadata.isMutableSegment()).thenReturn(true);
+    when(segment.getSegmentMetadata()).thenReturn(metadata);
+    when(segment.getDataSource("embedding", null)).thenReturn(dataSource);
+    QueryContext queryContext = mock(QueryContext.class);
+    when(queryContext.getFilter()).thenReturn(FilterContext.forPredicate(new VectorSimilarityPredicate(
+        ExpressionContext.forIdentifier("embedding"), queryVector, 2)));
+
+    BaseFilterOperator operator = new FilterPlanNode(new SegmentContext(segment), queryContext).run();
+    Assert.assertEquals(getFilteredDocIds(operator), bitmapOf(0, 1));
+    ArgumentCaptor<ImmutableRoaringBitmap> filterCaptor = ArgumentCaptor.forClass(ImmutableRoaringBitmap.class);
+    verify(vectorReader).getDocIds(eq(queryVector), eq(2), filterCaptor.capture());
+    Assert.assertEquals(filterCaptor.getValue(), bitmapOf(0, 1));
+    verify(vectorReader, never()).getDocIds(queryVector, 2);
+    Assert.assertTrue(operator.toExplainString().contains("upsertCandidateFilterApplied:false"));
+    Assert.assertTrue(operator.toExplainString().contains("publishedDocRangeApplied:true"));
+  }
+
+  @Test
+  public void testMutableUpsertSnapshotIsClippedToPublishedRange() {
+    float[] queryVector = {1.0f, 0.0f};
+    FilterAwareVectorIndexReader vectorReader = mock(FilterAwareVectorIndexReader.class);
+    when(vectorReader.supportsPreFilter()).thenReturn(true);
+    when(vectorReader.getDocIds(eq(queryVector), eq(2), any(ImmutableRoaringBitmap.class)))
+        .thenReturn(bitmapOf(0, 1));
+    DataSource dataSource = mock(DataSource.class);
+    when(dataSource.getVectorIndex()).thenReturn(vectorReader);
+    IndexSegment segment = mock(IndexSegment.class);
+    SegmentMetadata metadata = mock(SegmentMetadata.class);
+    when(metadata.getTotalDocs()).thenReturn(2);
+    when(metadata.isMutableSegment()).thenReturn(true);
+    when(segment.getSegmentMetadata()).thenReturn(metadata);
+    when(segment.getDataSource("embedding", null)).thenReturn(dataSource);
+    QueryContext queryContext = mock(QueryContext.class);
+    when(queryContext.getFilter()).thenReturn(FilterContext.forPredicate(new VectorSimilarityPredicate(
+        ExpressionContext.forIdentifier("embedding"), queryVector, 2)));
+    SegmentContext segmentContext = new SegmentContext(segment);
+    segmentContext.setDocIdsSnapshot(bitmapOf(0, 1, 2, 3));
+
+    BaseFilterOperator operator = new FilterPlanNode(segmentContext, queryContext).run();
+    Assert.assertEquals(getFilteredDocIds(operator), bitmapOf(0, 1));
+    ArgumentCaptor<ImmutableRoaringBitmap> filterCaptor = ArgumentCaptor.forClass(ImmutableRoaringBitmap.class);
+    verify(vectorReader).getDocIds(eq(queryVector), eq(2), filterCaptor.capture());
+    Assert.assertEquals(filterCaptor.getValue(), bitmapOf(0, 1));
+    String explain = operator.getChildOperators().stream()
+        .filter(VectorSimilarityFilterOperator.class::isInstance)
+        .map(VectorSimilarityFilterOperator.class::cast)
+        .findFirst().orElseThrow().toExplainString();
+    Assert.assertTrue(explain.contains("upsertCandidateFilterCardinality:4"), explain);
+    Assert.assertTrue(explain.contains("publishedDocRangeCardinality:2"), explain);
+    Assert.assertTrue(explain.contains("effectiveAllowedDocIdsCardinality:2"), explain);
+  }
+
+  @Test
+  public void testEmptyMutablePublishedRangeSkipsVectorReaderWithoutUpsert() {
+    FilterAwareVectorIndexReader vectorReader = mock(FilterAwareVectorIndexReader.class);
+    DataSource dataSource = mock(DataSource.class);
+    when(dataSource.getVectorIndex()).thenReturn(vectorReader);
+    IndexSegment segment = mock(IndexSegment.class);
+    SegmentMetadata metadata = mock(SegmentMetadata.class);
+    when(metadata.getTotalDocs()).thenReturn(0);
+    when(metadata.isMutableSegment()).thenReturn(true);
+    when(segment.getSegmentMetadata()).thenReturn(metadata);
+    when(segment.getDataSource("embedding", null)).thenReturn(dataSource);
+    QueryContext queryContext = mock(QueryContext.class);
+    when(queryContext.getFilter()).thenReturn(FilterContext.forPredicate(new VectorSimilarityPredicate(
+        ExpressionContext.forIdentifier("embedding"), new float[]{1.0f, 0.0f}, 2)));
+
+    Assert.assertTrue(getFilteredDocIds(new FilterPlanNode(new SegmentContext(segment), queryContext).run()).isEmpty());
+    verifyNoInteractions(vectorReader);
+  }
+
+  @Test
+  public void testMutablePublishedRangeUsesExactFallbackForNonFilterAwareReaderWithoutUpsert() {
+    float[] queryVector = {1.0f, 0.0f};
+    VectorIndexReader vectorReader = mock(VectorIndexReader.class);
+    ForwardIndexReader<?> forwardIndexReader = createMockForwardIndexReader(new float[][]{
+        {1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 0.0f}
+    });
+    DataSource dataSource = mock(DataSource.class);
+    when(dataSource.getVectorIndex()).thenReturn(vectorReader);
+    Mockito.doReturn(forwardIndexReader).when(dataSource).getForwardIndex();
+    IndexSegment segment = mock(IndexSegment.class);
+    SegmentMetadata metadata = mock(SegmentMetadata.class);
+    when(metadata.getTotalDocs()).thenReturn(2);
+    when(metadata.isMutableSegment()).thenReturn(true);
+    when(segment.getSegmentMetadata()).thenReturn(metadata);
+    when(segment.getDataSource("embedding", null)).thenReturn(dataSource);
+    QueryContext queryContext = mock(QueryContext.class);
+    when(queryContext.getFilter()).thenReturn(FilterContext.forPredicate(new VectorSimilarityPredicate(
+        ExpressionContext.forIdentifier("embedding"), queryVector, 2)));
+
+    BaseFilterOperator operator = new FilterPlanNode(new SegmentContext(segment), queryContext).run();
+    Assert.assertEquals(getFilteredDocIds(operator), bitmapOf(0, 1));
+    verify(vectorReader, never()).getDocIds(queryVector, 2);
+    ForwardIndexReader rawReader = forwardIndexReader;
+    verify(rawReader).getFloatMV(eq(0), any());
+    verify(rawReader).getFloatMV(eq(1), any());
+    verify(rawReader, never()).getFloatMV(eq(2), any());
+    Assert.assertTrue(operator.toExplainString().contains("upsertCandidateFilterApplied:false"));
+    Assert.assertTrue(operator.toExplainString().contains("publishedDocRangeApplied:true"));
   }
 
   @Test

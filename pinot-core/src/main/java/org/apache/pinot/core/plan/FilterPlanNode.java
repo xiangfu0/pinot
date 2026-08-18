@@ -105,15 +105,24 @@ public class FilterPlanNode implements PlanNode {
     int numDocs = _indexSegment.getSegmentMetadata().getTotalDocs();
     MutableRoaringBitmap docIdsSnapshot = _segmentContext.getDocIdsSnapshot();
     boolean hasVectorPredicate = _filter != null && containsVectorPredicate(_filter);
-    if (hasVectorPredicate && docIdsSnapshot != null) {
-      _requiredVectorCandidateScope = VectorCandidateScope.forUpsertSnapshot(docIdsSnapshot,
-          getRequiredCandidateFallbackReason(_indexSegment.getSegmentMetadata().isMutableSegment()));
+    if (hasVectorPredicate) {
+      boolean isMutableSegment = _indexSegment.getSegmentMetadata().isMutableSegment();
+      if (isMutableSegment) {
+        _requiredVectorCandidateScope = VectorCandidateScope.forMutableSegment(docIdsSnapshot, numDocs,
+            getRequiredCandidateFallbackReason(true, docIdsSnapshot != null));
+      } else if (docIdsSnapshot != null) {
+        _requiredVectorCandidateScope = VectorCandidateScope.forUpsertSnapshot(docIdsSnapshot,
+            getRequiredCandidateFallbackReason(false, true));
+      } else {
+        _requiredVectorCandidateScope = null;
+      }
     } else {
       _requiredVectorCandidateScope = null;
     }
 
     ImmutableRoaringBitmap outerDocIdsSnapshot = _requiredVectorCandidateScope != null
-        ? _requiredVectorCandidateScope.getRequiredDocIds() : docIdsSnapshot;
+        && _requiredVectorCandidateScope.getUpsertDocIds() != null
+        ? _requiredVectorCandidateScope.getUpsertDocIds() : docIdsSnapshot;
 
     if (_filter != null) {
       BaseFilterOperator filterOperator = constructPhysicalOperator(_filter, numDocs);
@@ -571,7 +580,7 @@ public class FilterPlanNode implements PlanNode {
         numDocs, estimatedFilteredDocs,
         /* hasVectorIndex= */ true,
         /* indexSupportsPreFilter= */ true,
-        /* isMutableSegment= */ false,
+        /* isMutableSegment= */ _indexSegment.getSegmentMetadata().isMutableSegment(),
         /* backendType= */ null,
         /* searchParams= */ null);
 
@@ -587,9 +596,12 @@ public class FilterPlanNode implements PlanNode {
     }
   }
 
-  private static String getRequiredCandidateFallbackReason(boolean isMutableSegment) {
-    return isMutableSegment ? "mutable_vector_index_not_filter_aware_for_upsert"
-        : "vector_index_not_filter_aware_for_upsert";
+  private static String getRequiredCandidateFallbackReason(boolean isMutableSegment, boolean hasUpsertSnapshot) {
+    if (!isMutableSegment) {
+      return "vector_index_not_filter_aware_for_upsert";
+    }
+    return hasUpsertSnapshot ? "mutable_vector_index_not_filter_aware_for_upsert"
+        : "mutable_vector_index_not_filter_aware_for_published_docs";
   }
 
   private static String getVectorFallbackReason(@Nullable VectorIndexConfig vectorIndexConfig,

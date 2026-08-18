@@ -87,6 +87,10 @@ public class VectorSimilarityFilterOperator extends BaseFilterOperator {
   @Nullable
   private final ImmutableRoaringBitmap _requiredUpsertCandidateBitmap;
   @Nullable
+  private final ImmutableRoaringBitmap _publishedDocIdsBitmap;
+  @Nullable
+  private final ImmutableRoaringBitmap _requiredCandidateBitmap;
+  @Nullable
   private final String _requiredCandidateFallbackReason;
   private volatile VectorExplainContext _vectorExplainContext;
   private volatile int _annCandidateCount;
@@ -160,7 +164,9 @@ public class VectorSimilarityFilterOperator extends BaseFilterOperator {
     _hasMetadataFilter = hasMetadataFilter;
     _hasThresholdPredicate = searchParams.hasDistanceThreshold();
     _distanceThreshold = searchParams.getDistanceThreshold();
-    _requiredUpsertCandidateBitmap = candidateScope != null ? candidateScope.getRequiredDocIds() : null;
+    _requiredUpsertCandidateBitmap = candidateScope != null ? candidateScope.getUpsertDocIds() : null;
+    _publishedDocIdsBitmap = candidateScope != null ? candidateScope.getPublishedDocIds() : null;
+    _requiredCandidateBitmap = candidateScope != null ? candidateScope.getRequiredDocIds() : null;
     _requiredCandidateFallbackReason = candidateScope != null ? candidateScope.getFallbackReason() : null;
     // Threshold and exact-rerank queries use a larger candidate pool for refinement.
     int baseSearchCount;
@@ -201,9 +207,9 @@ public class VectorSimilarityFilterOperator extends BaseFilterOperator {
     refreshExplainContext();
   }
 
-  /// Sets an optimizer-selected optional metadata bitmap. When a mandatory upsert bitmap is also present, the
-  /// operator intersects private copies of the two bitmaps before candidate generation. When no mandatory bitmap is
-  /// present, readers that cannot pre-filter retain the existing unfiltered ANN behavior.
+  /// Sets an optimizer-selected optional metadata bitmap. When a mandatory candidate scope is also present, the
+  /// operator intersects the two constraints before candidate generation. When no mandatory scope is present,
+  /// readers that cannot pre-filter retain the existing unfiltered ANN behavior.
   ///
   /// This method must be called before any search execution (getTrues, getBitmaps, etc.).
   ///
@@ -282,6 +288,8 @@ public class VectorSimilarityFilterOperator extends BaseFilterOperator {
     }
     sb.append(", upsertCandidateFilterApplied:").append(_requiredUpsertCandidateBitmap != null)
         .append(", upsertCandidateFilterCardinality:").append(getRequiredUpsertCandidateCardinality())
+        .append(", publishedDocRangeApplied:").append(_publishedDocIdsBitmap != null)
+        .append(", publishedDocRangeCardinality:").append(getPublishedDocIdsCardinality())
         .append(", effectiveAllowedDocIdsCardinality:").append(getEffectiveAllowedDocIdsCardinality())
         .append(", candidateGenerationSkipped:").append(_candidateGenerationSkipped);
     if (_candidateGenerationSkipped) {
@@ -340,6 +348,8 @@ public class VectorSimilarityFilterOperator extends BaseFilterOperator {
     }
     attributeBuilder.putBool("upsertCandidateFilterApplied", _requiredUpsertCandidateBitmap != null);
     attributeBuilder.putLongIdempotent("upsertCandidateFilterCardinality", getRequiredUpsertCandidateCardinality());
+    attributeBuilder.putBool("publishedDocRangeApplied", _publishedDocIdsBitmap != null);
+    attributeBuilder.putLongIdempotent("publishedDocRangeCardinality", getPublishedDocIdsCardinality());
     attributeBuilder.putLongIdempotent("effectiveAllowedDocIdsCardinality",
         getEffectiveAllowedDocIdsCardinality());
     attributeBuilder.putBool("candidateGenerationSkipped", _candidateGenerationSkipped);
@@ -647,25 +657,29 @@ public class VectorSimilarityFilterOperator extends BaseFilterOperator {
   }
 
   private boolean hasMandatoryCandidateScope() {
-    return _requiredUpsertCandidateBitmap != null;
+    return _requiredCandidateBitmap != null;
   }
 
   private void recomputeEffectiveAllowedDocIds() {
-    if (_requiredUpsertCandidateBitmap == null) {
+    if (_requiredCandidateBitmap == null) {
       _effectiveAllowedDocIds = _optionalPreFilterBitmap;
       return;
     }
     if (_optionalPreFilterBitmap == null) {
-      _effectiveAllowedDocIds = _requiredUpsertCandidateBitmap;
+      _effectiveAllowedDocIds = _requiredCandidateBitmap;
       return;
     }
-    MutableRoaringBitmap effective = _requiredUpsertCandidateBitmap.toMutableRoaringBitmap();
+    MutableRoaringBitmap effective = _requiredCandidateBitmap.toMutableRoaringBitmap();
     effective.and(_optionalPreFilterBitmap);
     _effectiveAllowedDocIds = effective.toImmutableRoaringBitmap();
   }
 
   private int getRequiredUpsertCandidateCardinality() {
     return _requiredUpsertCandidateBitmap != null ? _requiredUpsertCandidateBitmap.getCardinality() : -1;
+  }
+
+  private int getPublishedDocIdsCardinality() {
+    return _publishedDocIdsBitmap != null ? _publishedDocIdsBitmap.getCardinality() : -1;
   }
 
   private int getEffectiveAllowedDocIdsCardinality() {
@@ -675,6 +689,9 @@ public class VectorSimilarityFilterOperator extends BaseFilterOperator {
   private String getCandidateGenerationSkipReason() {
     if (_requiredUpsertCandidateBitmap != null && _requiredUpsertCandidateBitmap.isEmpty()) {
       return "empty_upsert_candidate_filter";
+    }
+    if (_publishedDocIdsBitmap != null && _publishedDocIdsBitmap.isEmpty()) {
+      return "empty_published_doc_range";
     }
     return "empty_effective_candidate_filter";
   }
