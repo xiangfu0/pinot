@@ -97,10 +97,19 @@ public class VectorSearchStrategyTest {
   }
 
   @Test
-  public void testMutableSegmentNoPreFilter() {
-    // Even with high selectivity, mutable segments don't support pre-filter
+  public void testMutableSegmentWithPreFilterSupport() {
+    // Capability is authoritative: a mutable reader that supports pre-filtering can use filtered ANN.
     VectorSearchStrategy.Decision decision = VectorSearchStrategy.decide(
         1000000, 5000, true, true, true,
+        VectorBackendType.HNSW, VectorSearchParams.DEFAULT);
+    assertEquals(decision.getMode(), VectorSearchMode.FILTER_THEN_ANN);
+    assertTrue(decision.getReason().contains("high_selectivity"));
+  }
+
+  @Test
+  public void testMutableSegmentWithoutPreFilterSupport() {
+    VectorSearchStrategy.Decision decision = VectorSearchStrategy.decide(
+        1000000, 5000, true, false, true,
         VectorBackendType.HNSW, VectorSearchParams.DEFAULT);
     assertEquals(decision.getMode(), VectorSearchMode.EXACT_SCAN);
     assertTrue(decision.getReason().contains("no_prefilter_support"));

@@ -77,7 +77,7 @@ public class VectorUpsertTableTest extends CustomDataQueryClusterIntegrationTest
   private static final String TIMESTAMP_COLUMN = "ts";
   private static final String VECTOR_COLUMN = "embedding";
   private static final int NUM_PARTITIONS = 1;
-  private static final int NUM_REPLICAS = 1;
+  private static final int NUM_REPLICAS = 2;
   private static final int NUM_CURRENT_RECORDS = 4;
   private static final int NUM_PHYSICAL_RECORDS = 6;
   private static final int TOP_K = 2;
@@ -267,8 +267,8 @@ public class VectorUpsertTableTest extends CustomDataQueryClusterIntegrationTest
     String explain = GroupByOptionsTest.toExplainStr(explainResponse, useMultiStageQueryEngine);
     assertExplainContains(explain, "upsertCandidateFilterApplied", true);
     if (tableName.equals(CONSUMING_TABLE_NAME)) {
-      assertExplainContains(explain, "searchMode", "EXACT_SCAN");
-      assertExplainContains(explain, "fallbackReason", "mutable_vector_index_not_filter_aware_for_upsert");
+      assertExplainContains(explain, "publishedDocRangeApplied", true);
+      assertExplainContains(explain, "searchMode", "FILTER_THEN_ANN");
     } else {
       assertTrue(explain.contains("VECTOR_SIMILARITY_INDEX") || explain.contains("VectorSimilarityIndex"),
           "Sealed segments must use their vector index: " + explain);
@@ -402,8 +402,8 @@ public class VectorUpsertTableTest extends CustomDataQueryClusterIntegrationTest
         if (!areReplicasReady(tableName, expectedSegments)) {
           return false;
         }
-        // Query repeatedly after verifying the table data manager so document counts and segment state must remain
-        // stable across broker requests.
+        // Replica-group routing is round-robin by broker request ID. Query repeatedly after verifying both table data
+        // managers so the document counts and segment state must remain stable when either replica serves the query.
         for (int i = 0; i < 10; i++) {
           ResultSetGroup physicalResult = getPinotConnection().execute(
               "SELECT COUNT(*) FROM " + tableName + " OPTION(skipUpsert=true)");
