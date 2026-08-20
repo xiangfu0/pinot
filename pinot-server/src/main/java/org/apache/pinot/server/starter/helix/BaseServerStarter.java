@@ -61,6 +61,7 @@ import org.apache.helix.zookeeper.datamodel.ZNRecord;
 import org.apache.pinot.common.Utils;
 import org.apache.pinot.common.config.DefaultClusterConfigChangeHandler;
 import org.apache.pinot.common.config.TlsConfig;
+import org.apache.pinot.common.evaluator.GroovyFunctionEvaluator;
 import org.apache.pinot.common.metadata.ZKMetadataProvider;
 import org.apache.pinot.common.metrics.MseMetrics;
 import org.apache.pinot.common.metrics.ServerGauge;
@@ -203,6 +204,13 @@ public abstract class BaseServerStarter implements ServiceStartable {
         _serverConf.getProperty(CommonConstants.CONFIG_OF_PINOT_INSECURE_MODE, false));
     PinotMd5Mode.setPinotMd5Disabled(_serverConf.getProperty(CommonConstants.CONFIG_OF_PINOT_MD5_DISABLED,
         PinotMd5Mode.isPinotMd5Disabled()));
+
+    // Enforce the ingestion-time Groovy policy on the server as defense in depth: realtime ingestion constructs
+    // transform-function evaluators directly from the (possibly legacy) persisted schema and table config, so the
+    // controller-side validation is not enough to prevent Groovy execution here.
+    GroovyFunctionEvaluator.setDisableGroovy(_serverConf.getProperty(
+        CommonConstants.Server.CONFIG_OF_DISABLE_INGESTION_GROOVY,
+        CommonConstants.Server.DEFAULT_DISABLE_INGESTION_GROOVY));
 
     String tarCompressionCodecName =
         _serverConf.getProperty(CommonConstants.CONFIG_OF_PINOT_TAR_COMPRESSION_CODEC_NAME);

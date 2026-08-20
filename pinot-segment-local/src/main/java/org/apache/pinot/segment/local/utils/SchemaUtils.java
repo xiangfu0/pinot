@@ -29,6 +29,7 @@ import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.common.evaluator.FunctionEvaluatorFactory;
+import org.apache.pinot.common.evaluator.GroovyFunctionEvaluator;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.data.BuiltInVirtualColumnDefinitions;
 import org.apache.pinot.spi.data.DateTimeFieldSpec;
@@ -173,6 +174,12 @@ public class SchemaUtils {
       }
       String transformFunction = fieldSpec.getTransformFunction();
       if (transformFunction != null) {
+        // Fail fast on a disabled Groovy transform with a clear configuration error, before any Groovy compilation is
+        // attempted. This keeps validation (including unauthorized validate requests) from triggering Groovy
+        // compilation. Uses the centralized policy predicate/exception so the message matches the runtime backstop.
+        if (GroovyFunctionEvaluator.isBlockedIngestionGroovyExpression(transformFunction)) {
+          throw GroovyFunctionEvaluator.groovyDisabledException(transformFunction);
+        }
         try {
           List<String> arguments = FunctionEvaluatorFactory.getExpressionEvaluator(fieldSpec).getArguments();
           Preconditions.checkState(!arguments.contains(column),

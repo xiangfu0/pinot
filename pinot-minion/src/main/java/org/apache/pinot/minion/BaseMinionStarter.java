@@ -41,6 +41,7 @@ import org.apache.pinot.common.auth.AuthProviderUtils;
 import org.apache.pinot.common.config.DefaultClusterConfigChangeHandler;
 import org.apache.pinot.common.config.TlsConfig;
 import org.apache.pinot.common.metrics.MinionGauge;
+import org.apache.pinot.common.evaluator.GroovyFunctionEvaluator;
 import org.apache.pinot.common.metrics.MinionMeter;
 import org.apache.pinot.common.metrics.MinionMetrics;
 import org.apache.pinot.common.metrics.MinionTimer;
@@ -113,6 +114,13 @@ public abstract class BaseMinionStarter implements ServiceStartable {
     PinotInsecureMode.setPinotInInsecureMode(_config.getProperty(CommonConstants.CONFIG_OF_PINOT_INSECURE_MODE, false));
     PinotMd5Mode.setPinotMd5Disabled(_config.getProperty(CommonConstants.CONFIG_OF_PINOT_MD5_DISABLED,
         PinotMd5Mode.isPinotMd5Disabled()));
+
+    // Enforce the ingestion-time Groovy policy on the minion as defense in depth: offline segment generation
+    // constructs transform-function evaluators directly from the (possibly legacy) persisted schema and table config,
+    // so the controller-side validation is not enough to prevent Groovy execution here.
+    GroovyFunctionEvaluator.setDisableGroovy(_config.getProperty(
+        CommonConstants.Minion.CONFIG_OF_DISABLE_INGESTION_GROOVY,
+        CommonConstants.Minion.DEFAULT_DISABLE_INGESTION_GROOVY));
 
     setupHelixSystemProperties();
     _hostname = _config.getHostName();

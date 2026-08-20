@@ -85,17 +85,22 @@ public class FunctionEvaluatorFactory {
       // for backward compatible handling of Map type (currently only in Avro)
       String sourceMapName = columnName.substring(0, columnName.length() - MAP_KEY_COLUMN_SUFFIX.length());
       String defaultMapKeysTransformExpression = getDefaultMapKeysTransformExpression(sourceMapName);
-      functionEvaluator = getExpressionEvaluator(defaultMapKeysTransformExpression);
+      // This is a Pinot-generated built-in Groovy expression, not user input; bypass the disable-Groovy policy.
+      functionEvaluator = GroovyFunctionEvaluator.forTrustedExpression(defaultMapKeysTransformExpression);
     } else if (columnName.endsWith(MAP_VALUE_COLUMN_SUFFIX)) {
       // for backward compatible handling of Map type in avro (currently only in Avro)
       String sourceMapName =
           columnName.substring(0, columnName.length() - MAP_VALUE_COLUMN_SUFFIX.length());
       String defaultMapValuesTransformExpression = getDefaultMapValuesTransformExpression(sourceMapName);
-      functionEvaluator = getExpressionEvaluator(defaultMapValuesTransformExpression);
+      // This is a Pinot-generated built-in Groovy expression, not user input; bypass the disable-Groovy policy.
+      functionEvaluator = GroovyFunctionEvaluator.forTrustedExpression(defaultMapValuesTransformExpression);
     }
     return functionEvaluator;
   }
 
+  /// Creates a [FunctionEvaluator] for a user-supplied transform expression. When the expression is a Groovy
+  /// expression and the ingestion-time Groovy policy is disabled, a [GroovyDisabledException] is thrown by the
+  /// [GroovyFunctionEvaluator] constructor before any Groovy compilation happens.
   public static FunctionEvaluator getExpressionEvaluator(String transformExpression) {
     if (isGroovyExpression(transformExpression)) {
       return new GroovyFunctionEvaluator(transformExpression);
