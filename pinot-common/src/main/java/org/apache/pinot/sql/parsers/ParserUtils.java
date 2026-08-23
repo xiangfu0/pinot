@@ -18,12 +18,39 @@
  */
 package org.apache.pinot.sql.parsers;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.StringJoiner;
 import org.apache.pinot.common.request.Expression;
+import org.apache.pinot.common.request.ExpressionType;
+import org.apache.pinot.spi.utils.SqlUtils;
 
 
 public class ParserUtils {
   private ParserUtils() {
+  }
+
+  /// Converts a raw or SQL-quoted identifier into a safe SQL identifier fragment. Qualified identifiers are split on
+  /// dots outside quoted components. Valid bare Pinot identifier components and wildcards remain bare, while other
+  /// components are double-quoted. Backtick-quoted and double-quoted components are normalized to double quotes.
+  ///
+  /// @param identifier Raw or SQL-quoted identifier, optionally qualified
+  /// @return Identifier formatted for use in a SQL statement
+  /// @throws NullPointerException If the identifier is null
+  /// @throws IllegalArgumentException If the identifier is empty or has invalid quoted structure
+  public static String sanitizeIdentifier(String identifier) {
+    Objects.requireNonNull(identifier, "identifier cannot be null");
+    String trimmed = identifier.trim();
+    if (trimmed.isEmpty()) {
+      throw new IllegalArgumentException("identifier cannot be empty");
+    }
+
+    StringJoiner result = new StringJoiner(".");
+    for (String segment : splitIdentifier(trimmed)) {
+      result.add(sanitizeIdentifierSegment(segment));
+    }
+    return result.toString();
   }
 
   public static void validateFunction(String canonicalName, List<Expression> operands) {
@@ -136,6 +163,100 @@ public class ParserUtils {
       }
     }
     return result.toString();
+  }
+
+  private static List<String> splitIdentifier(String identifier) {
+    List<String> segments = new ArrayList<>();
+    StringBuilder segment = new StringBuilder();
+    char quote = 0;
+    boolean segmentStarted = false;
+    int index = 0;
+    while (index < identifier.length()) {
+      char current = identifier.charAt(index);
+      if (quote == 0) {
+        if (current == '.') {
+          segments.add(segment.toString());
+          segment.setLength(0);
+          segmentStarted = false;
+          index++;
+          continue;
+        }
+        if (!segmentStarted && (current == '`' || current == '"')) {
+          quote = current;
+        }
+        if (!Character.isWhitespace(current)) {
+          segmentStarted = true;
+        }
+      } else if (current == quote) {
+        if (index + 1 < identifier.length() && identifier.charAt(index + 1) == quote) {
+          segment.append(current);
+          segment.append(identifier.charAt(index + 1));
+          index += 2;
+          continue;
+        }
+        quote = 0;
+      }
+      segment.append(current);
+      index++;
+    }
+    if (quote != 0) {
+      throw new IllegalArgumentException("Unterminated quoted identifier");
+    }
+    segments.add(segment.toString());
+    return segments;
+  }
+
+  private static String sanitizeIdentifierSegment(String segment) {
+    String trimmed = segment.trim();
+    if (trimmed.isEmpty()) {
+      throw new IllegalArgumentException("Identifier segment cannot be empty");
+    }
+    if ("*".equals(trimmed)) {
+      return trimmed;
+    }
+    if (trimmed.charAt(0) == '`' || trimmed.charAt(0) == '"') {
+      return sanitizeQuotedIdentifierSegment(trimmed);
+    }
+    return sanitizeUnquotedIdentifierSegment(trimmed);
+  }
+
+  private static String sanitizeUnquotedIdentifierSegment(String segment) {
+    try {
+      Expression expression = CalciteSqlParser.compileToExpression(segment);
+      if (expression.getType() == ExpressionType.IDENTIFIER
+          && expression.isSetIdentifier()
+          && segment.equals(expression.getIdentifier().getName())) {
+        return segment;
+      }
+    } catch (SqlCompilationException ignored) {
+      // Not a bare Pinot identifier; quote it below.
+    }
+    return SqlUtils.quoteIdentifier(segment);
+  }
+
+  private static String sanitizeQuotedIdentifierSegment(String segment) {
+    char quote = segment.charAt(0);
+    if (segment.length() < 2 || segment.charAt(segment.length() - 1) != quote) {
+      throw new IllegalArgumentException("Invalid quoted identifier segment: " + segment);
+    }
+
+    StringBuilder unquoted = new StringBuilder(segment.length() - 2);
+    int index = 1;
+    while (index < segment.length() - 1) {
+      char current = segment.charAt(index);
+      if (current == quote) {
+        if (index + 1 >= segment.length() - 1 || segment.charAt(index + 1) != quote) {
+          throw new IllegalArgumentException("Invalid quoted identifier segment: " + segment);
+        }
+        index++;
+      }
+      unquoted.append(current);
+      index++;
+    }
+    if (unquoted.length() == 0) {
+      throw new IllegalArgumentException("Quoted identifier segment cannot be empty");
+    }
+    return SqlUtils.quoteIdentifier(unquoted.toString());
   }
 
   private static void validateJsonExtractScalarFunction(String functionName, List<Expression> operands) {

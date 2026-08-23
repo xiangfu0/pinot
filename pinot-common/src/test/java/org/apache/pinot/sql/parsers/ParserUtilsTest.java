@@ -19,9 +19,76 @@
 package org.apache.pinot.sql.parsers;
 
 import org.testng.Assert;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertThrows;
+
 public class ParserUtilsTest {
+
+  @Test(dataProvider = "identifiers")
+  public void testSanitizeIdentifier(String identifier, String expected) {
+    String sanitized = ParserUtils.sanitizeIdentifier(identifier);
+    assertEquals(sanitized, expected);
+    CalciteSqlParser.compileToPinotQuery("SELECT " + sanitized + " FROM testTable");
+  }
+
+  @DataProvider
+  public Object[][] identifiers() {
+    return new Object[][] {
+      {"myColumn", "myColumn"},
+      {"ts", "ts"},
+      {"123column", "123column"},
+      {"café", "café"},
+      {"城市", "城市"},
+      {"*", "*"},
+      {"schema.*", "schema.*"},
+      {"schema.column", "schema.column"},
+      {"schema.`group.group_city`", "schema.\"group.group_city\""},
+      {"catalog.\"group.group_city\".myColumn", "catalog.\"group.group_city\".myColumn"},
+      {"order-id", "\"order-id\""},
+      {"column name", "\"column name\""},
+      {"`order-id`", "\"order-id\""},
+      {"\"123column\"", "\"123column\""},
+      {"`order``id`", "\"order`id\""},
+      {"\"order\"\"id\"", "\"order\"\"id\""},
+      {"`order\"id`", "\"order\"\"id\""},
+      {"order\"id", "\"order\"\"id\""},
+      {"myTable; DROP TABLE other", "\"myTable; DROP TABLE other\""},
+      {"column) FROM other", "\"column) FROM other\""},
+      {"foo/*comment*/", "\"foo/*comment*/\""},
+      {"foo--comment", "\"foo--comment\""},
+      {"  schema . `column name`  ", "schema.\"column name\""}
+    };
+  }
+
+  @Test
+  public void testSanitizeIdentifierRejectsNull() {
+    assertThrows(NullPointerException.class, () -> ParserUtils.sanitizeIdentifier(null));
+  }
+
+  @Test(dataProvider = "invalidIdentifiers")
+  public void testSanitizeIdentifierRejectsInvalidInput(String identifier) {
+    assertThrows(IllegalArgumentException.class, () -> ParserUtils.sanitizeIdentifier(identifier));
+  }
+
+  @DataProvider
+  public Object[][] invalidIdentifiers() {
+    return new Object[][] {
+      {""},
+      {"   "},
+      {"schema..column"},
+      {".column"},
+      {"column."},
+      {"`unterminated"},
+      {"\"unterminated"},
+      {"``"},
+      {"\"\""},
+      {"`safe`; DROP TABLE other``"},
+      {"\"safe\"; DROP TABLE other\"\""}
+    };
+  }
 
   @Test
   public void testRemoveExcessiveWhiteSpace() {
