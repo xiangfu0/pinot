@@ -384,14 +384,22 @@ public class CommonConstants {
     public static final String DEFAULT_BROKER_QUERY_LOG_SQL_REDACTION = "none";
     public static final String CONFIG_OF_BROKER_QUERY_ENABLE_NULL_HANDLING = "pinot.broker.query.enable.null.handling";
     /// How query option keys supplied through SQL `SET` / `OPTION(...)` on DQL queries are validated.
-    /// Broker config key: `pinot.broker.query.option.validationMode`.
-    /// One of `QueryOptionsUtils.SqlQueryOptionValidationMode`: `NONE` (default, unknown keys are
-    /// preserved silently, as they always have been), `WARN` (preserved, logged once per distinct
-    /// unknown key) or `REJECT` (query fails). Plugins can allowlist their own keys for `REJECT` via
+    /// Cluster config key: `pinot.broker.query.option.validationMode`, applied live and not read from the broker
+    /// instance config. One of `QueryOptionsUtils.SqlQueryOptionValidationMode`: `NONE` (default, unknown keys are
+    /// preserved silently, as they always have been), `WARN` (preserved, logged once per distinct unknown key) or
+    /// `REJECT` (query fails). Plugins can allowlist their own keys for `REJECT` via
     /// `QueryOptionsUtils.registerSqlQueryOptionKey`.
     public static final String CONFIG_OF_BROKER_QUERY_OPTION_VALIDATION_MODE =
         "pinot.broker.query.option.validationMode";
     public static final String DEFAULT_BROKER_QUERY_OPTION_VALIDATION_MODE = "NONE";
+    /// How the legacy PQL-style `OPTION(key=value)` query option suffix is handled.
+    /// Cluster config key: `pinot.broker.query.option.legacySyntaxMode`, applied live and not read from the broker
+    /// instance config. One of `QueryOptionsUtils.SqlOptionsMode`: `ALLOW` (default) applies the options as always,
+    /// `IGNORE` strips the suffix and drops its options, `REJECT` fails the statement with an error pointing at
+    /// `SET`. Applies to every statement type, since `SET` covers them all.
+    public static final String CONFIG_OF_BROKER_QUERY_OPTION_LEGACY_SYNTAX_MODE =
+        "pinot.broker.query.option.legacySyntaxMode";
+    public static final String DEFAULT_BROKER_QUERY_OPTION_LEGACY_SYNTAX_MODE = "ALLOW";
     /// When true, the broker initializes the materialized view metadata cache and query rewrite
     /// engine.  When false (default), MV rewrite is disabled regardless of per-MV
     /// `rewriteEnabled` setting.
@@ -541,10 +549,34 @@ public class CommonConstants {
     public static final String DISABLE_GROOVY = "pinot.broker.disable.query.groovy";
     public static final boolean DEFAULT_DISABLE_GROOVY = true;
 
-    // Rewrite potential expensive functions to their approximation counterparts
-    // - DISTINCT_COUNT -> DISTINCT_COUNT_SMART_HLL
-    // - PERCENTILE -> PERCENTILE_SMART_TDIGEST
+    /// Rewrite potential expensive functions to their approximation counterparts, in both query engines:
+    /// - DISTINCT_COUNT and COUNT(DISTINCT) -> DISTINCT_COUNT_SMART_HLL
+    /// - PERCENTILE -> PERCENTILE_SMART_TDIGEST
+    ///
+    /// The rewritten functions stay exact until an accumulator exceeds their conversion threshold, so this bounds
+    /// server memory without changing the answer for low-cardinality inputs.
+    ///
+    /// Settable in the broker conf, read once at startup, or in the Helix cluster config, which wins and which
+    /// brokers pick up without a restart. Both are defaults: the `useApproximateFunction` query option overrides
+    /// them, and so does `QueryConfig.useApproximateFunction`, though only in the single-stage engine, because a
+    /// multi-stage query can span tables and so resolves the setting before it knows the table set.
     public static final String USE_APPROXIMATE_FUNCTION = "pinot.broker.use.approximate.function";
+    public static final boolean DEFAULT_USE_APPROXIMATE_FUNCTION = false;
+
+    /// Parameters passed verbatim as the trailing argument of the calls the rewrite produces, for example
+    /// `threshold=10000;log2m=12;dictThreshold=10000` and `threshold=1000;compression=100`. Empty means no argument
+    /// is added, so the aggregation function defaults apply. The two functions reject each other's parameter names,
+    /// hence one key each.
+    ///
+    /// Before conversion a group holds up to `threshold` values; after it, a sketch whose registers are allocated
+    /// eagerly, around 2.7 KB at `log2m=12`. A low threshold therefore trades raw values for sketches and can raise
+    /// group-by memory rather than lower it, so size `threshold` together with `log2m` or `compression` and with
+    /// `pinot.server.query.executor.num.groups.limit` rather than in isolation.
+    public static final String APPROXIMATE_FUNCTION_DISTINCT_COUNT_PARAMS =
+        "pinot.broker.approximate.function.distinct.count.params";
+    public static final String APPROXIMATE_FUNCTION_PERCENTILE_PARAMS =
+        "pinot.broker.approximate.function.percentile.params";
+    public static final String DEFAULT_APPROXIMATE_FUNCTION_PARAMS = "";
 
     public static final String CONTROLLER_URL = "pinot.broker.controller.url";
 
@@ -762,6 +794,9 @@ public class CommonConstants {
 
       public static class QueryOptionKey {
         public static final String TIMEOUT_MS = "timeoutMs";
+        /// Per-query override of [CommonConstants.Broker#USE_APPROXIMATE_FUNCTION], outranking both the table config
+        /// and the cluster or broker default. `false` forces exact results, `true` opts one expensive query in.
+        public static final String USE_APPROXIMATE_FUNCTION = "useApproximateFunction";
         /// Broker-internal marker set on the rewritten server-side PinotQuery after a FULL_REWRITE
         /// materialized-view rewrite. Read by BrokerReduceService to distinguish MV-rewritten
         /// queries from gapfill / future federated paths without relying on a brittle structural
@@ -875,6 +910,13 @@ public class CommonConstants {
         public static final String USE_FIXED_REPLICA = "useFixedReplica";
         public static final String EXPLAIN_PLAN_VERBOSE = "explainPlanVerbose";
         public static final String USE_MULTISTAGE_ENGINE = "useMultistageEngine";
+        /// How query options embedded in the SQL text (`SET` statements and the legacy `OPTION(...)` suffix) are
+        /// handled for this request, one of `QueryOptionsUtils.SqlOptionsMode`: `ALLOW` (default) merges them with
+        /// precedence over the request options, as always; `IGNORE` drops them so that only the request options
+        /// apply; `REJECT` fails the query when it carries any. Only honored from the request payload
+        /// (`queryOptions`, gRPC metadata), never from the SQL itself, so a gateway that sets request options on
+        /// behalf of its users can guarantee the query text cannot override them.
+        public static final String SQL_OPTIONS_MODE = "sqlOptionsMode";
         public static final String INFER_PARTITION_HINT = "inferPartitionHint";
         public static final String ENABLE_NULL_HANDLING = "enableNullHandling";
         public static final String APPLICATION_NAME = "applicationName";
@@ -1157,6 +1199,8 @@ public class CommonConstants {
       public static final String AGGREGATE_UNION_TRANSPOSE = "AggregateUnionTranspose";
       public static final String AGGREGATE_REDUCE_FUNCTIONS = "AggregateReduceFunctions";
       public static final String AGGREGATE_FUNCTION_REWRITE = "AggregateFunctionRewrite";
+      /// Inert unless [CommonConstants.Broker#USE_APPROXIMATE_FUNCTION] is on; name it here to switch it off entirely.
+      public static final String APPROXIMATE_AGGREGATE_REWRITE = "ApproximateAggregateRewrite";
       public static final String AGGREGATE_CASE_TO_FILTER = "AggregateCaseToFilter";
       public static final String PROJECT_FILTER_TRANSPOSE = "ProjectFilterTranspose";
       public static final String PROJECT_MERGE = "ProjectMerge";
@@ -1732,6 +1776,14 @@ public class CommonConstants {
     public static final String CONFIG_OF_MESSAGES_COUNT_REFRESH_INTERVAL_SECONDS =
         "pinot.server.messagesCount.refreshIntervalSeconds";
     public static final int DEFAULT_MESSAGES_COUNT_REFRESH_INTERVAL_SECONDS = 30;
+    // Max PageCache Warmup duration
+    public static final String MAX_PAGECACHE_WARMUP_DURATION_MS = "pinot.server.max.pagecache.warmup.duration.ms";
+    public static final int DEFAULT_MAX_PAGECACHE_WARMUP_DURATION_MS = 180_000;
+    // Fraction of per‑replica QPS that page‑cache warm‑up runs at during a segment refresh.
+    // Example: quota=100QPS, replicas=2 ⇒ per‑replica=50QPS; at rate=0.2, warm‑up runs at 10QPS.
+    public static final String MAX_PAGECACHE_REFRESH_WARMUP_QPS_RATE =
+        "pinot.server.max.pagecache.refresh.warmup.qps.rate";
+    public static final double DEFAULT_MAX_PAGECACHE_REFRESH_WARMUP_QPS_RATE = 0.2;
 
     public static class SegmentCompletionProtocol {
       public static final String PREFIX_OF_CONFIG_OF_SEGMENT_UPLOADER = "pinot.server.segment.uploader";
@@ -1846,6 +1898,9 @@ public class CommonConstants {
     public static final String CONTROLLER_SERVICE_AUTO_DISCOVERY = "pinot.controller.service.auto.discovery";
     public static final String CONFIG_OF_LOGGER_ROOT_DIR = "pinot.controller.logger.root.dir";
     public static final String PREFIX_OF_PINOT_CONTROLLER_SEGMENT_COMPLETION = "pinot.controller.segment.completion";
+    // Page Cache Warmup queries data directory
+    public static final String PAGE_CACHE_WARMUP_QUERIES_DATA_DIR =
+        "pinot.controller.page.cache.warmup.queries.dataDir";
   }
 
   public static class Minion {
@@ -2949,5 +3004,13 @@ public class CommonConstants {
     /// - PROTECTED: Force commit is enabled with metadata reversion on inconsistencies
     /// - UNSAFE: Force commit is enabled without metadata reversion (Can lead to inconsistencies)
     public static final String CONSUMING_SEGMENT_CONSISTENCY_MODE = "pinot.server.consuming.segment.consistency.mode";
+
+    /// Cluster config key to control whether the protobuf decoder falls back to the last successfully fetched
+    /// (and resolved) descriptor when the remote descriptor fetch fails, so a transient DNS / object-store outage
+    /// does not permanently fail the CONSUMING transition. Enabled by default; set to 'false' to fail fast
+    /// instead. Dynamically updatable without a server restart; a table-level decoder prop
+    /// ('descriptorFileFallbackEnabled') overrides this cluster-wide value.
+    public static final String PROTOBUF_DESCRIPTOR_FALLBACK_ENABLED =
+        "pinot.server.protobuf.descriptor.fallback.enabled";
   }
 }
