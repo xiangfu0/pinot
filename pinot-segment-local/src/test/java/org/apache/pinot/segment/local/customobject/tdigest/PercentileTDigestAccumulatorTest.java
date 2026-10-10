@@ -630,7 +630,7 @@ public class PercentileTDigestAccumulatorTest {
   }
 
   @Test
-  public void testCompatibleByteBoundCapsBufferedStateAndRetainsPendingCompactBytes() {
+  public void testCompatibleByteBoundCapsBufferedStateAndRetainsPendingBytes() throws Exception {
     PercentileTDigestAccumulator buffered = PercentileTDigestAccumulator.forLegacyAggregation(100);
     for (int i = 0; i < 1000; i++) {
       buffered.add(i, 1000);
@@ -638,6 +638,24 @@ public class PercentileTDigestAccumulatorTest {
     int legacyBound = TDigestCodec.VERBOSE_HEADER_SIZE + 210 * TDigestCodec.VERBOSE_CENTROID_SIZE;
     assertEquals(buffered.maxSerializedByteSize(), legacyBound);
     assertTrue(buffered.serialize().length <= legacyBound);
+
+    for (double sourceCompression : new double[]{100, 1000}) {
+      double[] means = new double[sourceCompression == 100 ? 100 : 500];
+      double[] weights = new double[means.length];
+      for (int i = 0; i < means.length; i++) {
+        means[i] = i;
+        weights[i] = 1.0;
+      }
+      byte[] verbose = TDigestCodec.serializeCentroids(sourceCompression, 0, means.length - 1, means, weights,
+          means.length);
+      PercentileTDigestAccumulator smaller = PercentileTDigestAccumulator.forLegacyAggregation(10);
+      smaller.addSerializedTDigest(verbose);
+      int bound = smaller.maxSerializedByteSize();
+      assertTrue(bound >= verbose.length, "Retained verbose input can exceed configured output capacity");
+      assertEquals((int) field(smaller, "_mergeCount"), 0, "Sizing must not compress retained input");
+      assertEquals(smaller.serialize(), verbose);
+      assertTrue(smaller.serialize().length <= bound);
+    }
 
     int count = 500;
     ByteBuffer compact = ByteBuffer.allocate(TDigestCodec.SMALL_HEADER_SIZE + count * TDigestCodec.SMALL_CENTROID_SIZE);
@@ -665,6 +683,59 @@ public class PercentileTDigestAccumulatorTest {
     assertEquals(copy.getTotalWeight(), (double) count);
     assertTrue(Double.isFinite(copy.quantile(0.5)));
     assertTrue(copy.serialize().length <= copy.maxSerializedByteSize());
+  }
+
+  @Test
+  public void testPublicCompressionAndSerializationUseTheSameRawCompressionPolicy() {
+    for (boolean legacyAggregation : new boolean[]{false, true}) {
+      for (int count : new int[]{500, 2000}) {
+        PercentileTDigestAccumulator direct = legacyAggregation
+            ? PercentileTDigestAccumulator.forLegacyAggregation(100) : PercentileTDigestAccumulator.forReduction(100);
+        PercentileTDigestAccumulator compressed = legacyAggregation
+            ? PercentileTDigestAccumulator.forLegacyAggregation(100) : PercentileTDigestAccumulator.forReduction(100);
+        SplittableRandom random = new SplittableRandom(42);
+        for (int i = 0; i < count; i++) {
+          double value = random.nextDouble(1000);
+          direct.add(value);
+          compressed.add(value);
+        }
+        compressed.compress();
+        assertEquals(compressed.serialize(), direct.serialize());
+        assertEquals(compressed.quantile(0.86), direct.quantile(0.86));
+        assertEquals(compressed.quantile(0.95), direct.quantile(0.95));
+      }
+    }
+  }
+
+  @Test
+  public void testSnapshotKeepsBufferedSourceUnchangedAndOwnsItsMutableArrays() throws Exception {
+    for (boolean legacyAggregation : new boolean[]{false, true}) {
+      PercentileTDigestAccumulator source = legacyAggregation
+          ? PercentileTDigestAccumulator.forLegacyAggregation(100) : PercentileTDigestAccumulator.forReduction(100);
+      PercentileTDigestAccumulator control = legacyAggregation
+          ? PercentileTDigestAccumulator.forLegacyAggregation(100) : PercentileTDigestAccumulator.forReduction(100);
+      SplittableRandom random = new SplittableRandom(7);
+      for (int i = 0; i < 2000; i++) {
+        double value = random.nextDouble(1000);
+        source.add(value);
+        control.add(value);
+        if (i == 999) {
+          source.add(10, 3.5);
+          control.add(10, 3.5);
+          int mergeCount = (int) field(source, "_mergeCount");
+          int rawCount = (int) field(source, "_numRawValues");
+          PercentileTDigestAccumulator copy = source.copy();
+          assertEquals((int) field(source, "_mergeCount"), mergeCount);
+          assertEquals((int) field(source, "_numRawValues"), rawCount);
+          assertEquals(copy.getTotalWeight(), source.getTotalWeight());
+          copy.add(-100, 10);
+          copy.serialize();
+          assertEquals(source.getTotalWeight(), control.getTotalWeight());
+        }
+      }
+      assertEquals(source.serialize(), control.serialize());
+      assertEquals(source.quantile(0.86), control.quantile(0.86));
+    }
   }
 
   @Test
@@ -744,6 +815,21 @@ public class PercentileTDigestAccumulatorTest {
     assertEquals(huge.quantile(0.6), 10.0);
     assertEquals(huge.quantile(0), 0.0);
     assertEquals(huge.quantile(1), 30.0);
+  }
+
+  @Test
+  public void testDuplicateHeavyRawValuesPreservePlateauRanks() {
+    PercentileTDigestAccumulator digest = PercentileTDigestAccumulator.forReduction(100);
+    for (int i = 0; i < 10_000; i++) {
+      digest.add(i < 7000 ? 0.1 : i < 9000 ? 0.5 : 0.9);
+    }
+    digest.serialize();
+    assertEquals(digest.quantile(0.69), 0.1);
+    assertEquals(digest.quantile(0.89), 0.5);
+    assertEquals(digest.quantile(0.99), 0.9);
+    assertTrue(digest.quantile(0.70) < 0.25, "Plateau mass must not leak into interpolation across the gap");
+    assertTrue(digest.quantile(0.90) < 0.6, "The upper plateau's edge stays close to its repeated value");
+    assertEquals(digest.getTotalWeight(), 10_000.0);
   }
 
   @Test

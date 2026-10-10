@@ -34,6 +34,9 @@ public abstract class TDigest {
   }
 
   /// Adds positive finite mass, rejecting a valid distribution's total that would overflow double.
+  /// Fractional interior mass is supported. Serialization rejects fresh endpoint mass below one, or a singleton
+  /// mass between one and two, because legacy readers require unit endpoints. For example, `add(5, 0.5)` is
+  /// accepted but cannot be serialized alone; subsequent input can make that mass interior or representable.
   public abstract void add(double value, double weight);
 
   /// Merges an exclusively owned source; implementations may compress that mutable source in place.
@@ -54,7 +57,8 @@ public abstract class TDigest {
 
   /// Returns centroid mass without narrowing fractional or large weights. Valid totals must remain finite;
   /// add and merge throw IllegalArgumentException when the summed mass exceeds the finite double range.
-  /// An invalid historical payload may report its original negative total; it cannot contribute to another digest.
+  /// An invalid historical payload may report its original negative or non-finite total; it cannot contribute
+  /// to another digest.
   public abstract double getTotalWeight();
 
   /// Returns false when historical numerical corruption leaves the distribution unknown.

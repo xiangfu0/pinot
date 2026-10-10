@@ -151,6 +151,36 @@ public final class PercentileTDigestAccumulator extends TDigest {
     return new PercentileTDigestAccumulator(positiveCompression(compression), false, false);
   }
 
+  /// Snapshots buffered inputs and centroid state without materializing or compressing the source. Mutable buffers
+  /// are copied; immutable retained bytes and metadata are shared. Merge and sort scratch buffers remain lazy.
+  PercentileTDigestAccumulator copy() {
+    PercentileTDigestAccumulator copy =
+        new PercentileTDigestAccumulator(_compression, false, false, _useTwoLevelRawCompression);
+    copy._rawValues = _rawValues != null ? _rawValues.clone() : null;
+    copy._centroidMeans = _numCentroids > 0 ? Arrays.copyOf(_centroidMeans, _numCentroids) : null;
+    copy._centroidWeights = _numCentroids > 0 ? Arrays.copyOf(_centroidWeights, _numCentroids) : null;
+    copy._incomingMeans = _numIncomingCentroids > 0 ? Arrays.copyOf(_incomingMeans, _numIncomingCentroids) : null;
+    copy._incomingWeights = _numIncomingCentroids > 0 ? Arrays.copyOf(_incomingWeights, _numIncomingCentroids) : null;
+    copy._pendingSerializedTDigest = _pendingSerializedTDigest;
+    copy._pendingSerializedMetadata = _pendingSerializedMetadata;
+    copy._originalFractionalBytes = _originalFractionalBytes;
+    copy._historicalFractionalMinMean = _historicalFractionalMinMean;
+    copy._historicalFractionalMaxMean = _historicalFractionalMaxMean;
+    copy._legacyDegraded = _legacyDegraded;
+    copy._hasFractionalWeights = _hasFractionalWeights;
+    copy._numRawValues = _numRawValues;
+    copy._numCentroids = _numCentroids;
+    copy._numIncomingCentroids = _numIncomingCentroids;
+    copy._mergeCount = _mergeCount;
+    copy._publiclyCompressed = _publiclyCompressed;
+    copy._incomingCentroidsSorted = _incomingCentroidsSorted;
+    copy._totalWeight = _totalWeight;
+    copy._incomingWeight = _incomingWeight;
+    copy._min = _min;
+    copy._max = _max;
+    return copy;
+  }
+
   /// Copies primitive centroids without encoding and decoding them. Zero weights are ignored, and unordered
   /// means are sorted when initializing a stored, already compressed distribution; caller arrays are not mutated.
   /// Subsequent inputs use the normal buffered merge. Positive weights and consistent extrema are required.
@@ -196,16 +226,7 @@ public final class PercentileTDigestAccumulator extends TDigest {
         }
       }
       if (!sorted) {
-        it.unimi.dsi.fastutil.Arrays.mergeSort(0, _numCentroids,
-            (first, second) -> Double.compare(_centroidMeans[first], _centroidMeans[second]),
-            (first, second) -> {
-              double mean = _centroidMeans[first];
-              _centroidMeans[first] = _centroidMeans[second];
-              _centroidMeans[second] = mean;
-              double weight = _centroidWeights[first];
-              _centroidWeights[first] = _centroidWeights[second];
-              _centroidWeights[second] = weight;
-            });
+        sortCentroids(_centroidMeans, _centroidWeights, _numCentroids);
       }
       _totalWeight = totalWeight;
       _min = min;
@@ -521,6 +542,10 @@ public final class PercentileTDigestAccumulator extends TDigest {
       return;
     }
     materializePendingSerializedTDigest();
+    if (_useTwoLevelRawCompression) {
+      // Public compression and serialization both retain the legacy working pass before final compression.
+      flush();
+    }
     if (_numRawValues > 0 || _numIncomingCentroids > 0) {
       // SQL reduction combines pending values and existing centroids directly at public compression, matching
       // MergingDigest 3.3. Its writer avoids an extra working-compression pass that can increase reducer rank error.
@@ -797,7 +822,7 @@ public final class PercentileTDigestAccumulator extends TDigest {
     return _compression;
   }
 
-  /// Bounds compatible output without flushing. Unchanged historical bytes and pending compact capacities can
+  /// Bounds compatible output without flushing. Unchanged historical bytes and retained pending payloads can
   /// exceed the newly encoded legacy-capacity bound and retain their actual length.
   @Override
   public int maxSerializedByteSize() {
@@ -812,8 +837,7 @@ public final class PercentileTDigestAccumulator extends TDigest {
       centroidCount = (long) Math.min(centroidCount, Math.ceil(getTotalWeight()));
     }
     int maximumBytes = TDigestCodec.getMaxLegacyCompatibleByteSize(_compression, centroidCount);
-    return _pendingSerializedTDigest != null && _pendingSerializedMetadata.encoding() == TDigestCodec.SMALL_ENCODING
-        ? Math.max(maximumBytes, _pendingSerializedTDigest.length) : maximumBytes;
+    return _pendingSerializedTDigest != null ? Math.max(maximumBytes, _pendingSerializedTDigest.length) : maximumBytes;
   }
 
   /// Returns the centroid view's count, including repaired endpoints and excluding zero-mass serialized entries.
@@ -823,8 +847,7 @@ public final class PercentileTDigestAccumulator extends TDigest {
       if (_legacyDegraded) {
         return _pendingSerializedMetadata.centroidCount();
       }
-      if (!_pendingSerializedMetadata.weightedBoundaries() && !_pendingSerializedMetadata.hasZeroWeightCentroids()
-          && !_pendingSerializedMetadata.unorderedMeans()) {
+      if (_pendingSerializedMetadata.isCanonicalPayload()) {
         return _pendingSerializedMetadata.centroidCount();
       }
       materializePendingSerializedTDigest();
@@ -869,9 +892,7 @@ public final class PercentileTDigestAccumulator extends TDigest {
       return _originalFractionalBytes.clone();
     }
     if (_pendingSerializedTDigest != null) {
-      if (_pendingSerializedMetadata.weightedBoundaries() || _pendingSerializedMetadata.unorderedMeans()
-          || _pendingSerializedMetadata.hasZeroWeightCentroids()
-          || !Double.isNaN(_pendingSerializedMetadata.recoveredInfinityMean())) {
+      if (!_pendingSerializedMetadata.isCanonicalPayload()) {
         materializePendingSerializedTDigest();
       } else {
         if (ByteBuffer.wrap(_pendingSerializedTDigest).getInt() == TDigestCodec.VERBOSE_ENCODING) {
@@ -880,11 +901,6 @@ public final class PercentileTDigestAccumulator extends TDigest {
         }
         return _pendingSerializedTDigest.clone();
       }
-    }
-    if (_useTwoLevelRawCompression) {
-      // General aggregation retains its legacy working-compression pass. SQL reduction serializes pending
-      // intermediate centroids directly at public compression without this extra lossy flush.
-      flush();
     }
     compress();
     normalizeBoundaryCentroids();
@@ -1140,6 +1156,8 @@ public final class PercentileTDigestAccumulator extends TDigest {
   }
 
   private void stableSortIncoming(int count) {
+    // The hot merge path reuses parallel scratch arrays instead of comparator/swapper callbacks. It preserves
+    // numeric-equal input order, including signed zeros; stored payload repair uses sortCentroids' total ordering.
     double[] sourceMeans = _incomingMeans;
     double[] sourceWeights = _incomingWeights;
     double[] destinationMeans = _sortedIncomingMeans;
@@ -1270,7 +1288,7 @@ public final class PercentileTDigestAccumulator extends TDigest {
     }
   }
 
-  private static void sortCentroids(double[] means, double[] weights, int count) {
+  static void sortCentroids(double[] means, double[] weights, int count) {
     it.unimi.dsi.fastutil.Arrays.mergeSort(0, count,
         (first, second) -> Double.compare(means[first], means[second]),
         (first, second) -> {
@@ -1430,7 +1448,7 @@ public final class PercentileTDigestAccumulator extends TDigest {
     }
   }
 
-  private static void checkTotalWeight(double totalWeight) {
+  static void checkTotalWeight(double totalWeight) {
     if (!(totalWeight >= 0.0) || !Double.isFinite(totalWeight)) {
       throw new IllegalArgumentException("Invalid TDigest total weight: " + totalWeight);
     }
@@ -1442,7 +1460,7 @@ public final class PercentileTDigestAccumulator extends TDigest {
     }
   }
 
-  private static IllegalArgumentException corruptedMutation() {
+  static IllegalArgumentException corruptedMutation() {
     return new IllegalArgumentException("Cannot merge or mutate a historically corrupted TDigest; "
         + "rebuild stored digests from source data before merging");
   }

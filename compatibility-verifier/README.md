@@ -66,8 +66,8 @@ each serialization returns independently owned bytes. Compact decoding and compa
 including `NonFiniteAwareTDigest` and `SerializedTDigest`, reside in the same `customobject.tdigest` package.
 Centroid mass is available through `Centroid.weight()` and `getTotalWeight()` without integer truncation.
 
-Release note: an identifiable infinity tail from historical tdunning arithmetic remains usable. NaN extrema and
-ambiguous infinity mixtures remain opaque. Other numerically
+Release note: an identifiable infinity tail from historical tdunning arithmetic remains usable. NaN extrema,
+ambiguous infinity mixtures, non-finite weights and overflowing weight totals remain opaque. Other numerically
 corrupted payloads retain their original bytes and return NaN statistics, including when their weights sum to zero
 and null handling is enabled; they no longer appear empty or return SQL NULL. Mixing them with additional input fails
 instead of subtracting invalid mass from a healthy distribution. Fresh fractional boundary mass below one, or a
@@ -77,6 +77,10 @@ compression. When healthy input leaves an inherited fractional boundary unrepres
 merged mass in the historical verbose form rather than failing intermediate-result serialization. This retains
 the existing legacy limitation: assertion-enabled t-digest 3.3 can fail when recompressing these fractional forms,
 including during the old Pinot wrapper's initial deserialization. Fresh unsupported boundaries remain rejected.
+
+Weighted-add callers can use fractional interior mass. Whether a boundary is representable depends on the final
+distribution: `add(5.0, 0.5)` succeeds, but serializing that fresh singleton fails; adding unit mass at 4.0 and 6.0
+makes the fractional mass interior and serializable. Rejecting every fractional add would also reject valid interior mass.
 
 Operator remediation: an error starting with `Cannot merge or mutate a historically corrupted TDigest` identifies
 a corrupt or ambiguous stored distribution. Mixing such a payload with nonempty input fails the query, merge-rollup
@@ -90,6 +94,15 @@ Release note: `percentileSmartTDigest` over multi-value columns with null handli
 non-null row range. Previously, a batch containing null rows replayed all rows for every non-null range,
 including null rows and duplicating values across ranges. Queries now include each non-null row once and skip null
 rows; this correction can change percentile results independently of the digest migration.
+
+Release note: an empty `percentileSmartTDigest` digest now returns the same result as its empty value-list state:
+NULL with null handling enabled, otherwise -Infinity. Previously that digest state returned NaN without null
+handling. `percentileTDigest` retains its existing NaN result without null handling.
+
+Release note: duplicate-value plateaus are treated as point mass when interpolating percentile boundaries.
+This improves accuracy near large repeated-value populations, but can change results across the upgrade even
+when evaluating the same centroid bytes. Legacy byte encodings remain compatible; percentile values need not
+be bit-identical to tdunning's interpolation.
 
 After the affected tests generate fixtures, run `compatibility-verifier/tdigest-compatibility/run.sh` to exercise
 the real 3.2 and 3.3 readers, and `compatibility-verifier/tdigest-compatibility/generate-rank-errors.sh` to verify

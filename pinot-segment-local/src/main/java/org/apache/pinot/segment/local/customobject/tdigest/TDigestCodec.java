@@ -125,10 +125,10 @@ public final class TDigestCodec {
         : count > 1 && (weights[0] > 1.0 || weights[count - 1] > 1.0);
     // Collect exact wire metadata during the write rather than decoding and validating our fresh bytes again.
     SerializedTDigestMetadata metadata = new SerializedTDigestMetadata(VERBOSE_ENCODING, min, max,
-        compression, count, Math.max(getDefaultCentroidCapacity(compression),
-        getLegacyDefaultCentroidCapacity(compression)), 0,
+        compression, count,
         VERBOSE_HEADER_SIZE, VERBOSE_CENTROID_SIZE, buffer.capacity(), encodedWeight,
-        hasNonFiniteMeans, false, false, fractionalWeights, weightedBoundaries, false, compression, Double.NaN);
+        hasNonFiniteMeans, false, false, fractionalWeights, weightedBoundaries, false, compression, Double.NaN,
+        Double.NaN, Double.NaN);
     return makeLegacyCompatible(buffer.array(), metadata, inheritedFractionalBoundaries);
   }
 
@@ -143,6 +143,8 @@ public final class TDigestCodec {
 
   /// Allows only unsupported endpoint means inherited from a validated legacy source. This is shared by native,
   /// enclosing and generic writers; new fractional global extrema do not receive the historical exception.
+  /// Exact equality is intentional: endpoint repair preserves these means, and admitting nearby means would grant
+  /// the exception to fresh extrema. This check must never permit an approximate match or a digest-wide exemption.
   static boolean hasInheritedFractionalBoundaryEncoding(TDigest source, int count, double firstMean,
       double firstWeight, double lastMean, double lastWeight) {
     if (count <= 0 || !source.hasValidStatistics() || !(firstWeight > 0.0) || !(lastWeight > 0.0)
@@ -314,10 +316,16 @@ public final class TDigestCodec {
   /// Legacy writers can emit poisoned numerical state after overflow or broken fractional boundary repair.
   /// Such state is retained with degraded quantiles, rather than being passed to the sorted K1 kernel.
   public record SerializedTDigestMetadata(int encoding, double min, double max, double compression,
-      int centroidCount, int mainCapacity, int bufferCapacity, int centroidOffset, int centroidSize,
+      int centroidCount, int centroidOffset, int centroidSize,
       int encodedLength, double totalWeight, boolean hasNonFiniteMeans, boolean needsLegacyFallback,
       boolean unorderedMeans, boolean fractionalWeights, boolean weightedBoundaries, boolean hasZeroWeightCentroids,
-      double encodedCompression, double recoveredInfinityMean) {
+      double encodedCompression, double recoveredInfinityMean, double historicalFractionalMinMean,
+      double historicalFractionalMaxMean) {
+    /// Whether the encoded centroid view can be used unchanged by healthy pending-state readers and writers.
+    public boolean isCanonicalPayload() {
+      return !needsLegacyFallback && !weightedBoundaries && !unorderedMeans && !hasZeroWeightCentroids
+          && Double.isNaN(recoveredInfinityMean);
+    }
   }
 
   /// Inspects one payload without mutating `input`, scanning the centroid values once.
@@ -382,10 +390,9 @@ public final class TDigestCodec {
     int centroidOffset = encoded.position();
     int encodedLength = centroidOffset + centroidCount * centroidSize;
     SerializedTDigestMetadata header = new SerializedTDigestMetadata(encoding, min, max, compression, centroidCount,
-        mainCapacity,
-        bufferCapacity, centroidOffset, centroidSize, encodedLength, Double.NaN, false,
+        centroidOffset, centroidSize, encodedLength, Double.NaN, false,
         Double.isNaN(min) || Double.isNaN(max) || centroidCount > 0 && min > max,
-        false, false, false, false, encodedCompression, Double.NaN);
+        false, false, false, false, encodedCompression, Double.NaN, Double.NaN, Double.NaN);
     if (checkCapacity && centroidCount > mainCapacity) {
       SerializedTDigestMetadata inspected = inspectSerialized(input, header, null, null);
       if (!inspected.needsLegacyFallback()) {
@@ -418,6 +425,10 @@ public final class TDigestCodec {
     int positiveCentroidCount = 0;
     double firstPositiveWeight = 0.0;
     double lastPositiveWeight = 0.0;
+    double lowerPositiveMean = Double.POSITIVE_INFINITY;
+    double upperPositiveMean = Double.NEGATIVE_INFINITY;
+    double lowerPositiveWeight = 0.0;
+    double upperPositiveWeight = 0.0;
     boolean withinBounds = true;
     // Infer only a matching one-sided tail, or a distribution consisting entirely of one infinity. A NaN
     // between finite centroids or in a +/-Infinity mixture has lost information and remains opaque.
@@ -436,9 +447,9 @@ public final class TDigestCodec {
     for (int i = 0; i < centroidCount; i++) {
       double weight = centroidSize == VERBOSE_CENTROID_SIZE ? encoded.getDouble() : encoded.getFloat();
       double mean = centroidSize == VERBOSE_CENTROID_SIZE ? encoded.getDouble() : encoded.getFloat();
-      if (!Double.isFinite(weight)) {
-        throw new IllegalArgumentException("Invalid TDigest centroid weight: " + weight);
-      }
+      // Legacy readers admitted raw non-finite weights. Their mass cannot be recovered, so preserve the bytes
+      // as opaque state while keeping the same finite-weight validation for newly created distributions.
+      needsLegacyFallback |= !Double.isFinite(weight);
       // Legacy compact writers can narrow a finite double endpoint outside the float range to infinity.
       // Recover that identifiable rounding before classifying non-finite state; verbose infinity remains opaque.
       if (header.encoding() == SMALL_ENCODING) {
@@ -472,6 +483,18 @@ public final class TDigestCodec {
       if (nanMean && !Double.isNaN(infinityMean)) {
         mean = infinityMean;
       }
+      if (weight > 0.0) {
+        double boundaryMean = Math.max(min, Math.min(mean, max));
+        // Stable sorting keeps the first lower endpoint and the last upper endpoint among equal means.
+        if (lowerPositiveWeight == 0.0 || boundaryMean < lowerPositiveMean) {
+          lowerPositiveMean = boundaryMean;
+          lowerPositiveWeight = weight;
+        }
+        if (upperPositiveWeight == 0.0 || boundaryMean >= upperPositiveMean) {
+          upperPositiveMean = boundaryMean;
+          upperPositiveWeight = weight;
+        }
+      }
       if (infinityMean == Double.POSITIVE_INFINITY) {
         if (mean == infinityMean) {
           positiveInfinityTailStarted = true;
@@ -503,9 +526,7 @@ public final class TDigestCodec {
         previousMean = mean;
       }
       totalWeight += weight;
-      if (!Double.isFinite(totalWeight)) {
-        throw new IllegalArgumentException("TDigest total weight exceeds the supported range");
-      }
+      needsLegacyFallback |= !Double.isFinite(totalWeight);
     }
     // Identifiable endpoint rounding can be restored safely. Other historical out-of-extrema values have an
     // unknown distribution: retain their original bytes and NaN statistics instead of inventing clamped quantiles.
@@ -521,10 +542,17 @@ public final class TDigestCodec {
     }
     boolean weightedBoundaries = positiveCentroidCount == 1 ? firstPositiveWeight >= 2.0
         : positiveCentroidCount > 1 && (firstPositiveWeight > 1.0 || lastPositiveWeight > 1.0);
+    boolean fractionalSingleton = positiveCentroidCount == 1 && lowerPositiveWeight != 1.0
+        && lowerPositiveWeight < 2.0;
+    double historicalFractionalMinMean = !needsLegacyFallback && positiveCentroidCount > 0
+        && (lowerPositiveWeight < 1.0 || fractionalSingleton) ? lowerPositiveMean : Double.NaN;
+    double historicalFractionalMaxMean = !needsLegacyFallback && positiveCentroidCount > 0
+        && (upperPositiveWeight < 1.0 || fractionalSingleton) ? upperPositiveMean : Double.NaN;
     return new SerializedTDigestMetadata(header.encoding(), min, max, header.compression(), centroidCount,
-        header.mainCapacity(), header.bufferCapacity(), header.centroidOffset(), centroidSize,
+        header.centroidOffset(), centroidSize,
         header.encodedLength(), totalWeight, hasNonFiniteMeans, needsLegacyFallback, unorderedMeans, fractionalWeights,
-        weightedBoundaries, hasZeroWeightCentroids, header.encodedCompression(), recoveredInfinityMean);
+        weightedBoundaries, hasZeroWeightCentroids, header.encodedCompression(), recoveredInfinityMean,
+        historicalFractionalMinMean, historicalFractionalMaxMean);
   }
 
   /// Materializes previously validated centroids without repeating numerical inspection. The metadata must describe

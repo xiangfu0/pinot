@@ -47,25 +47,12 @@ public final class NonFiniteAwareTDigest extends TDigest {
     _positiveInfinityWeight = positiveInfinityWeight;
   }
 
+  /// Snapshots the aggregation without flushing or compressing the source's buffered inputs.
   public NonFiniteAwareTDigest copy() {
-    if (_originalFractionalBytes != null) {
-      return fromBytes(_originalFractionalBytes);
-    }
-    PercentileTDigestAccumulator source = _finiteDigest;
-    PercentileTDigestAccumulator finiteDigest;
-    if (!source.hasValidStatistics() || source.hasOriginalFractionalPayload()) {
-      finiteDigest = PercentileTDigestAccumulator.fromBytes(source.serialize());
-    } else {
-      finiteDigest = PercentileTDigestAccumulator.forLegacyAggregation(compression());
-      if (!source.isEmpty()) {
-        finiteDigest.add(source);
-        invalidateDerivedCaches();
-      }
-    }
-    if (source.hasValidStatistics()) {
-      finiteDigest.inheritHistoricalFractionalBoundaries(source);
-    }
-    return new NonFiniteAwareTDigest(finiteDigest, _negativeInfinityWeight, _positiveInfinityWeight);
+    NonFiniteAwareTDigest copy =
+        new NonFiniteAwareTDigest(_finiteDigest.copy(), _negativeInfinityWeight, _positiveInfinityWeight);
+    copy._originalFractionalBytes = _originalFractionalBytes == null ? null : _originalFractionalBytes.clone();
+    return copy;
   }
 
   public static NonFiniteAwareTDigest fromBytes(byte[] bytes) {
@@ -136,7 +123,7 @@ public final class NonFiniteAwareTDigest extends TDigest {
       throw new IllegalArgumentException("TDigest weight must be positive: " + weight);
     }
     requireMutable();
-    checkTotalWeight(getTotalWeight() + weight);
+    PercentileTDigestAccumulator.checkTotalWeight(getTotalWeight() + weight);
     if (value == Double.NEGATIVE_INFINITY) {
       _negativeInfinityWeight += weight;
     } else if (value == Double.POSITIVE_INFINITY) {
@@ -154,10 +141,10 @@ public final class NonFiniteAwareTDigest extends TDigest {
     }
     requireMutable();
     if (!other.hasValidStatistics() && !isEmpty()) {
-      throw corruptedMutation();
+      throw PercentileTDigestAccumulator.corruptedMutation();
     }
     if (other.hasValidStatistics()) {
-      checkTotalWeight(getTotalWeight() + other.getTotalWeight());
+      PercentileTDigestAccumulator.checkTotalWeight(getTotalWeight() + other.getTotalWeight());
     }
     if (other instanceof NonFiniteAwareTDigest) {
       NonFiniteAwareTDigest wrapped = (NonFiniteAwareTDigest) other;
@@ -211,7 +198,7 @@ public final class NonFiniteAwareTDigest extends TDigest {
         finiteMax = Math.max(finiteMax, mean);
       }
     }
-    checkTotalWeight(totalWeight);
+    PercentileTDigestAccumulator.checkTotalWeight(totalWeight);
     if (finiteCount > 0) {
       finiteMin = Double.isFinite(other.getMin()) ? other.getMin() : finiteMin;
       finiteMax = Double.isFinite(other.getMax()) ? other.getMax() : finiteMax;
@@ -226,13 +213,8 @@ public final class NonFiniteAwareTDigest extends TDigest {
 
   private void requireMutable() {
     if (!hasValidStatistics()) {
-      throw corruptedMutation();
+      throw PercentileTDigestAccumulator.corruptedMutation();
     }
-  }
-
-  private static IllegalArgumentException corruptedMutation() {
-    return new IllegalArgumentException("Cannot merge or mutate a historically corrupted TDigest; "
-        + "rebuild stored digests from source data before merging");
   }
 
   private void mutated() {
@@ -366,11 +348,11 @@ public final class NonFiniteAwareTDigest extends TDigest {
 
   private List<Centroid> getFiniteCentroids() {
     if (_finiteCentroids == null) {
-      // Match the wire view without serializing finite-only fractional boundaries surrounded by infinite tails.
-      PercentileTDigestAccumulator finiteDigest = _finiteDigest;
-      finiteDigest.prepareCentroidsForSerialization();
-      invalidateDerivedCaches();
+      // Centroid reads use the native working-compression view; only serialization applies public compression.
       _finiteCentroids = new ArrayList<>(_finiteDigest.centroids());
+      if (hasValidStatistics()) {
+        normalizeCentroidView(_finiteCentroids, _finiteDigest.getMin(), _finiteDigest.getMax());
+      }
     }
     return _finiteCentroids;
   }
@@ -384,6 +366,13 @@ public final class NonFiniteAwareTDigest extends TDigest {
     centroids.addAll(finiteCentroids);
     appendInfinityCentroids(centroids, Double.POSITIVE_INFINITY, _positiveInfinityWeight,
         !hasFiniteValues && _negativeInfinityWeight == 0L, true);
+    if (hasValidStatistics()) {
+      normalizeCentroidView(centroids, getMin(), getMax());
+    }
+    return centroids;
+  }
+
+  private static void normalizeCentroidView(List<Centroid> centroids, double min, double max) {
     if (centroids.size() > 1
         && (centroids.getFirst().weight() > 1.0 || centroids.getLast().weight() > 1.0)) {
       int count = centroids.size();
@@ -395,13 +384,12 @@ public final class NonFiniteAwareTDigest extends TDigest {
         weights[i] = centroid.weight();
       }
       count = PercentileTDigestAccumulator.normalizeSerializedBoundaries(
-          means, weights, count, getMin(), getMax());
+          means, weights, count, min, max);
       centroids.clear();
       for (int i = 0; i < count; i++) {
         centroids.add(new Centroid(means[i], weights[i]));
       }
     }
-    return centroids;
   }
 
   @Override
@@ -490,11 +478,5 @@ public final class NonFiniteAwareTDigest extends TDigest {
   private static int getInfinityCentroidCount(double weight, boolean unitWeightAtStart,
       boolean unitWeightAtEnd) {
     return appendInfinityCentroids(null, null, null, 0, 0.0, weight, unitWeightAtStart, unitWeightAtEnd);
-  }
-
-  private static void checkTotalWeight(double weight) {
-    if (!(weight >= 0.0) || !Double.isFinite(weight)) {
-      throw new IllegalArgumentException("Invalid TDigest total weight: " + weight);
-    }
   }
 }

@@ -214,6 +214,67 @@ public class PercentileTDigestValueAggregatorTest {
   }
 
   @Test
+  public void testCloneDoesNotCompressOrShareSourceBuffers() {
+    for (boolean infiniteTail : new boolean[]{false, true}) {
+      SplittableRandom random = new SplittableRandom(7);
+      PercentileTDigestValueAggregator aggregator = newAggregator(100);
+      TDigest source = aggregator.getInitialAggregatedValue(new Object[0]);
+      TDigest control = aggregator.getInitialAggregatedValue(new Object[0]);
+      if (infiniteTail) {
+        source.add(Double.POSITIVE_INFINITY, 3.0);
+        control.add(Double.POSITIVE_INFINITY, 3.0);
+      }
+      for (int i = 0; i < 1_000; i++) {
+        double value = random.nextInt(1_000);
+        source.add(value);
+        control.add(value);
+      }
+      TDigest clone = aggregator.cloneAggregatedValue(source);
+      clone.add(-1.0);
+      clone.serialize();
+      assertEquals(source.getTotalWeight(), 1_000.0 + (infiniteTail ? 3.0 : 0.0));
+      for (int i = 0; i < 1_000; i++) {
+        double value = random.nextInt(1_000);
+        source.add(value);
+        control.add(value);
+      }
+      assertEquals(source.serialize(), control.serialize());
+      for (double quantile : new double[]{0.01, 0.5, 0.86, 0.99}) {
+        assertEquals(source.quantile(quantile), control.quantile(quantile));
+      }
+      assertEquals(clone.getTotalWeight(), 1_001.0 + (infiniteTail ? 3.0 : 0.0));
+      assertEquals(clone.getMin(), -1.0);
+    }
+  }
+
+  @Test
+  public void testCentroidReadsUseWorkingCompression() {
+    for (boolean countOnly : new boolean[]{false, true}) {
+      SplittableRandom random = new SplittableRandom(42);
+      PercentileTDigestValueAggregator aggregator = newAggregator(100);
+      TDigest digest = aggregator.getInitialAggregatedValue(new Object[0]);
+      TDigest control = PercentileTDigestAccumulator.forLegacyAggregation(100);
+      for (int i = 0; i < 1_000; i++) {
+        double value = random.nextDouble();
+        digest.add(value);
+        control.add(value);
+      }
+      List<Centroid> expected = new ArrayList<>(control.centroids());
+      if (countOnly) {
+        assertEquals(digest.centroidCount(), expected.size());
+      } else {
+        assertEquals(new ArrayList<>(digest.centroids()), expected);
+      }
+      for (int i = 0; i < 1_000; i++) {
+        double value = random.nextDouble();
+        digest.add(value);
+        control.add(value);
+      }
+      assertEquals(digest.serialize(), control.serialize());
+    }
+  }
+
+  @Test
   public void testCompactFiniteMeansRestoreBoundsBeforeAddingInfiniteTails() {
     for (double[] values : new double[][]{
         {0.1, 0.3, Double.NEGATIVE_INFINITY}, {0.7, 0.9, Double.POSITIVE_INFINITY}
@@ -664,6 +725,30 @@ public class PercentileTDigestValueAggregatorTest {
         assertEquals(valid.getTotalWeight(), 1.0);
         assertEquals(valid.quantile(0.5), 42.0);
         assertEquals(aggregator.serializeAggregatedValue(degraded), poisonedBytes);
+      }
+    }
+  }
+
+  @Test
+  public void testDegradedCentroidViewsRetainEncodedMeansAndWeights() {
+    for (double[] fixture : new double[][]{
+        {Double.NaN, 2.0, 3.0, 4.0}, {2.0, 1.0, 3.0, 4.0},
+        {1.0, 2.0, Double.POSITIVE_INFINITY, 4.0}, {1.0, 2.0, Double.MAX_VALUE, Double.MAX_VALUE}
+    }) {
+      byte[] bytes = createVerboseEncoding(new double[]{1.0, 2.0}, new double[]{fixture[2], fixture[3]});
+      ByteBuffer.wrap(bytes).putDouble(Integer.BYTES, fixture[0])
+          .putDouble(Integer.BYTES + Double.BYTES, fixture[1]);
+      PercentileTDigestValueAggregator aggregator = newAggregator(100);
+      TDigest digest = aggregator.deserializeAggregatedValue(bytes);
+      assertFalse(digest.hasValidStatistics());
+      List<Centroid> expected = List.of(new Centroid(1.0, fixture[2]), new Centroid(2.0, fixture[3]));
+      for (TDigest view : List.of(digest, aggregator.cloneAggregatedValue(digest))) {
+        assertEquals(new ArrayList<>(view.centroids()), expected);
+        assertEquals(view.centroidCount(), expected.size());
+        assertTrue(Double.isNaN(view.quantile(0.5)));
+        assertTrue(Double.isNaN(view.cdf(1.5)));
+        assertThrows(IllegalArgumentException.class, () -> view.add(3.0));
+        assertEquals(view.serialize(), bytes);
       }
     }
   }

@@ -37,6 +37,7 @@ public final class SerializedTDigestInput {
   double[] _means;
   double[] _weights;
   private boolean _decoded;
+  private boolean _metadataInspected;
 
   SerializedTDigestMetadata _metadata;
 
@@ -64,6 +65,7 @@ public final class SerializedTDigestInput {
     _retainedBytes = null;
     _numCentroids = metadata.centroidCount();
     _decoded = false;
+    _metadataInspected = !Double.isNaN(metadata.totalWeight());
   }
 
   public double getCompression() {
@@ -77,51 +79,24 @@ public final class SerializedTDigestInput {
   }
 
   void inspectMetadata() {
-    if (Double.isNaN(_metadata.totalWeight())) {
+    if (!_metadataInspected) {
       _metadata = TDigestCodec.inspectSerialized(ByteBuffer.wrap(_bytes), _metadata, null, null);
+      _metadataInspected = true;
     }
   }
 
-  /// Propagates endpoint provenance from this complete, numerically validated serialized distribution.
-  /// The scan uses encoded counts even when a previous fanout decode has split boundary centroids.
+  /// Propagates endpoint provenance cached during the one numerical inspection of this serialized distribution.
+  /// The encoded endpoint tuple remains valid when a previous fanout decode has split boundary centroids.
   boolean recordHistoricalFractionalBoundaries(PercentileTDigestAccumulator target) {
     inspectMetadata();
     if (!_metadata.fractionalWeights() || _metadata.needsLegacyFallback()) {
       return false;
     }
     target.requireMutable();
-    ByteBuffer encoded = ByteBuffer.wrap(_bytes);
-    encoded.position(_metadata.centroidOffset());
-    double firstWeight = 0.0;
-    double lastWeight = 0.0;
-    double firstMean = Double.POSITIVE_INFINITY;
-    double lastMean = Double.NEGATIVE_INFINITY;
-    int positiveCount = 0;
-    for (int i = 0; i < _metadata.centroidCount(); i++) {
-      double weight = _metadata.centroidSize() == TDigestCodec.VERBOSE_CENTROID_SIZE ? encoded.getDouble()
-          : encoded.getFloat();
-      double mean = _metadata.centroidSize() == TDigestCodec.VERBOSE_CENTROID_SIZE ? encoded.getDouble()
-          : encoded.getFloat();
-      if (weight > 0.0) {
-        mean = Double.isNaN(mean) ? _metadata.recoveredInfinityMean()
-            : Math.max(_metadata.min(), Math.min(mean, _metadata.max()));
-        if (firstWeight == 0.0 || mean < firstMean) {
-          firstWeight = weight;
-          firstMean = mean;
-        }
-        if (lastWeight == 0.0 || mean >= lastMean) {
-          lastWeight = weight;
-          lastMean = mean;
-        }
-        positiveCount++;
-      }
-    }
-    boolean singleton = positiveCount == 1 && firstWeight != 1.0 && firstWeight < 2.0;
-    boolean firstUnsupported = firstWeight < 1.0 || singleton;
-    boolean lastUnsupported = lastWeight < 1.0 || singleton;
-    target.inheritHistoricalFractionalBoundaries(firstUnsupported ? firstMean : Double.NaN,
-        lastUnsupported ? lastMean : Double.NaN);
-    return firstUnsupported || lastUnsupported;
+    double minMean = _metadata.historicalFractionalMinMean();
+    double maxMean = _metadata.historicalFractionalMaxMean();
+    target.inheritHistoricalFractionalBoundaries(minMean, maxMean);
+    return !Double.isNaN(minMean) || !Double.isNaN(maxMean);
   }
 
   byte[] retainBytes() {
@@ -137,8 +112,9 @@ public final class SerializedTDigestInput {
     }
     int encodedCentroidCount = _numCentroids;
     ensureCapacity(Math.addExact(encodedCentroidCount, 2));
-    if (Double.isNaN(_metadata.totalWeight())) {
+    if (!_metadataInspected) {
       _metadata = TDigestCodec.inspectSerialized(ByteBuffer.wrap(_bytes), _metadata, _means, _weights);
+      _metadataInspected = true;
     } else {
       // Pending state was already inspected before retaining bytes. Its later first read only materializes
       // those validated centroids; regular merged inputs compute flags and weights in the decode pass above.
@@ -156,16 +132,7 @@ public final class SerializedTDigestInput {
         encodedCentroidCount = nonZeroCount;
       }
       if (_metadata.unorderedMeans()) {
-        it.unimi.dsi.fastutil.Arrays.mergeSort(0, encodedCentroidCount,
-            (first, second) -> Double.compare(_means[first], _means[second]),
-            (first, second) -> {
-              double mean = _means[first];
-              _means[first] = _means[second];
-              _means[second] = mean;
-              double weight = _weights[first];
-              _weights[first] = _weights[second];
-              _weights[second] = weight;
-            });
+        PercentileTDigestAccumulator.sortCentroids(_means, _weights, encodedCentroidCount);
       }
       _numCentroids = PercentileTDigestAccumulator.normalizeSerializedBoundaries(_means, _weights, encodedCentroidCount,
             _metadata.min(), _metadata.max());

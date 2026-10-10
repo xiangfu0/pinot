@@ -31,9 +31,11 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertSame;
 import static org.testng.Assert.assertThrows;
 import static org.testng.Assert.assertTrue;
 
+/// Verifies legacy byte compatibility and numerical validation with invocation-local, unshared digest fixtures.
 public class TDigestCodecTest {
   private static final int VERBOSE_ENCODING = 1;
   private static final int SMALL_ENCODING = 2;
@@ -494,7 +496,7 @@ public class TDigestCodecTest {
   }
 
   @Test
-  public void testMalformedHeadersAndNonFiniteWeightsAreRejected() {
+  public void testMalformedHeadersAreRejected() {
     byte[] bytes = verboseBytes(100.0, new double[]{0.0, 1.0}, new double[]{1.0, 1.0});
     for (double compression : new double[]{Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY}) {
       assertThrows(IllegalArgumentException.class, () -> {
@@ -503,18 +505,125 @@ public class TDigestCodecTest {
         PercentileTDigestAccumulator.fromBytes(malformed);
       });
     }
-    for (double weight : new double[]{Double.NaN, Double.POSITIVE_INFINITY}) {
-      assertThrows(IllegalArgumentException.class, () -> {
-        byte[] malformed = bytes.clone();
-        ByteBuffer.wrap(malformed).putDouble(32, weight);
-        PercentileTDigestAccumulator.fromBytes(malformed);
-      });
-    }
     assertThrows(BufferUnderflowException.class, () -> {
       byte[] malformed = bytes.clone();
       ByteBuffer.wrap(malformed).putInt(28, Integer.MAX_VALUE);
       PercentileTDigestAccumulator.fromBytes(malformed);
     });
+  }
+
+  @Test
+  public void testHistoricalNonFiniteMassRetainsOpaqueBytesWithoutRepeatedInspection() {
+    for (int encoding : new int[]{VERBOSE_ENCODING, SMALL_ENCODING}) {
+      for (double weight : new double[]{Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY}) {
+        byte[] bytes = verboseBytes(100.0, new double[]{1.0, 2.0}, new double[]{weight, 1.0});
+        if (encoding == SMALL_ENCODING) {
+          ByteBuffer compact = ByteBuffer.allocate(46);
+          compact.putInt(SMALL_ENCODING).putDouble(1.0).putDouble(2.0).putFloat(100.0F);
+          compact.putShort((short) 210).putShort((short) 1050).putShort((short) 2);
+          compact.putFloat((float) weight).putFloat(1.0F).putFloat(1.0F).putFloat(2.0F);
+          bytes = compact.array();
+        }
+        SerializedTDigestInput input = new SerializedTDigestInput();
+        input.reset(bytes);
+        TDigestCodec.SerializedTDigestMetadata metadata = input.getMetadata();
+        assertTrue(metadata.needsLegacyFallback());
+        assertFalse(metadata.isCanonicalPayload());
+        assertSame(input.getMetadata(), metadata, "Even an inspected NaN total must be cached");
+        input.decode();
+        assertSame(input.getMetadata(), metadata);
+        for (TDigest digest : new TDigest[]{PercentileTDigestAccumulator.fromBytes(bytes),
+            NonFiniteAwareTDigest.fromBytes(bytes)}) {
+          assertFalse(digest.hasValidStatistics());
+          assertFalse(digest.isEmpty());
+          assertTrue(Double.isNaN(digest.quantile(0.5)));
+          assertTrue(Double.isNaN(digest.cdf(1.5)));
+          assertEquals(digest.serialize(), bytes);
+          List<Centroid> centroids = List.copyOf(digest.centroids());
+          assertEquals(centroids.size(), 2);
+          assertEquals(centroids.get(0).mean(), 1.0);
+          assertEquals(centroids.get(0).weight(), weight);
+          assertThrows(IllegalArgumentException.class, () -> digest.add(3.0));
+          TDigest healthy = PercentileTDigestAccumulator.forLegacyAggregation(100.0);
+          healthy.add(42.0);
+          assertThrows(IllegalArgumentException.class, () -> healthy.add(digest));
+          assertEquals(healthy.getTotalWeight(), 1.0);
+          assertEquals(healthy.quantile(0.5), 42.0);
+          assertEquals(digest.serialize(), bytes);
+        }
+      }
+    }
+    byte[] overflow = verboseBytes(100.0, new double[]{1.0, 2.0},
+        new double[]{Double.MAX_VALUE, Double.MAX_VALUE});
+    TDigest historical = PercentileTDigestAccumulator.fromBytes(overflow);
+    assertFalse(historical.hasValidStatistics());
+    assertEquals(historical.getTotalWeight(), Double.POSITIVE_INFINITY);
+    assertEquals(historical.serialize(), overflow);
+    TDigest fresh = PercentileTDigestAccumulator.forLegacyAggregation(100.0);
+    fresh.add(1.0, Double.MAX_VALUE);
+    assertThrows(IllegalArgumentException.class, () -> fresh.add(2.0, Double.MAX_VALUE));
+    assertEquals(fresh.getTotalWeight(), Double.MAX_VALUE);
+    for (double weight : new double[]{Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY}) {
+      assertThrows(IllegalArgumentException.class, () -> fresh.add(2.0, weight));
+    }
+  }
+
+  @Test
+  public void testFractionalEndpointMetadataSurvivesFanoutDecodeAndReset() {
+    SerializedTDigestInput input = new SerializedTDigestInput();
+    byte[][] historical = {
+        TDigestCodec.serializeCentroids(100.0, 1.0, 10.0, new double[]{5.0, 10.0, 1.0, Double.NaN},
+            new double[]{4.0, 0.75, 0.5, 0.0}, 4),
+        verboseBytes(100.0, new double[]{42.0}, new double[]{1.5})
+    };
+    for (byte[] bytes : historical) {
+      input.reset(bytes);
+      TDigestCodec.SerializedTDigestMetadata metadata = input.getMetadata();
+      double minMean = bytes == historical[0] ? 1.0 : 42.0;
+      double maxMean = bytes == historical[0] ? 10.0 : 42.0;
+      assertEquals(metadata.historicalFractionalMinMean(), minMean);
+      assertEquals(metadata.historicalFractionalMaxMean(), maxMean);
+      for (int group = 0; group < 5; group++) {
+        PercentileTDigestAccumulator target = PercentileTDigestAccumulator.forLegacyAggregation(100.0);
+        assertTrue(input.recordHistoricalFractionalBoundaries(target));
+        assertEquals(target.getHistoricalFractionalBoundaryMean(true), minMean);
+        assertEquals(target.getHistoricalFractionalBoundaryMean(false), maxMean);
+        assertSame(input.getMetadata(), metadata);
+        input.decode();
+      }
+    }
+    input.reset(verboseBytes(100.0, new double[]{0.0, 10.0}, new double[]{1.0, 1.0}));
+    PercentileTDigestAccumulator fresh = PercentileTDigestAccumulator.forLegacyAggregation(100.0);
+    assertFalse(input.recordHistoricalFractionalBoundaries(fresh));
+    assertTrue(Double.isNaN(fresh.getHistoricalFractionalBoundaryMean(true)));
+    assertTrue(Double.isNaN(fresh.getHistoricalFractionalBoundaryMean(false)));
+  }
+
+  @Test
+  public void testInheritedFractionalEndpointsRemainExactAcrossMergesAndCopies() {
+    byte[] historical = verboseBytes(100.0, new double[]{1.0, 5.0, 10.0}, new double[]{0.5, 4.0, 0.75});
+    for (double compression : new double[]{10.0, 100.0, 1_000.0}) {
+      for (boolean wrapped : new boolean[]{false, true}) {
+        TDigest source = wrapped ? NonFiniteAwareTDigest.fromBytes(historical).copy()
+            : PercentileTDigestAccumulator.fromBytes(historical);
+        PercentileTDigestAccumulator merged = PercentileTDigestAccumulator.forLegacyAggregation(compression);
+        merged.add(7.0);
+        merged.add(source);
+        merged.centroids();
+        merged.compress();
+        byte[] output = merged.serialize();
+        List<Centroid> centroids = List.copyOf(PercentileTDigestAccumulator.fromBytes(output).centroids());
+        assertEquals(centroids.get(0).mean(), 1.0);
+        assertEquals(centroids.get(0).weight(), 0.5);
+        assertEquals(centroids.get(centroids.size() - 1).mean(), 10.0);
+        assertEquals(centroids.get(centroids.size() - 1).weight(), 0.75);
+        assertEquals(merged.getTotalWeight(), 6.25);
+        assertEquals(source.serialize(), historical);
+        merged.add(Math.nextDown(1.0), 0.25);
+        // An adjacent fresh endpoint must not inherit a historical endpoint's exception.
+        assertThrows(IllegalArgumentException.class, merged::serialize);
+      }
+    }
   }
 
   @Test
