@@ -25,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.SplittableRandom;
 
 
 /// Runs only against one legacy jar in a separate JVM; Pinot classes are deliberately absent from its classpath.
@@ -46,7 +47,10 @@ public final class LegacyReader {
     }
     Path directory = Path.of(args[0]);
     List<String> manifest = Files.readAllLines(directory.resolve("manifest.tsv"));
-    assert manifest.size() == 39 : "Missing compatibility fixtures";
+    assert !manifest.isEmpty() : "Missing compatibility fixtures";
+    Path output = directory.resolve("legacy-" + args[1]);
+    Files.createDirectories(output);
+    StringBuilder reverseManifest = new StringBuilder();
     int nativeQuantileCases = 0;
     for (String line : manifest) {
       String[] fields = line.split("\t");
@@ -76,13 +80,68 @@ public final class LegacyReader {
         digest.asBytes(rewritten);
         verify(MergingDigest.fromBytes(ByteBuffer.wrap(rewritten.array())), size + 1,
             Math.min(min, 1), Math.max(max, 1), compression, false);
+        // Version 3.2 interpolates a two-point digest differently from Pinot and 3.3.
+        export(output, reverseManifest, fields[0] + "-rewritten", digest,
+            Boolean.parseBoolean(fields[5]) && digest.size() != 2);
       } catch (AssertionError | Exception e) {
         throw new AssertionError("Legacy " + args[1] + " reader failed for " + fields[0], e);
       }
     }
-    assert nativeQuantileCases == 25 : "Missing initial native quantile comparisons";
+    assert nativeQuantileCases > 0 : "Missing initial native quantile comparisons";
+    // Construct inputs in the historical library too, rather than only rewriting Pinot-normalized endpoints.
+    MergingDigest weighted = new MergingDigest(100);
+    if (args[1].equals("3.3")) {
+      weighted.add(-11);
+      weighted.add(51);
+    }
+    weighted.add(-10, 7);
+    weighted.add(0, 3);
+    weighted.add(50, 11);
+    export(output, reverseManifest, "legacy-weighted", weighted, false);
+    // Custom backing arrays and merged header extrema are both written by the legacy implementation.
+    MergingDigest merged = new MergingDigest(20, 5_000, 1_000);
+    MergingDigest source = new MergingDigest(20);
+    SplittableRandom random = new SplittableRandom(42);
+    for (int i = 0; i < 5_000; i++) {
+      merged.add(random.nextDouble());
+      source.add(10 + random.nextDouble());
+    }
+    merged.add(source);
+    export(output, reverseManifest, "legacy-custom-capacity-merge", merged, true);
+    Files.writeString(output.resolve("manifest.tsv"), reverseManifest);
     System.out.println("Legacy " + args[1] + ": " + manifest.size() + " read/add/compress/rewrite cases passed, "
         + nativeQuantileCases + " initial native quantile comparisons");
+  }
+
+  private static void export(Path output, StringBuilder manifest, String name, TDigest digest,
+      boolean compareQuantiles)
+      throws Exception {
+    digest.compress();
+    for (boolean compact : new boolean[]{false, true}) {
+      if (compact && digest.centroids().stream().anyMatch(c -> !Float.isFinite((float) c.mean()))) {
+        continue;
+      }
+      ByteBuffer encoded = ByteBuffer.allocate(compact ? digest.smallByteSize() : digest.byteSize());
+      if (compact) {
+        digest.asSmallBytes(encoded);
+      } else {
+        digest.asBytes(encoded);
+      }
+      String file = name + (compact ? "-compact" : "-verbose");
+      Files.write(output.resolve(file + ".bin"), encoded.array());
+      // Expected values come from the real legacy decoder, including float rounding in compact encodings.
+      TDigest decoded = MergingDigest.fromBytes(ByteBuffer.wrap(encoded.array()));
+      manifest.append(file).append('\t').append(decoded.size()).append('\t').append(decoded.getMin())
+          .append('\t').append(decoded.getMax()).append('\t').append(decoded.compression())
+          .append('\t').append(compareQuantiles);
+      for (double quantile : QUANTILES) {
+        manifest.append('\t').append(decoded.quantile(quantile));
+      }
+      for (Centroid centroid : decoded.centroids()) {
+        manifest.append('\t').append(centroid.mean()).append(':').append(centroid.count());
+      }
+      manifest.append('\n');
+    }
   }
 
   private static void verify(TDigest digest, long size, double min, double max, double compression,

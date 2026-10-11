@@ -32,6 +32,8 @@ if [[ ! -s "$TDIGEST_FIXTURES/manifest.tsv" ]]; then
   exit 1
 fi
 mkdir -p "$TDIGEST_WORK"
+javac -cp "$TDIGEST_ROOT/pinot-segment-local/target/classes" -d "$TDIGEST_WORK" \
+  "$TDIGEST_ROOT/compatibility-verifier/tdigest-compatibility/PinotReader.java"
 for TDIGEST_VERSION in 3.2 3.3; do
   TDIGEST_JAR="$TDIGEST_WORK/t-digest-$TDIGEST_VERSION.jar"
   if [[ ! -s "$TDIGEST_JAR" ]]; then
@@ -43,6 +45,9 @@ for TDIGEST_VERSION in 3.2 3.3; do
   javac -cp "$TDIGEST_JAR" -d "$TDIGEST_WORK" \
     "$TDIGEST_ROOT/compatibility-verifier/tdigest-compatibility/LegacyReader.java"
   java -ea -Xmx128m -cp "$TDIGEST_WORK:$TDIGEST_JAR" LegacyReader "$TDIGEST_FIXTURES" "$TDIGEST_VERSION"
+  # The Pinot JVM contains no tdunning classes; it consumes bytes and expectations from the legacy JVM.
+  java -ea -Xmx128m -cp "$TDIGEST_WORK:$TDIGEST_ROOT/pinot-segment-local/target/classes" \
+    PinotReader "$TDIGEST_FIXTURES/legacy-$TDIGEST_VERSION" "$TDIGEST_VERSION"
 done
 # Keep the checked-in accuracy oracle executable and independent from the current Pinot implementation.
 bash "$TDIGEST_ROOT/compatibility-verifier/tdigest-compatibility/generate-rank-errors.sh"

@@ -23,6 +23,7 @@ import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import org.apache.pinot.common.CustomObject;
 import org.apache.pinot.common.request.Literal;
 import org.apache.pinot.common.request.context.ExpressionContext;
@@ -148,6 +149,23 @@ public class PercentileSmartTDigestAggregationFunctionTest {
           ByteBuffer.wrap(function.serializeIntermediateResult(merged).getBytes()));
       assertEquals(roundTripped.size(), numCentroids + 3L);
     }
+  }
+
+  @Test
+  public void testValueListBulkAddPreservesCompressionAtBufferBoundary() {
+    double[] values = new Random(42).doubles(256).toArray();
+    PercentileTDigestAccumulator scalar = new PercentileTDigestAccumulator(20);
+    for (double value : values) {
+      scalar.add(value);
+    }
+    byte[] expected = scalar.serialize();
+    PercentileSmartTDigestAggregationFunction function = newFunction(255);
+    AggregationResultHolder holder = function.createAggregationResultHolder();
+    function.aggregate(values.length, holder, Map.of(EXPRESSION, SyntheticBlockValSets.Double.create(null, values)));
+    assertEquals(((TDigest) function.extractAggregationResult(holder)).serialize(), expected);
+
+    TDigest merged = (TDigest) function.merge(new PercentileTDigestAccumulator(20), new DoubleArrayList(values));
+    assertEquals(merged.serialize(), expected);
   }
 
   @Test

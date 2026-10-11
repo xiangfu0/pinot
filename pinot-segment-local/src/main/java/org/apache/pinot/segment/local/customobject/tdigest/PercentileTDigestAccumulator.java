@@ -73,6 +73,8 @@ public final class PercentileTDigestAccumulator extends TDigest {
   private byte[] _originalFractionalBytes;
   private double _historicalFractionalMinMean = Double.NaN;
   private double _historicalFractionalMaxMean = Double.NaN;
+  private double _freshFractionalMinMean = Double.NaN;
+  private double _freshFractionalMaxMean = Double.NaN;
   private SerializedTDigestMetadata _pendingSerializedMetadata;
   private boolean _legacyDegraded;
   private boolean _hasFractionalWeights;
@@ -166,6 +168,8 @@ public final class PercentileTDigestAccumulator extends TDigest {
     copy._originalFractionalBytes = _originalFractionalBytes;
     copy._historicalFractionalMinMean = _historicalFractionalMinMean;
     copy._historicalFractionalMaxMean = _historicalFractionalMaxMean;
+    copy._freshFractionalMinMean = _freshFractionalMinMean;
+    copy._freshFractionalMaxMean = _freshFractionalMaxMean;
     copy._legacyDegraded = _legacyDegraded;
     copy._hasFractionalWeights = _hasFractionalWeights;
     copy._numRawValues = _numRawValues;
@@ -186,6 +190,17 @@ public final class PercentileTDigestAccumulator extends TDigest {
   /// Subsequent inputs use the normal buffered merge. Positive weights and consistent extrema are required.
   public void addCentroids(double[] means, double[] weights, int count, double min, double max,
       boolean alreadyCompressed) {
+    addCentroids(means, weights, count, min, max, alreadyCompressed, false);
+  }
+
+  /// Adds validated legacy centroids without marking their existing fractional mass as fresh input.
+  void addHistoricalCentroids(double[] means, double[] weights, int count, double min, double max,
+      boolean alreadyCompressed) {
+    addCentroids(means, weights, count, min, max, alreadyCompressed, true);
+  }
+
+  private void addCentroids(double[] means, double[] weights, int count, double min, double max,
+      boolean alreadyCompressed, boolean historical) {
     requireMutable();
     if (count < 0 || count > means.length || count > weights.length) {
       throw new IllegalArgumentException("Invalid TDigest centroid count: " + count);
@@ -217,6 +232,11 @@ public final class PercentileTDigestAccumulator extends TDigest {
     materializePendingSerializedTDigest();
     _originalFractionalBytes = null;
     _hasFractionalWeights |= fractionalWeights;
+    if (!historical && fractionalWeights) {
+      for (int i = 0; i < count; i++) {
+        recordFreshFractionalMean(means[i], weights[i]);
+      }
+    }
     if (hasNoInputs() && alreadyCompressed) {
       ensureCentroidCapacity(Math.addExact(positiveCount, 2));
       for (int i = 0; i < count; i++) {
@@ -323,6 +343,7 @@ public final class PercentileTDigestAccumulator extends TDigest {
     bufferIncomingCentroid(value, weight);
     _originalFractionalBytes = null;
     _hasFractionalWeights |= weight != Math.rint(weight);
+    recordFreshFractionalMean(value, weight);
     _min = Math.min(_min, value);
     _max = Math.max(_max, value);
   }
@@ -362,7 +383,8 @@ public final class PercentileTDigestAccumulator extends TDigest {
       weights[count++] = weight;
     }
     // Validate all generic centroids before changing the target, then use the same whole-source primitive path.
-    addCentroids(means, weights, count, other.getMin(), other.getMax(), false);
+    addCentroids(means, weights, count, other.getMin(), other.getMax(), false,
+        other instanceof NonFiniteAwareTDigest);
     inheritHistoricalFractionalBoundaries(other);
   }
 
@@ -373,8 +395,8 @@ public final class PercentileTDigestAccumulator extends TDigest {
         return;
       }
       // Snapshot only self-merges; fresh fractional mass need not be representable by a legacy wire payload.
-      addCentroids(Arrays.copyOf(_centroidMeans, _numCentroids), Arrays.copyOf(_centroidWeights, _numCentroids),
-          _numCentroids, _min, _max, false);
+      addHistoricalCentroids(Arrays.copyOf(_centroidMeans, _numCentroids),
+          Arrays.copyOf(_centroidWeights, _numCentroids), _numCentroids, _min, _max, false);
       return;
     }
     if (other._originalFractionalBytes != null && getTotalWeight() == 0.0) {
@@ -404,7 +426,7 @@ public final class PercentileTDigestAccumulator extends TDigest {
     materializePendingSerializedTDigest();
     checkTotalWeight(_totalWeight + _incomingWeight + _numRawValues + other._totalWeight);
     _hasFractionalWeights |= other._hasFractionalWeights;
-    inheritHistoricalFractionalBoundaries(other._historicalFractionalMinMean, other._historicalFractionalMaxMean);
+    inheritHistoricalFractionalBoundaries(other);
     bufferIncomingCentroids(other._centroidMeans, other._centroidWeights, other._numCentroids, other._totalWeight,
         other._min, other._max);
     if (other._totalWeight > 0.0) {
@@ -951,9 +973,33 @@ public final class PercentileTDigestAccumulator extends TDigest {
     return lowerBoundary ? _historicalFractionalMinMean : _historicalFractionalMaxMean;
   }
 
+  @Override
+  double getFreshFractionalBoundaryMean(boolean lowerBoundary) {
+    return lowerBoundary ? _freshFractionalMinMean : _freshFractionalMaxMean;
+  }
+
+  void recordFreshFractionalMean(double mean, double weight) {
+    if (weight != Math.rint(weight)) {
+      inheritFreshFractionalMeans(mean, mean);
+    }
+  }
+
+  private void inheritFreshFractionalMeans(double minMean, double maxMean) {
+    if (!Double.isNaN(minMean)) {
+      _freshFractionalMinMean = Double.isNaN(_freshFractionalMinMean) ? minMean
+          : Math.min(_freshFractionalMinMean, minMean);
+    }
+    if (!Double.isNaN(maxMean)) {
+      _freshFractionalMaxMean = Double.isNaN(_freshFractionalMaxMean) ? maxMean
+          : Math.max(_freshFractionalMaxMean, maxMean);
+    }
+  }
+
   /// Propagates provenance from a validated source without exposing arbitrary endpoint setters.
   void inheritHistoricalFractionalBoundaries(TDigest source) {
     requireMutable();
+    inheritFreshFractionalMeans(source.getFreshFractionalBoundaryMean(true),
+        source.getFreshFractionalBoundaryMean(false));
     inheritHistoricalFractionalBoundaries(source.getHistoricalFractionalBoundaryMean(true),
         source.getHistoricalFractionalBoundaryMean(false));
   }

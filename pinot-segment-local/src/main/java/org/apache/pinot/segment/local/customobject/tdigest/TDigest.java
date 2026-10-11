@@ -104,6 +104,12 @@ public abstract class TDigest {
     return Double.NaN;
   }
 
+  /// Extremal fresh fractional input means, retained across merges to prevent reusing historical permission for
+  /// new mass at the same endpoint. NaN means this digest has received no fresh fractional inputs.
+  double getFreshFractionalBoundaryMean(boolean lowerBoundary) {
+    return Double.NaN;
+  }
+
   /// Immutable centroid value preserving fractional and large mass.
   public static final class Centroid {
     private final double _mean;

@@ -20,7 +20,6 @@ package org.apache.pinot.core.query.aggregation.function;
 
 import com.google.common.base.Preconditions;
 import it.unimi.dsi.fastutil.doubles.DoubleArrayList;
-import it.unimi.dsi.fastutil.doubles.DoubleListIterator;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -185,12 +184,7 @@ public class PercentileSmartTDigestAggregationFunction extends BaseSingleInputAg
   }
 
   private TDigest convertValueListToTDigest(DoubleArrayList valueList) {
-    TDigest tDigest = new PercentileTDigestAccumulator(_compression);
-    DoubleListIterator iterator = valueList.iterator();
-    while (iterator.hasNext()) {
-      tDigest.add(iterator.nextDouble());
-    }
-    return tDigest;
+    return mergeIntoAccumulator(new PercentileTDigestAccumulator(_compression), valueList);
   }
 
   @Override
@@ -314,9 +308,12 @@ public class PercentileSmartTDigestAggregationFunction extends BaseSingleInputAg
       accumulator.add((TDigest) intermediateResult);
     } else {
       DoubleArrayList valueList = (DoubleArrayList) intermediateResult;
-      DoubleListIterator iterator = valueList.iterator();
-      while (iterator.hasNext()) {
-        accumulator.add(iterator.nextDouble());
+      int size = valueList.size();
+      if (size > 0) {
+        // Keep the last value pending as scalar adds did: bulk add flushes immediately when its buffer fills,
+        // which can introduce an extra working-compression pass before the final public-compression pass.
+        accumulator.add(valueList.elements(), 0, size - 1);
+        accumulator.add(valueList.getDouble(size - 1));
       }
     }
     return accumulator;

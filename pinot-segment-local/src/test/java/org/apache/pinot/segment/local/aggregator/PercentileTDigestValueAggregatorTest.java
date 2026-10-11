@@ -849,29 +849,32 @@ public class PercentileTDigestValueAggregatorTest {
 
   @Test
   public void testPureHistoricalFractionalInfinityProvenanceSurvivesMergeAndCopy() {
-    for (boolean compact : new boolean[]{false, true}) {
-      for (double infinity : new double[]{Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY}) {
-        double[] means = {infinity};
-        double[] weights = {0.5};
-        byte[] original = compact ? createSmallEncoding(means, weights) : createVerboseEncoding(means, weights);
-        PercentileTDigestValueAggregator aggregator = newAggregator(100);
-        for (boolean historicalFirst : new boolean[]{false, true}) {
-          TDigest historical = aggregator.deserializeAggregatedValue(original);
-          TDigest healthy = aggregator.getInitialAggregatedValue(0.0);
-          TDigest result = aggregator.applyAggregatedValue(historicalFirst ? historical : healthy,
-              historicalFirst ? healthy : historical);
-          assertEquals(TDigestCodec.validateSerialized(result.serialize()), 1.5);
-          assertEquals(TDigestCodec.validateSerialized(aggregator.serializeAggregatedValue(
-              aggregator.cloneAggregatedValue(result))), 1.5);
-          assertEquals(result.cdf(0.0), infinity < 0.0 ? 2.0 / 3.0 : 1.0 / 3.0);
+    for (double weight : new double[]{0.4, 0.5}) {
+      for (boolean compact : new boolean[]{false, true}) {
+        for (double infinity : new double[]{Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY}) {
+          double[] means = {infinity};
+          double[] weights = {weight};
+          byte[] original = compact ? createSmallEncoding(means, weights) : createVerboseEncoding(means, weights);
+          double encodedWeight = TDigestCodec.validateSerialized(original);
+          PercentileTDigestValueAggregator aggregator = newAggregator(100);
+          for (boolean historicalFirst : new boolean[]{false, true}) {
+            TDigest historical = aggregator.deserializeAggregatedValue(original);
+            TDigest healthy = aggregator.getInitialAggregatedValue(0.0);
+            TDigest result = aggregator.applyAggregatedValue(historicalFirst ? historical : healthy,
+                historicalFirst ? healthy : historical);
+            assertEquals(TDigestCodec.validateSerialized(result.serialize()), encodedWeight + 1.0);
+            assertEquals(TDigestCodec.validateSerialized(aggregator.serializeAggregatedValue(
+                aggregator.cloneAggregatedValue(result))), encodedWeight + 1.0);
+            assertEquals(result.cdf(0.0), (infinity < 0.0 ? encodedWeight + 0.5 : 0.5) / (encodedWeight + 1.0), 1e-12);
+          }
+          TDigest pureInfinity = aggregator.deserializeAggregatedValue(original);
+          pureInfinity.add(infinity);
+          TDigest copied = aggregator.cloneAggregatedValue(pureInfinity);
+          byte[] serialized = aggregator.serializeAggregatedValue(copied);
+          assertEquals(TDigestCodec.validateSerialized(serialized), encodedWeight + 1.0);
+          assertEquals(copied.quantile(0.5), infinity);
+          assertEquals(aggregator.serializeAggregatedValue(pureInfinity), serialized);
         }
-        TDigest pureInfinity = aggregator.deserializeAggregatedValue(original);
-        pureInfinity.add(infinity);
-        TDigest copied = aggregator.cloneAggregatedValue(pureInfinity);
-        byte[] serialized = aggregator.serializeAggregatedValue(copied);
-        assertEquals(TDigestCodec.validateSerialized(serialized), 1.5);
-        assertEquals(copied.quantile(0.5), infinity);
-        assertEquals(aggregator.serializeAggregatedValue(pureInfinity), serialized);
       }
     }
   }

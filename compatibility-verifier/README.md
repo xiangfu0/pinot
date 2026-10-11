@@ -105,5 +105,6 @@ when evaluating the same centroid bytes. Legacy byte encodings remain compatible
 be bit-identical to tdunning's interpolation.
 
 After the affected tests generate fixtures, run `compatibility-verifier/tdigest-compatibility/run.sh` to exercise
-the real 3.2 and 3.3 readers, and `compatibility-verifier/tdigest-compatibility/generate-rank-errors.sh` to verify
-the independent 3.3 accuracy oracle.
+the real 3.2 and 3.3 readers and verify Pinot reads verbose/compact bytes written by those libraries. The script
+also runs `compatibility-verifier/tdigest-compatibility/generate-rank-errors.sh` to verify the independent 3.3
+accuracy oracle.

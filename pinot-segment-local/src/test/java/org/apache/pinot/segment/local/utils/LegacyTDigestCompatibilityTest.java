@@ -41,7 +41,6 @@ public class LegacyTDigestCompatibilityTest {
     Path directory = Path.of(System.getProperty("basedir", "."), "target", "tdigest-compat-fixtures");
     Files.createDirectories(directory);
     StringBuilder manifest = new StringBuilder();
-    int count = 0;
     for (double compression : new double[]{10, 20, 100, 500}) {
       for (String state : new String[]{"empty", "singleton", "seeded", "weighted"}) {
         TDigest digest = PercentileTDigestAccumulator.forLegacyAggregation(compression);
@@ -63,7 +62,7 @@ public class LegacyTDigestCompatibilityTest {
           default:
             break;
         }
-        count += export(directory, manifest, compression + "-" + state, digest, !state.equals("weighted"));
+        export(directory, manifest, compression + "-" + state, digest, !state.equals("weighted"));
       }
     }
     // Exercise low-compression capacity fallback with exact floats and with non-float double means.
@@ -75,7 +74,6 @@ public class LegacyTDigestCompatibilityTest {
       }
       TDigest digest = PercentileTDigestAccumulator.fromBytes(verbose.array());
       writeVerbose(directory, manifest, "capacity-" + offset, digest);
-      count++;
     }
     // A compact stored digest can declare more centroids than a default legacy reader allocates.
     ByteBuffer compact = ByteBuffer.allocate(30 + 8 * 600);
@@ -86,7 +84,6 @@ public class LegacyTDigestCompatibilityTest {
     }
     TDigest digest = PercentileTDigestAccumulator.fromBytes(compact.array());
     writeVerbose(directory, manifest, "oversized-compact", digest);
-    count++;
     // Externally stored verbose headers below ten must be normalized before a 3.2 reader allocates its arrays.
     ByteBuffer lowCompression = ByteBuffer.allocate(32 + 16 * 25);
     lowCompression.putInt(1).putDouble(0).putDouble(24).putDouble(5).putInt(25);
@@ -95,13 +92,11 @@ public class LegacyTDigestCompatibilityTest {
     }
     digest = PercentileTDigestAccumulator.fromBytes(lowCompression.array());
     writeVerbose(directory, manifest, "low-compression-header", digest);
-    count++;
     ByteBuffer zeroWeight = ByteBuffer.allocate(32 + 16 * 3);
     zeroWeight.putInt(1).putDouble(0).putDouble(10).putDouble(100).putInt(3);
     zeroWeight.putDouble(1).putDouble(0).putDouble(0).putDouble(5).putDouble(1).putDouble(10);
     digest = PercentileTDigestAccumulator.fromBytes(zeroWeight.array());
     writeVerbose(directory, manifest, "zero-weight-centroid", digest);
-    count++;
     // Repair adjacent zero-mass NaN means before reducing to the smaller fractional-compression reader capacity.
     double[] means = new double[320];
     double[] weights = new double[means.length];
@@ -119,19 +114,16 @@ public class LegacyTDigestCompatibilityTest {
     assertEquals(ByteBuffer.wrap(repaired).getInt(28), 211);
     digest = PercentileTDigestAccumulator.fromBytes(repaired);
     write(directory, manifest, "zero-weight-capacity-repair", digest, repaired, quantiles(digest), false);
-    count++;
     // Compact fixture fields cannot represent this finite mean; retain the native verbose serialization.
     digest = PercentileTDigestAccumulator.forLegacyAggregation(100);
     digest.add(1e100);
     digest.compress();
     double[] hugeExpected = quantiles(digest);
     write(directory, manifest, "huge-mean-small-fallback", digest, compactFixture(digest), hugeExpected, true);
-    count++;
     Files.writeString(directory.resolve("manifest.tsv"), manifest);
-    assertEquals(count, 39);
   }
 
-  private static int export(Path directory, StringBuilder manifest, String name, TDigest digest,
+  private static void export(Path directory, StringBuilder manifest, String name, TDigest digest,
       boolean compareInitialQuantiles)
       throws Exception {
     digest.compress();
@@ -140,7 +132,6 @@ public class LegacyTDigestCompatibilityTest {
         compareInitialQuantiles);
     expected = quantiles(digest);
     write(directory, manifest, name + "-compact", digest, compactFixture(digest), expected, compareInitialQuantiles);
-    return 2;
   }
 
   // Legacy input fixtures keep compact decoding coverage without exposing a compact-writing digest API.

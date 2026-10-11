@@ -627,6 +627,53 @@ public class TDigestCodecTest {
   }
 
   @Test
+  public void testFreshWeightAtInheritedMeanDoesNotAcquireProvenance() {
+    byte[] historical = verboseBytes(100.0, new double[]{5.0, 10.0}, new double[]{0.4, 1.0});
+    for (double freshWeight : new double[]{0.4, 0.6}) {
+      for (boolean historyFirst : new boolean[]{false, true}) {
+        for (boolean wrapped : new boolean[]{false, true}) {
+          TDigest digest = wrapped ? NonFiniteAwareTDigest.forLegacyAggregation(100.0)
+              : PercentileTDigestAccumulator.forLegacyAggregation(100.0);
+          if (!historyFirst) {
+            digest.add(5.0, freshWeight);
+          }
+          digest.add(PercentileTDigestAccumulator.fromBytes(historical));
+          if (historyFirst) {
+            digest.add(5.0, freshWeight);
+          }
+          TDigest copy = wrapped ? ((NonFiniteAwareTDigest) digest).copy()
+              : ((PercentileTDigestAccumulator) digest).copy();
+          assertThrows(IllegalArgumentException.class, copy::serialize);
+          TDigest merged = PercentileTDigestAccumulator.forReduction(100.0);
+          merged.add(digest);
+          assertThrows(IllegalArgumentException.class, merged::serialize);
+          assertEquals(merged.getTotalWeight(), 1.4 + freshWeight, 1e-12);
+        }
+      }
+    }
+    PercentileTDigestAccumulator interior = PercentileTDigestAccumulator.fromBytes(historical);
+    interior.add(7.0, 0.25);
+    assertEquals(PercentileTDigestAccumulator.fromBytes(interior.serialize()).getTotalWeight(), 1.65, 1e-12);
+  }
+
+  @Test
+  public void testRecoveredInfinityKeepsInheritedFractionalBoundary() {
+    byte[] historical = TDigestCodec.serializeCentroids(100.0, 1.0, Double.POSITIVE_INFINITY,
+        new double[]{1.0, 3.0, Double.NaN}, new double[]{0.5, 1.0, 1.0}, 3);
+    assertEquals(PercentileTDigestAccumulator.fromBytes(historical).serialize(), historical);
+    byte[] repaired = TDigestCodec.makeLegacyCompatible(historical);
+    TDigest decoded = PercentileTDigestAccumulator.fromBytes(repaired);
+    assertTrue(decoded.hasValidStatistics());
+    assertEquals(decoded.getTotalWeight(), 2.5);
+    assertEquals(decoded.getMin(), 1.0);
+    assertEquals(decoded.getMax(), Double.POSITIVE_INFINITY);
+    List<Centroid> centroids = List.copyOf(decoded.centroids());
+    assertEquals(centroids.getFirst().weight(), 0.5);
+    assertEquals(centroids.getLast().mean(), Double.POSITIVE_INFINITY);
+    assertEquals(decoded.serialize(), repaired);
+  }
+
+  @Test
   public void testFiniteCompressionBelowMinimumRetainsLegacyClamping() {
     for (double compression : new double[]{-100.0, -1.0, 0.0, 1.0, 9.0}) {
       TDigest configured = PercentileTDigestAccumulator.forLegacyAggregation(compression);

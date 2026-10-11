@@ -144,7 +144,8 @@ public final class TDigestCodec {
   /// Allows only unsupported endpoint means inherited from a validated legacy source. This is shared by native,
   /// enclosing and generic writers; new fractional global extrema do not receive the historical exception.
   /// Exact equality is intentional: endpoint repair preserves these means, and admitting nearby means would grant
-  /// the exception to fresh extrema. This check must never permit an approximate match or a digest-wide exemption.
+  /// the exception to fresh extrema. Fresh fractional input at or beyond a recorded endpoint permanently excludes
+  /// that endpoint, even if its historical mass was merged away or the new weight equals the historical weight.
   static boolean hasInheritedFractionalBoundaryEncoding(TDigest source, int count, double firstMean,
       double firstWeight, double lastMean, double lastWeight) {
     if (count <= 0 || !source.hasValidStatistics() || !(firstWeight > 0.0) || !(lastWeight > 0.0)
@@ -155,8 +156,10 @@ public final class TDigestCodec {
     boolean firstUnsupported = firstWeight < 1.0 || singleton;
     boolean lastUnsupported = lastWeight < 1.0 || singleton;
     return (firstUnsupported || lastUnsupported)
-        && (!firstUnsupported || firstMean == source.getHistoricalFractionalBoundaryMean(true))
-        && (!lastUnsupported || lastMean == source.getHistoricalFractionalBoundaryMean(false));
+        && (!firstUnsupported || firstMean == source.getHistoricalFractionalBoundaryMean(true)
+            && !(source.getFreshFractionalBoundaryMean(true) <= firstMean))
+        && (!lastUnsupported || lastMean == source.getHistoricalFractionalBoundaryMean(false)
+            && !(source.getFreshFractionalBoundaryMean(false) >= lastMean));
   }
 
   private static void checkSerializedBoundaryWeights(byte[] bytes, SerializedTDigestMetadata metadata) {
@@ -272,7 +275,9 @@ public final class TDigestCodec {
   private static byte[] serializeRecoveredCentroids(SerializedTDigestMetadata metadata, double[] means,
       double[] weights) {
     PercentileTDigestAccumulator digest = PercentileTDigestAccumulator.forLegacyAggregation(metadata.compression());
-    digest.addCentroids(means, weights, means.length, metadata.min(), metadata.max(), true);
+    digest.addHistoricalCentroids(means, weights, means.length, metadata.min(), metadata.max(), true);
+    digest.inheritHistoricalFractionalBoundaries(metadata.historicalFractionalMinMean(),
+        metadata.historicalFractionalMaxMean());
     return digest.serialize();
   }
 

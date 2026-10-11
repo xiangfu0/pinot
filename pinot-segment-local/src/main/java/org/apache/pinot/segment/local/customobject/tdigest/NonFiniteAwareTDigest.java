@@ -98,7 +98,7 @@ public final class NonFiniteAwareTDigest extends TDigest {
     if (finiteCount > 0) {
       finiteMin = Double.isFinite(encodedMin) ? encodedMin : finiteMin;
       finiteMax = Double.isFinite(encodedMax) ? encodedMax : finiteMax;
-      finiteDigest.addCentroids(finiteMeans, finiteWeights, finiteCount, finiteMin, finiteMax, true);
+      finiteDigest.addHistoricalCentroids(finiteMeans, finiteWeights, finiteCount, finiteMin, finiteMax, true);
     }
     validated.recordHistoricalFractionalBoundaries(finiteDigest);
     NonFiniteAwareTDigest wrapped =
@@ -125,8 +125,10 @@ public final class NonFiniteAwareTDigest extends TDigest {
     requireMutable();
     PercentileTDigestAccumulator.checkTotalWeight(getTotalWeight() + weight);
     if (value == Double.NEGATIVE_INFINITY) {
+      _finiteDigest.recordFreshFractionalMean(value, weight);
       _negativeInfinityWeight += weight;
     } else if (value == Double.POSITIVE_INFINITY) {
+      _finiteDigest.recordFreshFractionalMean(value, weight);
       _positiveInfinityWeight += weight;
     } else {
       _finiteDigest.add(value, weight);
@@ -199,11 +201,21 @@ public final class NonFiniteAwareTDigest extends TDigest {
       }
     }
     PercentileTDigestAccumulator.checkTotalWeight(totalWeight);
+    if (!(other instanceof PercentileTDigestAccumulator)) {
+      for (Centroid centroid : centroids) {
+        if (Double.isInfinite(centroid.mean())) {
+          _finiteDigest.recordFreshFractionalMean(centroid.mean(), centroid.weight());
+        }
+      }
+    }
     if (finiteCount > 0) {
       finiteMin = Double.isFinite(other.getMin()) ? other.getMin() : finiteMin;
       finiteMax = Double.isFinite(other.getMax()) ? other.getMax() : finiteMax;
-      _finiteDigest.addCentroids(
-          finiteMeans, finiteWeights, finiteCount, finiteMin, finiteMax, false);
+      if (other instanceof PercentileTDigestAccumulator) {
+        _finiteDigest.addHistoricalCentroids(finiteMeans, finiteWeights, finiteCount, finiteMin, finiteMax, false);
+      } else {
+        _finiteDigest.addCentroids(finiteMeans, finiteWeights, finiteCount, finiteMin, finiteMax, false);
+      }
     }
     _finiteDigest.inheritHistoricalFractionalBoundaries(other);
     _negativeInfinityWeight += negativeInfinityWeight;
@@ -236,6 +248,11 @@ public final class NonFiniteAwareTDigest extends TDigest {
   @Override
   double getHistoricalFractionalBoundaryMean(boolean lowerBoundary) {
     return _finiteDigest.getHistoricalFractionalBoundaryMean(lowerBoundary);
+  }
+
+  @Override
+  double getFreshFractionalBoundaryMean(boolean lowerBoundary) {
+    return _finiteDigest.getFreshFractionalBoundaryMean(lowerBoundary);
   }
 
   @Override
