@@ -66,31 +66,31 @@ jobs:
             core_forks: 3
             integration: 'true'
           - variant: candidate
-            ref: f1aaee643626447896c9755ac4e725c36aa8ba2f
+            ref: 5ef0ab948764a74dfd4909ab7da46a552e3b8a9c
             family: unit
             testset: 1
             core_forks: 3
             integration: 'false'
           - variant: candidate
-            ref: f1aaee643626447896c9755ac4e725c36aa8ba2f
+            ref: 5ef0ab948764a74dfd4909ab7da46a552e3b8a9c
             family: unit
             testset: 2
             core_forks: 3
             integration: 'false'
           - variant: candidate
-            ref: f1aaee643626447896c9755ac4e725c36aa8ba2f
+            ref: 5ef0ab948764a74dfd4909ab7da46a552e3b8a9c
             family: unit
             testset: 3
             core_forks: 3
             integration: 'false'
           - variant: candidate
-            ref: f1aaee643626447896c9755ac4e725c36aa8ba2f
+            ref: 5ef0ab948764a74dfd4909ab7da46a552e3b8a9c
             family: integration
             testset: 1
             core_forks: 3
             integration: 'true'
           - variant: candidate
-            ref: f1aaee643626447896c9755ac4e725c36aa8ba2f
+            ref: 5ef0ab948764a74dfd4909ab7da46a552e3b8a9c
             family: integration
             testset: 2
             core_forks: 3
