@@ -1,0 +1,275 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+
+name: Pinot three-worker fullcoverage capture
+
+on:
+  push:
+    branches:
+      - 'codex/unit-three-coverage-*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    if: github.repository == 'xiangfu0/pinot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 11
+      matrix:
+        include:
+          - variant: baseline
+            ref: c91d0e8378d16f9b9b7fbdbdfd2560711e828368
+            family: unit
+            testset: 1
+            core_forks: 3
+            integration: 'false'
+          - variant: baseline
+            ref: c91d0e8378d16f9b9b7fbdbdfd2560711e828368
+            family: unit
+            testset: 2
+            core_forks: 3
+            integration: 'false'
+          - variant: baseline
+            ref: c91d0e8378d16f9b9b7fbdbdfd2560711e828368
+            family: integration
+            testset: 1
+            core_forks: 3
+            integration: 'true'
+          - variant: baseline
+            ref: c91d0e8378d16f9b9b7fbdbdfd2560711e828368
+            family: integration
+            testset: 2
+            core_forks: 3
+            integration: 'true'
+          - variant: control
+            ref: c5a0f868c6b1eec627b55b1fafc2db0e2fc427d3
+            family: unit
+            testset: 1
+            core_forks: 3
+            integration: 'false'
+          - variant: control
+            ref: c5a0f868c6b1eec627b55b1fafc2db0e2fc427d3
+            family: unit
+            testset: 2
+            core_forks: 3
+            integration: 'false'
+          - variant: candidate
+            ref: e79cdabbf5362444364a02d8eb007c337fc1a590
+            family: unit
+            testset: 1
+            core_forks: 3
+            integration: 'false'
+          - variant: candidate
+            ref: e79cdabbf5362444364a02d8eb007c337fc1a590
+            family: unit
+            testset: 2
+            core_forks: 3
+            integration: 'false'
+          - variant: candidate
+            ref: e79cdabbf5362444364a02d8eb007c337fc1a590
+            family: unit
+            testset: 3
+            core_forks: 3
+            integration: 'false'
+          - variant: candidate
+            ref: e79cdabbf5362444364a02d8eb007c337fc1a590
+            family: integration
+            testset: 1
+            core_forks: 3
+            integration: 'true'
+          - variant: candidate
+            ref: e79cdabbf5362444364a02d8eb007c337fc1a590
+            family: integration
+            testset: 2
+            core_forks: 3
+            integration: 'true'
+    name: ${{ matrix.family }} set ${{ matrix.testset }} (${{ matrix.variant }})
+    env:
+      RUN_INTEGRATION_TESTS: ${{ matrix.integration }}
+      RUN_TEST_SET: ${{ matrix.testset }}
+      PINOT_SOURCE_SHA: ${{ matrix.ref }}
+      PINOT_VARIANT: ${{ matrix.variant }}
+      PINOT_CAPTURE_SCOPE: ${{ matrix.family }}${{ matrix.testset }}
+      PINOT_EXPECTED_CORE_FORKS: ${{ matrix.family == 'unit' && ((matrix.variant != 'candidate' && matrix.testset == 1) || (matrix.variant == 'candidate' && matrix.testset == 3)) && matrix.core_forks || 'not-applicable' }}
+      PINOT_CONTROL_SHA: ${{ github.sha }}
+      DEVELOCITY_ACCESS_KEY: ${{ secrets.DEVELOCITY_ACCESS_KEY }}
+      MAVEN_OPTS: ${{ matrix.family == 'integration' && '-Xmx2G -DskipShade -DfailIfNoTests=false -Dmaven.wagon.httpconnectionManager.ttlSeconds=25 -Dmaven.wagon.http.retryHandler.count=30 -Dhttp.keepAlive=false -Dmaven.wagon.http.pool=false -B -ntp -XX:+IgnoreUnrecognizedVMOptions --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED' || '-Xmx2G -DskipShade -DfailIfNoTests=false -Dmaven.wagon.httpconnectionManager.ttlSeconds=25 -Dmaven.wagon.http.retryHandler.count=30 -Dhttp.keepAlive=false -Dmaven.wagon.http.pool=false -B -ntp -XX:+IgnoreUnrecognizedVMOptions --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED -Dio.netty.tryReflectionSetAccessible=true -Dio.grpc.netty.shaded.io.netty.tryReflectionSetAccessible=true' }}
+    steps:
+      - name: Checkout capture tools from the validation workflow commit
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: harness
+          sparse-checkout: |
+            .github/workflows/scripts/pr-tests/capture_test_evidence_v2.py
+            .github/workflows/scripts/pr-tests/run_validation_phase_v2.py
+          sparse-checkout-cone-mode: false
+      - name: Freeze capture tools outside the tested checkout
+        shell: bash
+        run: |
+          python3 - <<'PYTOOLS'
+          import hashlib, json, os, shutil, time
+          from pathlib import Path
+          control = Path(os.environ['RUNNER_TEMP']) / 'pinot-validation-control'
+          control.mkdir(exist_ok=False)
+          public = Path(os.environ['RUNNER_TEMP']) / 'pinot-validation-evidence'
+          public.mkdir(exist_ok=False)
+          pins = {}
+          for name in ['capture_test_evidence_v2.py', 'run_validation_phase_v2.py']:
+              source = Path('harness/.github/workflows/scripts/pr-tests') / name
+              target = control / name
+              shutil.copy2(source, target)
+              pins[name] = hashlib.sha256(target.read_bytes()).hexdigest()
+              alias = 'collector-source.py' if name == 'capture_test_evidence_v2.py' else 'runner-source.py'
+              shutil.copy2(target, public / alias)
+          (public / 'capture-tool-pins.json').write_text(json.dumps(pins, indent=2) + '\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              stream.write(f'PINOT_CAPTURE_HELPER={control / "capture_test_evidence_v2.py"}\n')
+              stream.write(f'PINOT_PHASE_RUNNER={control / "run_validation_phase_v2.py"}\n')
+              stream.write(f'PINOT_VALIDATION_DIR={public}\n')
+              stream.write(f'PINOT_BUILD_START_EPOCH={time.time():.9f}\n')
+          PYTOOLS
+      - name: Checkout the pinned tested source
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ matrix.ref }}
+          path: source
+          clean: true
+          fetch-depth: 1
+      - name: Verify pinned checkout and record runner inventory
+        shell: bash
+        working-directory: source
+        run: |
+          python3 - <<'PYINVENTORY'
+          import json, os, platform, subprocess
+          from pathlib import Path
+          actual = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert actual == os.environ['PINOT_SOURCE_SHA']
+          assert subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip() == ''
+          result = {'source_sha': actual, 'workflow_sha': os.environ['PINOT_CONTROL_SHA'],
+                    'cpu_count': os.cpu_count(), 'cpu_affinity': sorted(os.sched_getaffinity(0)),
+                    'platform': platform.platform(), 'runner_os': os.environ.get('RUNNER_OS'),
+                    'runner_arch': os.environ.get('RUNNER_ARCH'), 'inventory': {}}
+          for command in [['lscpu', '--json'], ['free', '--bytes'], ['df', '-B1']]:
+              value = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+              result['inventory'][' '.join(command)] = {'exit_code': value.returncode, 'stdout': value.stdout}
+          Path(os.environ['PINOT_VALIDATION_DIR'], 'runner-inventory.json').write_text(json.dumps(result, indent=2) + '\n')
+          PYINVENTORY
+      - name: Set up JDK 25-temurin
+        uses: actions/setup-java@v6
+        with:
+          java-version: 25
+          distribution: temurin
+          cache: maven
+      - name: Restore Maven cache using the original PR key
+        uses: actions/cache@v6
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: 10
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('source/**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+      - name: Build Project using the original script
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          python3 "$PINOT_PHASE_RUNNER" --root "$GITHUB_WORKSPACE/source" \
+            --output "$PINOT_VALIDATION_DIR" --phase build \
+            --expected-head "$PINOT_SOURCE_SHA" \
+            --script .github/workflows/scripts/pr-tests/.pinot_tests_build.sh
+      - name: Unit Test using the original script
+        if: ${{ matrix.family == 'unit' }}
+        timeout-minutes: 105
+        shell: bash
+        run: |
+          python3 "$PINOT_PHASE_RUNNER" --root "$GITHUB_WORKSPACE/source" \
+            --output "$PINOT_VALIDATION_DIR" --phase unit \
+            --expected-head "$PINOT_SOURCE_SHA" \
+            --script .github/workflows/scripts/pr-tests/.pinot_tests_unit.sh
+      - name: Concurrent integration lanes using the original script
+        if: ${{ matrix.family == 'integration' }}
+        timeout-minutes: 105
+        shell: bash
+        run: |
+          python3 "$PINOT_PHASE_RUNNER" --root "$GITHUB_WORKSPACE/source" \
+            --output "$PINOT_VALIDATION_DIR" --phase integration \
+            --expected-head "$PINOT_SOURCE_SHA" \
+            --script .github/workflows/scripts/pr-tests/.pinot_tests_two_lane_integration.sh
+      - name: Seal raw test and coverage evidence
+        if: ${{ always() && env.PINOT_BUILD_START_EPOCH != '' }}
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          log_arguments=()
+          for original in \
+            "$PINOT_VALIDATION_DIR/build.log" \
+            "$PINOT_VALIDATION_DIR/${{ matrix.family }}.log" \
+            "$PINOT_VALIDATION_DIR/process-samples-01.jsonl" \
+            "$PINOT_VALIDATION_DIR/process-samples-02.jsonl" \
+            "$PINOT_VALIDATION_DIR/runner-inventory.json" \
+            "$PINOT_VALIDATION_DIR/capture-tool-pins.json" \
+            "$PINOT_VALIDATION_DIR/inputs-before-run.json" \
+            "$PINOT_VALIDATION_DIR/inputs-after-run.json" \
+            "$PINOT_VALIDATION_DIR/collector-source.py" \
+            "$PINOT_VALIDATION_DIR/runner-source.py" \
+            "$GITHUB_WORKSPACE/source/pinot-integration-tests/target-concurrent-logs/lane-a.log" \
+            "$GITHUB_WORKSPACE/source/pinot-integration-tests/target-concurrent-logs/lane-b.log"; do
+            if [ -f "$original" ]; then
+              log_arguments+=(--log "$original")
+            fi
+          done
+          generated_arguments=()
+          for generated in \
+            pinot-integration-tests/target-lane-a \
+            pinot-integration-tests/target-lane-b \
+            pinot-integration-tests/examples/batch/baseballStats/segments \
+            pinot-plugins/pinot-batch-ingestion/pinot-batch-ingestion-hadoop/pinot-plugins.tar.gz; do
+            if [ -e "$GITHUB_WORKSPACE/source/$generated" ]; then
+              generated_arguments+=(--allow-generated-output-path "$generated")
+            fi
+          done
+          metadata_arguments=()
+          if [ -f "$PINOT_VALIDATION_DIR/run-metadata.json" ]; then
+            metadata_arguments+=(--metadata "$PINOT_VALIDATION_DIR/run-metadata.json")
+          fi
+          python3 "$PINOT_CAPTURE_HELPER" --root "$GITHUB_WORKSPACE/source" \
+            --output "$PINOT_VALIDATION_DIR/evidence.tar.gz" \
+            --label "${GITHUB_JOB}-${PINOT_VARIANT}-${PINOT_CAPTURE_SCOPE}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --variant "$PINOT_VARIANT" --expected-head "$PINOT_SOURCE_SHA" \
+            --started-at "$PINOT_BUILD_START_EPOCH" \
+            "${metadata_arguments[@]}" "${log_arguments[@]}" "${generated_arguments[@]}"
+      - name: Upload evidence even when a build, test, or guard fails
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: full-capture-${{ matrix.variant }}-${{ matrix.family }}${{ matrix.testset }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pinot-validation-evidence/evidence.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          include-hidden-files: true
+          retention-days: 30
