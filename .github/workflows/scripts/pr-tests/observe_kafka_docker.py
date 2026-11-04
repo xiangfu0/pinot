@@ -37,8 +37,8 @@ import time
 
 IMAGE = 'apache/kafka:3.9.1'
 MODULE = 'pinot-plugins/pinot-stream-ingestion/pinot-kafka-3.0'
-REFS = {'baseline': '1b552624f52a96926c67d340d9c27a8de390a4ef',
-        'candidate': 'baed053b342a531196c43ccf018fbf830c60b902'}
+REFS = {'baseline': '660962fbdc174b058dda9893f61ef82dcea1c3c2',
+        'candidate': '8163ddd8f7a745353dbf369c286d7f9042f637b0'}
 SOURCE_PINS = {
     MODULE + '/src/main/java/org/apache/pinot/plugin/stream/kafka30/server/KafkaServerStartable.java':
         '2840e3391f3f16e0aac1d82d50179b0f06f31567453e89288b512e245f7503ef',
