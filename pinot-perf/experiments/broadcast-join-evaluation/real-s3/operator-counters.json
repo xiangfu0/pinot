@@ -1,0 +1,167 @@
+{
+  "false": [
+    {
+      "stage": 1,
+      "operator": "MAILBOX_SEND",
+      "workers": 1,
+      "rows": 128,
+      "serialized_bytes": 3836
+    },
+    {
+      "stage": 2,
+      "operator": "MAILBOX_SEND",
+      "workers": 4,
+      "rows": 128,
+      "serialized_bytes": 1918
+    },
+    {
+      "stage": 3,
+      "operator": "MAILBOX_SEND",
+      "workers": 4,
+      "rows": 512,
+      "serialized_bytes": 9944
+    },
+    {
+      "stage": 3,
+      "operator": "HASH_JOIN",
+      "workers": 4,
+      "rows": 524288,
+      "serialized_bytes": 0
+    },
+    {
+      "stage": 4,
+      "operator": "MAILBOX_SEND",
+      "workers": 4,
+      "rows": 524288,
+      "serialized_bytes": 3337620
+    },
+    {
+      "stage": 4,
+      "operator": "HASH_JOIN",
+      "workers": 4,
+      "rows": 524288,
+      "serialized_bytes": 0
+    },
+    {
+      "stage": 5,
+      "operator": "MAILBOX_SEND",
+      "workers": 1,
+      "rows": 524288,
+      "serialized_bytes": 2483171
+    },
+    {
+      "stage": 5,
+      "operator": "LEAF",
+      "workers": 1,
+      "rows": 524288,
+      "serialized_bytes": 0
+    },
+    {
+      "stage": 6,
+      "operator": "MAILBOX_SEND",
+      "workers": 1,
+      "rows": 4096,
+      "serialized_bytes": 65780
+    },
+    {
+      "stage": 6,
+      "operator": "LEAF",
+      "workers": 1,
+      "rows": 4096,
+      "serialized_bytes": 0
+    },
+    {
+      "stage": 7,
+      "operator": "MAILBOX_SEND",
+      "workers": 1,
+      "rows": 1024,
+      "serialized_bytes": 16628
+    },
+    {
+      "stage": 7,
+      "operator": "LEAF",
+      "workers": 1,
+      "rows": 1024,
+      "serialized_bytes": 0
+    }
+  ],
+  "true": [
+    {
+      "stage": 1,
+      "operator": "MAILBOX_SEND",
+      "workers": 1,
+      "rows": 128,
+      "serialized_bytes": 3836
+    },
+    {
+      "stage": 2,
+      "operator": "MAILBOX_SEND",
+      "workers": 4,
+      "rows": 128,
+      "serialized_bytes": 1918
+    },
+    {
+      "stage": 3,
+      "operator": "MAILBOX_SEND",
+      "workers": 4,
+      "rows": 512,
+      "serialized_bytes": 9944
+    },
+    {
+      "stage": 3,
+      "operator": "HASH_JOIN",
+      "workers": 4,
+      "rows": 524288,
+      "serialized_bytes": 0
+    },
+    {
+      "stage": 3,
+      "operator": "HASH_JOIN",
+      "workers": 4,
+      "rows": 524288,
+      "serialized_bytes": 0
+    },
+    {
+      "stage": 4,
+      "operator": "MAILBOX_SEND",
+      "workers": 1,
+      "rows": 524288,
+      "serialized_bytes": 3370956
+    },
+    {
+      "stage": 4,
+      "operator": "LEAF",
+      "workers": 1,
+      "rows": 524288,
+      "serialized_bytes": 0
+    },
+    {
+      "stage": 5,
+      "operator": "MAILBOX_SEND",
+      "workers": 1,
+      "rows": 4096,
+      "serialized_bytes": 65780
+    },
+    {
+      "stage": 5,
+      "operator": "LEAF",
+      "workers": 1,
+      "rows": 4096,
+      "serialized_bytes": 0
+    },
+    {
+      "stage": 6,
+      "operator": "MAILBOX_SEND",
+      "workers": 1,
+      "rows": 1024,
+      "serialized_bytes": 16628
+    },
+    {
+      "stage": 6,
+      "operator": "LEAF",
+      "workers": 1,
+      "rows": 1024,
+      "serialized_bytes": 0
+    }
+  ]
+}

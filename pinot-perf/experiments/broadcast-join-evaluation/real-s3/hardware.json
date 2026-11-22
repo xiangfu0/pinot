@@ -1,0 +1,40 @@
+{
+  "region": "us-east-1",
+  "availability_zone": "us-east-1a",
+  "inter_server_network": "AWS private IPv4 in one AZ",
+  "s3_path": "Dedicated VPC S3 gateway endpoint, AWS S3 Standard regional bucket",
+  "host_isolation": "one broker/control/load host and two dedicated query workers, same machines for every arm",
+  "instances": {
+    "brokers": 1,
+    "query_servers": 2,
+    "broker": "m7i.xlarge (4 vCPU, 16 GiB)",
+    "query_server": "m7i.2xlarge (8 vCPU, 32 GiB) each"
+  },
+  "volumes": {
+    "type": "encrypted gp3",
+    "gib_total": 366,
+    "base_iops": 3000,
+    "base_throughput_MiBs": 125
+  },
+  "equal_price_basis": {
+    "region": "us-east-1",
+    "az": "us-east-1a",
+    "currency": "USD",
+    "worker_count": 2,
+    "broker_count": 1,
+    "volume_gib": 366,
+    "hours_per_modeled_month": 730,
+    "source": "AWS Price List API, Linux shared on-demand, no discounts or tax",
+    "rates": {
+      "worker_hour": "0.4032000000",
+      "broker_hour": "0.2016000000",
+      "ipv4_hour": "0.0050000000",
+      "gp3_gib_month": "0.0800000000"
+    },
+    "compute_per_hour": "1.0080000000",
+    "fixed_per_hour": "1.063109589041095890410958904"
+  },
+  "java": "Temurin 25.0.4.1+1",
+  "os": "Ubuntu 24.04 amd64",
+  "worker_cgroup_implementation": "v2"
+}

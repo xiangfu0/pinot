@@ -1,0 +1,13 @@
+{
+  "broker": "http://BROKER:8099/query/sql",
+  "meters": ["http://WORKER_A:18103/snapshot", "http://WORKER_B:18103/snapshot"],
+  "storage_controls": ["http://WORKER_A:18104", "http://WORKER_B:18104"],
+  "sql": "fixture.sql",
+  "oracle": "fixture-oracle.json",
+  "options": "useMultistageEngine=true;usePhysicalOptimizer=false;useLeafServerForIntermediateStage=true;stageParallelism=2;timeoutMs=30000",
+  "p90_target_ms": 1000,
+  "regimes": {
+    "forced-cold": {"rates": [0.25,0.5,1,2,4], "pilot_min_queries": 8, "pilot_seconds": 6, "min_queries": 32, "min_seconds": 20},
+    "warm": {"rates": [4,8,16,32,64,128], "pilot_min_queries": 16, "pilot_seconds": 8, "min_queries": 128, "min_seconds": 45}
+  }
+}

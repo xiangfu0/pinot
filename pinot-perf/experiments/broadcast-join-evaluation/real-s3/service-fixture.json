@@ -1,0 +1,155 @@
+{
+  "apache_pinot_pr": 20344,
+  "class_digests": {
+    "org/apache/pinot/broker/requesthandler/MultiStageBrokerRequestHandler.class": {
+      "jar": "pinot-broker.jar",
+      "sha256": "ea6bbda9d2d6982ecbc7ddaff8c4d26ac3725f740509dd290bedea4c9554c4fb"
+    },
+    "org/apache/pinot/calcite/rel/rules/PinotJoinExchangeNodeInsertRule.class": {
+      "jar": "pinot-query-planner.jar",
+      "sha256": "9cf0308e443a78a76f96b66d9cff48e5faf84b4fd993d9bb75d7439f2bc6a83d"
+    },
+    "org/apache/pinot/query/routing/WorkerManager.class": {
+      "jar": "pinot-query-planner.jar",
+      "sha256": "53b0f5c4c18fa9791752e5570bf3ab9d94db40b8b7fe76c8f383b3cc32e0e630"
+    },
+    "org/apache/pinot/query/runtime/QueryRunner.class": {
+      "jar": "pinot-query-runtime.jar",
+      "sha256": "1e822920d3409d23e26154e5bc91b589bf3ef4358fb8c48f443feffc7c2c6340"
+    },
+    "org/apache/pinot/query/runtime/plan/server/ServerPlanRequestUtils.class": {
+      "jar": "pinot-query-runtime.jar",
+      "sha256": "08f095d3c1b641a9991028d349fe240eba781169c1ab2428d36c2b66b151f53c"
+    }
+  },
+  "classpath_manifest_sha256": "98622ff7d15cad1376b40d9963e66d549d5d3a5085e9d7223770a030d11cdd69",
+  "fixture": {
+    "customers": 4096,
+    "expected_canonical_result_sha256": "d68397d2a8d219880f1bf74e023d52051dcce0306a73be134da95b91cb2bfedc",
+    "fact_rows": 524288,
+    "fact_segments": 16,
+    "grouped_integer_counts_sums": true,
+    "groups": 128,
+    "integer_fields": [
+      "k1",
+      "k2",
+      "amount"
+    ],
+    "products": 1024
+  },
+  "java": "Eclipse Temurin 25.0.4.1+1, Linux x86_64",
+  "result_cache": {
+    "broker_dispatch_source": "https://github.com/xiangfu0/pinot/blob/ede33d157dbcbd675f8fc1b3aa60d1b32cc237a4/pinot-broker/src/main/java/org/apache/pinot/broker/requesthandler/MultiStageBrokerRequestHandler.java#L930-L997",
+    "direct_checks": "One traced request per variant returned 128 checked groups. Each of the two executed hash joins reported 524288 rows, with four join workers for each. Off had distinct join stages 4 and 3, on had both joins in stage 3. The cold test separately requires real S3 GETs during each execution; no assumption of per-query tracing in the timed windows.",
+    "scope": "The client sends each SQL request directly to the native Apache Pinot MSE broker. No result-cache service or HTTP cache is deployed. For this nonempty query the broker plans and calls submitAndReduce. The servers construct and schedule op chains. Segment/kernel page caching is distinct and is reported by storage regime.",
+    "server_execution_source": "https://github.com/xiangfu0/pinot/blob/ede33d157dbcbd675f8fc1b3aa60d1b32cc237a4/pinot-query-runtime/src/main/java/org/apache/pinot/query/runtime/QueryRunner.java#L302-L340"
+  },
+  "revision": "ede33d157dbcbd675f8fc1b3aa60d1b32cc237a4",
+  "runtime": "Unmodified source built with the Maven wrapper. Apache Pinot CLI started ordinary Controller, Broker and Server roles. All three hosts verified SHA-256 digests of 435 runtime classpath entries; the listed classes also match the build output byte-for-byte.",
+  "storage": {
+    "format": "Native Apache Pinot OFFLINE v3 segments",
+    "mapped_bytes": 2300120,
+    "mapped_files": 18,
+    "mapping_check": "After restarting the servers, every native columns.psf in the active server data directories was a symlink to a read-only S3-backed mount, and each target appeared in the JVM process memory map. The mounted indexes contain the forward indexes and dictionaries used by the query. Small segment metadata and index offset maps remain local.",
+    "objects": [
+      {
+        "bytes": 51356,
+        "path": "customerDim_0/v3/columns.psf",
+        "sha256": "98fc56d4627d912fb145f1d4b206b0d063a82936d04ca4af94ac56144070f8d2"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_0/v3/columns.psf",
+        "sha256": "154a3dea3bc4c92c8e6b685ed152e2bcb3ec5557b966f3540916ed602fac13cd"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_1/v3/columns.psf",
+        "sha256": "875216cb8e79d1c79f3c4e9241adcdb724644f583fc8b4d46e8d6cc6d6e3f3ed"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_10/v3/columns.psf",
+        "sha256": "414e72a5dada7e52967f071414452de495d33453959aea073063ea275df9c10e"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_11/v3/columns.psf",
+        "sha256": "0e3b536201a39edff0d01d50eabf9eaf074e30199aaa6611c9ef579a05d14091"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_12/v3/columns.psf",
+        "sha256": "277a594bcd638d8ef79d09ddac3c880fe66c2c7d36ed1df0a0bcb0f1f2719093"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_13/v3/columns.psf",
+        "sha256": "a59455f6361bc17368543a665fd9cbdd644c332e01299375ca9a91c9dbe344b9"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_14/v3/columns.psf",
+        "sha256": "f1c6dd77a39db0a48027042017ee4bf0b6adc4e80373a49784cd8a7b0844de5a"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_15/v3/columns.psf",
+        "sha256": "623a009eb69cfa116eb4ec8745f8c121f8a5e1f293f961044385305e40835284"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_2/v3/columns.psf",
+        "sha256": "c6d36b2c16eb28be74b712b2c8e02fb4eb323d7e740a0fa6ce4b378c751ee156"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_3/v3/columns.psf",
+        "sha256": "3b3cc684afbb6e10d9b97fa569a55dc4f54a5f7a48eaaf22071d4f067e8dc5d4"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_4/v3/columns.psf",
+        "sha256": "adcfd8b8423830191be4fb5f54166b96586424ac0e4a5877110c1f3be575de7d"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_5/v3/columns.psf",
+        "sha256": "7619469c79c6cb0a870a7fc743ff39ef3b421abdf3b42dbe145fcbce5f841f5e"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_6/v3/columns.psf",
+        "sha256": "197328249d1d86d31de42969aa6d245f96dc70b015c0fb3b0eb447b92ae5ae79"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_7/v3/columns.psf",
+        "sha256": "96e868fbacbfaf63aeff87d5310530b1be2eb681ba07fd8e8b08520201c01fc9"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_8/v3/columns.psf",
+        "sha256": "3470edf7afb84bbbdb3f8df701f6697f3d1ad31ca1334e02f72c1f948ca703cf"
+      },
+      {
+        "bytes": 139748,
+        "path": "fact_9/v3/columns.psf",
+        "sha256": "fa70bca36c50160588d77bd14571151252a9d2f3f2da0a66f28d1b3e1afca660"
+      },
+      {
+        "bytes": 12796,
+        "path": "productDim_0/v3/columns.psf",
+        "sha256": "fa73c5ad83074b11456502c680af364f9660ddf2bc2737e2f679ae66a16daa1b"
+      }
+    ]
+  },
+  "topology": {
+    "control": "One EC2 host, separate ZooKeeper, controller and broker processes. Clients submitted production HTTP POST /query/sql requests.",
+    "fact_leaf_workers": 1,
+    "join_workers_per_server": 2,
+    "server_a": "Separate EC2 worker running one Java server, with all 16 fact segments.",
+    "server_b": "Separate EC2 worker running one Java server, with both dimension segments.",
+    "total_workers_each_join": 4
+  }
+}
