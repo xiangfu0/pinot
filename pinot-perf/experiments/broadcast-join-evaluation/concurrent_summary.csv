@@ -1,0 +1,13 @@
+seed,shape,readers,fusion,requests,median_ms,p90_ms,batches,achieved_qps,mean_cpu_ms_per_query
+1042,chain,1,false,128,29.35,42.24,8,123.06,75.56
+1042,chain,1,true,128,28.42,38.65,8,125.46,76.15
+1042,chain,4,false,128,33.44,53.54,8,102.97,84.63
+1042,chain,4,true,128,30.39,52.1,8,109.58,80.13
+6901,chain,1,false,128,28.25,39.99,8,122.12,76.42
+6901,chain,1,true,128,32.72,46.13,8,100.41,83.55
+6901,chain,4,false,128,31.25,67.56,8,90.69,89.93
+6901,chain,4,true,128,30.35,51.86,8,108.74,80.98
+pooled,chain,1,false,256,28.87,41.31,16,122.59,75.99
+pooled,chain,1,true,256,30.38,43.68,16,111.54,79.85
+pooled,chain,4,false,256,32.47,59.7,16,96.44,87.28
+pooled,chain,4,true,256,30.38,52.08,16,109.16,80.56
